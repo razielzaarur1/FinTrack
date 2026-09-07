@@ -281,8 +281,20 @@ export default async function systemRoutes(fastify, options) {
       const initCheckData = await initCheckRes.json();
 
       if (initCheckData.initialized) {
+        try {
+          const sealCheck = await fetch(`${VAULT_ADDR.replace(/\/$/, '')}/v1/sys/seal-status`);
+          const sealData = await sealCheck.json();
+          if (sealData.sealed === false) {
+            return reply.code(200).send({
+              success: true,
+              message: 'הכספת כבר מאותחלת ופתוחה (Unsealed).',
+              alreadyUnsealed: true,
+            });
+          }
+        } catch (_) {}
+
         return reply.code(400).send({
-          error: 'Vault is already initialized. Please provide Unseal Key 2 to unlock it.',
+          error: 'הכספת כבר אותחלה בעבר ונמצאת במצב נעול. הזן את Unseal Key 2, או אפס את ווליום ה-Vault אם אין ברשותך את המפתח.',
         });
       }
 

@@ -42,6 +42,20 @@ await fastify.register(helmet, {
   contentSecurityPolicy: process.env.NODE_ENV === 'production',
 });
 
+// Allow empty body with application/json header
+fastify.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, done) => {
+  if (!body || body.trim() === '') {
+    return done(null, {});
+  }
+  try {
+    const json = JSON.parse(body);
+    done(null, json);
+  } catch (err) {
+    err.statusCode = 400;
+    done(err, undefined);
+  }
+});
+
 // Register Rate Limiting
 await fastify.register(rateLimit, {
   max: parseInt(process.env.RATE_LIMIT_MAX || '100', 10),

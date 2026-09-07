@@ -586,12 +586,13 @@ export async function initVaultAuto() {
   const res = await fetch(`${API_BASE}/api/system/vault/init-auto`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
   });
+  const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.message || err.error || 'שגיאה באתחול הכספת');
+    throw new Error(data.message || data.error || 'שגיאה באתחול הכספת');
   }
-  return await res.json();
+  return data;
 }
 
 /**
