@@ -315,6 +315,14 @@ export default async function systemRoutes(fastify, options) {
           const sealCheck = await fetch(`${VAULT_ADDR.replace(/\/$/, '')}/v1/sys/seal-status`);
           const sealData = await sealCheck.json();
           if (sealData.sealed === false) {
+            // Vault is already up — make sure vaultClient has a token so encrypt calls work
+            if (!vaultClient.vault.token) {
+              const envToken = process.env.VAULT_TOKEN;
+              if (envToken) {
+                vaultClient.vault.token = envToken;
+                vaultClient.initialized = true;
+              }
+            }
             return reply.code(200).send({
               success: true,
               message: 'הכספת כבר מאותחלת ופתוחה (Unsealed).',

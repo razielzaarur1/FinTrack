@@ -3,7 +3,8 @@ import nodeVault from 'node-vault';
 
 function readSecret(filePath, envVarName) {
   if (filePath && fs.existsSync(filePath)) {
-    return fs.readFileSync(filePath, 'utf8').trim();
+    const content = fs.readFileSync(filePath, 'utf8').trim();
+    if (content) return content; // Only return if non-empty; fall through if file is empty
   }
   if (process.env[envVarName]) {
     return process.env[envVarName].trim();
