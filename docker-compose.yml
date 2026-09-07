@@ -43,14 +43,16 @@ services:
       - DB_NAME=finance
       - DB_USER=api_user
       - DB_PASSWORD=${API_DB_PASSWORD:-}
-      - DB_PASSWORD_FILE=/run/secrets/api_db_password
+      - DB_PASSWORD_FILE=/opt/finapp/secrets/api_db_password.txt
+      - VAULT_ROLE_ID=${VAULT_API_ROLE_ID:-}
+      - VAULT_ROLE_ID_FILE=/opt/finapp/secrets/vault_api_role_id.txt
+      - VAULT_SECRET_ID=${VAULT_API_SECRET_ID:-}
+      - VAULT_SECRET_ID_FILE=/opt/finapp/secrets/vault_api_secret_id.txt
       - JWT_SECRET=${JWT_SECRET:-}
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - NODE_ENV=${NODE_ENV:-production}
-    secrets:
-      - vault_api_role_id
-      - vault_api_secret_id
-      - api_db_password
+    volumes:
+      - finapp-secrets:/opt/finapp/secrets:ro
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -82,6 +84,7 @@ services:
       - vault-audit:/vault/logs
       - ./config/vault/vault.hcl:/vault/config/vault.hcl:ro
       - ./config/vault/policies:/vault/config/policies:ro
+      - finapp-secrets:/opt/finapp/secrets
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped
@@ -101,13 +104,12 @@ services:
       - worker-net
     environment:
       - POSTGRES_PASSWORD=${DB_PASSWORD:-}
-      - POSTGRES_PASSWORD_FILE=/run/secrets/db_password
+      - POSTGRES_PASSWORD_FILE=/opt/finapp/secrets/db_password.txt
       - POSTGRES_DB=finance
       - POSTGRES_USER=finance_admin
-    secrets:
-      - db_password
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      - finapp-secrets:/opt/finapp/secrets
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped
@@ -167,12 +169,14 @@ services:
       - DB_NAME=finance
       - DB_USER=scraper_user
       - DB_PASSWORD=${SCRAPER_DB_PASSWORD:-}
-      - DB_PASSWORD_FILE=/run/secrets/scraper_db_password
+      - DB_PASSWORD_FILE=/opt/finapp/secrets/scraper_db_password.txt
+      - VAULT_ROLE_ID=${SCRAPER_ROLE_ID:-}
+      - VAULT_ROLE_ID_FILE=/opt/finapp/secrets/scraper_role_id.txt
+      - VAULT_SECRET_ID=${SCRAPER_SECRET_ID:-}
+      - VAULT_SECRET_ID_FILE=/opt/finapp/secrets/scraper_secret_id.txt
       - LOG_LEVEL=${LOG_LEVEL:-info}
-    secrets:
-      - scraper_role_id
-      - scraper_secret_id
-      - scraper_db_password
+    volumes:
+      - finapp-secrets:/opt/finapp/secrets:ro
     security_opt:
       - seccomp:./seccomp/chrome.json
       - no-new-privileges:true
@@ -211,17 +215,15 @@ services:
     environment:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
       - TELEGRAM_ALLOWED_CHAT_ID=${TELEGRAM_CHAT_ID:-}
-      - TELEGRAM_BOT_TOKEN_FILE=/run/secrets/telegram_token
-      - TELEGRAM_ALLOWED_CHAT_ID_FILE=/run/secrets/telegram_chat_id
+      - TELEGRAM_BOT_TOKEN_FILE=/opt/finapp/secrets/telegram_token.txt
+      - TELEGRAM_ALLOWED_CHAT_ID_FILE=/opt/finapp/secrets/telegram_chat_id.txt
+      - VAULT_UNSEAL_KEY1_FILE=/opt/finapp/secrets/vault_unseal_key1.txt
+      - VAULT_UNSEAL_KEY_1=${VAULT_UNSEAL_KEY1:-}
       - VAULT_ADDR=http://vault:8200
       - HTTPS_PROXY=http://10.50.0.254:3128
       - NO_PROXY=vault,postgres,api-gateway,10.50.0.100
-    secrets:
-      - telegram_token
-      - telegram_chat_id
-      - notifier_role_id
-      - notifier_secret_id
-      - vault_unseal_key1
+    volumes:
+      - finapp-secrets:/opt/finapp/secrets:ro
     cap_drop:
       - ALL
     read_only: true
@@ -281,32 +283,6 @@ services:
         reservations:
           memory: 16m
 
-secrets:
-  db_password:
-    file: /opt/finapp/secrets/db_password.txt
-  api_db_password:
-    file: /opt/finapp/secrets/api_db_password.txt
-  scraper_db_password:
-    file: /opt/finapp/secrets/scraper_db_password.txt
-  telegram_token:
-    file: /opt/finapp/secrets/telegram_token.txt
-  telegram_chat_id:
-    file: /opt/finapp/secrets/telegram_chat_id.txt
-  scraper_role_id:
-    file: /opt/finapp/secrets/scraper_role_id.txt
-  scraper_secret_id:
-    file: /opt/finapp/secrets/scraper_secret_id.txt
-  vault_api_role_id:
-    file: /opt/finapp/secrets/vault_api_role_id.txt
-  vault_api_secret_id:
-    file: /opt/finapp/secrets/vault_api_secret_id.txt
-  notifier_role_id:
-    file: /opt/finapp/secrets/notifier_role_id.txt
-  notifier_secret_id:
-    file: /opt/finapp/secrets/notifier_secret_id.txt
-  vault_unseal_key1:
-    file: /opt/finapp/secrets/vault_unseal_key1.txt
-
 networks:
   public-net:
   internal-net:
@@ -324,3 +300,4 @@ volumes:
   vault-data:
   vault-audit:
   postgres-data:
+  finapp-secrets:
