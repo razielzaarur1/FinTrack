@@ -1,0 +1,19 @@
+{
+  "name": "scraper-service",
+  "version": "1.0.0",
+  "description": "Scraper Worker service for Israeli financial institutions",
+  "type": "module",
+  "main": "src/scrape-single.js",
+  "scripts": {
+    "start": "node src/scrape-single.js",
+    "scrape-all": "bash scripts/run-scrape-all.sh"
+  },
+  "dependencies": {
+    "israeli-bank-scrapers": "^6.0.0",
+    "node-vault": "^0.10.2",
+    "pg": "^8.13.1",
+    "pino": "^9.6.0",
+    "pino-pretty": "^13.0.0",
+    "undici": "^7.3.0"
+  }
+}

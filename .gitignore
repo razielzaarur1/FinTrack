@@ -1,0 +1,36 @@
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Secrets and certificates
+secrets/
+certs/
+*.key
+*.crt
+*.pem
+*.pfx
+
+# Dependency directories
+node_modules/
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
+# Database and persistent data
+data/
+*.sql.gz
+*.sqlite
+
+# Logs and debugging
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS metadata
+.DS_Store
+Thumbs.db

@@ -1,0 +1,326 @@
+version: "3.9"
+
+services:
+  # ── Nginx Reverse Proxy (Exposed to Host / Tailscale Interface) ──
+  nginx:
+    image: nginx:alpine
+    container_name: finapp-nginx
+    networks:
+      - public-net
+    ports:
+      - "443:443"
+      - "80:80"
+    depends_on:
+      - api-gateway
+    volumes:
+      - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - /opt/finapp/certs:/etc/ssl/tailscale:ro
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 32m
+        reservations:
+          memory: 16m
+
+  # ── API Gateway ─────────────────────────────────────────────────
+  api-gateway:
+    build: ./services/api-gateway
+    image: finapp/api-gateway:latest
+    container_name: finapp-api-gateway
+    networks:
+      - public-net
+      - internal-net
+      - vault-net
+    environment:
+      - VAULT_ADDR=http://vault:8200
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=finance
+      - DB_USER=api_user
+      - DB_PASSWORD=${API_DB_PASSWORD:-}
+      - DB_PASSWORD_FILE=/run/secrets/api_db_password
+      - JWT_SECRET=${JWT_SECRET:-}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - NODE_ENV=${NODE_ENV:-production}
+    secrets:
+      - vault_api_role_id
+      - vault_api_secret_id
+      - api_db_password
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+        reservations:
+          memory: 64m
+
+  # ── Vault ────────────────────────────────────────────────────────
+  vault:
+    image: hashicorp/vault:latest
+    container_name: finapp-vault
+    networks:
+      - vault-net
+    cap_add:
+      - IPC_LOCK
+    ports:
+      - "127.0.0.1:8200:8200"
+    command: vault server -config=/vault/config/vault.hcl
+    volumes:
+      - vault-data:/vault/data
+      - vault-audit:/vault/logs
+      - ./config/vault/vault.hcl:/vault/config/vault.hcl:ro
+      - ./config/vault/policies:/vault/config/policies:ro
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+        reservations:
+          memory: 128m
+
+  # ── PostgreSQL ───────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: finapp-postgres
+    networks:
+      - internal-net
+      - worker-net
+    environment:
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-}
+      - POSTGRES_PASSWORD_FILE=/run/secrets/db_password
+      - POSTGRES_DB=finance
+      - POSTGRES_USER=finance_admin
+    secrets:
+      - db_password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+        reservations:
+          memory: 128m
+
+  # ── Egress Proxy (Squid) ─────────────────────────────────────────
+  egress-proxy:
+    image: ubuntu/squid:latest
+    container_name: finapp-egress-proxy
+    networks:
+      worker-net:
+        ipv4_address: 172.28.0.254
+      egress-net:
+    volumes:
+      - ./config/squid/squid.conf:/etc/squid/squid.conf:ro
+    read_only: true
+    tmpfs:
+      - /var/run/squid:rw,nosuid,size=32m
+      - /var/log/squid:rw,nosuid,size=32m
+      - /var/spool/squid:rw,nosuid,size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+        reservations:
+          memory: 32m
+
+  # ── Scraper Worker (Daemon) ──────────────────────────────────────
+  scraper-worker:
+    build: ./services/scraper
+    image: finapp/scraper-worker:latest
+    container_name: finapp-scraper-worker
+    command: ["sleep", "infinity"]
+    networks:
+      vault-net:
+      worker-net:
+        ipv4_address: 172.28.0.100
+    environment:
+      - VAULT_ADDR=http://vault:8200
+      - NOTIFIER_URL=http://172.28.0.200:3001
+      - INTERNAL_API_URL=http://api-gateway:3000
+      - HTTPS_PROXY=http://172.28.0.254:3128
+      - HTTP_PROXY=http://172.28.0.254:3128
+      - NO_PROXY=vault,postgres,api-gateway,172.28.0.200
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=finance
+      - DB_USER=scraper_user
+      - DB_PASSWORD=${SCRAPER_DB_PASSWORD:-}
+      - DB_PASSWORD_FILE=/run/secrets/scraper_db_password
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    secrets:
+      - scraper_role_id
+      - scraper_secret_id
+      - scraper_db_password
+    security_opt:
+      - seccomp:./seccomp/chrome.json
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - SYS_ADMIN
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=512m
+      - /home/scraper:rw,nosuid,size=64m
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 768m
+        reservations:
+          memory: 256m
+
+  # ── Notifier ─────────────────────────────────────────────────────
+  notifier:
+    build: ./services/notifier
+    image: finapp/notifier:latest
+    container_name: finapp-notifier
+    networks:
+      internal-net:
+      worker-net:
+        ipv4_address: 172.28.0.200
+      vault-net:
+    expose:
+      - "3001"
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_ALLOWED_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      - TELEGRAM_BOT_TOKEN_FILE=/run/secrets/telegram_token
+      - TELEGRAM_ALLOWED_CHAT_ID_FILE=/run/secrets/telegram_chat_id
+      - VAULT_ADDR=http://vault:8200
+      - HTTPS_PROXY=http://172.28.0.254:3128
+      - NO_PROXY=vault,postgres,api-gateway,172.28.0.100
+    secrets:
+      - telegram_token
+      - telegram_chat_id
+      - notifier_role_id
+      - notifier_secret_id
+      - vault_unseal_key1
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+        reservations:
+          memory: 64m
+
+  # ── Docker Socket Proxy ──────────────────────────────────────────
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    container_name: finapp-socket-proxy
+    networks:
+      - scheduler-net
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      CONTAINERS: 1
+      EXEC: 1
+      POST: 1
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 32m
+        reservations:
+          memory: 16m
+
+  # ── Scheduler (Ofelia) ───────────────────────────────────────────
+  scheduler:
+    image: mcuadros/ofelia:latest
+    container_name: finapp-scheduler
+    networks:
+      - scheduler-net
+    environment:
+      - DOCKER_HOST=tcp://docker-socket-proxy:2375
+    volumes:
+      - ./config/scheduler/config.ini:/etc/ofelia/config.ini:ro
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 32m
+        reservations:
+          memory: 16m
+
+secrets:
+  db_password:
+    file: /opt/finapp/secrets/db_password.txt
+  api_db_password:
+    file: /opt/finapp/secrets/api_db_password.txt
+  scraper_db_password:
+    file: /opt/finapp/secrets/scraper_db_password.txt
+  telegram_token:
+    file: /opt/finapp/secrets/telegram_token.txt
+  telegram_chat_id:
+    file: /opt/finapp/secrets/telegram_chat_id.txt
+  scraper_role_id:
+    file: /opt/finapp/secrets/scraper_role_id.txt
+  scraper_secret_id:
+    file: /opt/finapp/secrets/scraper_secret_id.txt
+  vault_api_role_id:
+    file: /opt/finapp/secrets/vault_api_role_id.txt
+  vault_api_secret_id:
+    file: /opt/finapp/secrets/vault_api_secret_id.txt
+  notifier_role_id:
+    file: /opt/finapp/secrets/notifier_role_id.txt
+  notifier_secret_id:
+    file: /opt/finapp/secrets/notifier_secret_id.txt
+  vault_unseal_key1:
+    file: /opt/finapp/secrets/vault_unseal_key1.txt
+
+networks:
+  public-net:
+  internal-net:
+  vault-net:
+  scheduler-net:
+  egress-net:
+  worker-net:
+    internal: true
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes:
+  vault-data:
+  vault-audit:
+  postgres-data:
