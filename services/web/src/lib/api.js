@@ -580,6 +580,21 @@ export async function unsealVault(key) {
 }
 
 /**
+ * Initialize new Vault with 2-of-2 Shamir keys automatically
+ */
+export async function initVaultAuto() {
+  const res = await fetch(`${API_BASE}/api/system/vault/init-auto`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || err.error || 'שגיאה באתחול הכספת');
+  }
+  return await res.json();
+}
+
+/**
  * Trigger immediate account sync scraping with israeli-bank-scrapers
  */
 export async function triggerScrape(accountId = null) {

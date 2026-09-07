@@ -26,7 +26,7 @@ import {
   Smartphone,
   Check,
 } from 'lucide-react';
-import { getVaultStatus, triggerScrape, formatDate } from '../../lib/api';
+import { getVaultStatus, unsealVault, triggerScrape, formatDate } from '../../lib/api';
 import { useSecurity } from '../../lib/security-context';
 
 export default function SettingsPage() {
@@ -50,7 +50,7 @@ export default function SettingsPage() {
   const [oldPin, setOldPin] = useState('');
   const [newPin, setNewPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
-  const [pinError, setPinError] = useState('');
+  const [pinError, setPinError] = useState(null);
   const [pinSuccess, setPinSuccess] = useState(false);
 
   // Biometrics State
@@ -85,8 +85,13 @@ export default function SettingsPage() {
 
   const handleChangePinSubmit = async (e) => {
     e.preventDefault();
-    setPinError('');
+    setPinError(null);
     setPinSuccess(false);
+
+    if (newPin.length !== 4 || !/^\d+$/.test(newPin)) {
+      setPinError('קוד ה-PIN החדש חייב להכיל בדיוק 4 ספרות');
+      return;
+    }
 
     if (newPin !== confirmPin) {
       setPinError('הקוד החדש ואימות הקוד אינם תואמים');
@@ -108,18 +113,27 @@ export default function SettingsPage() {
     }
   };
 
-  const handleUnsealVault = (e) => {
+  const handleUnsealVault = async (e) => {
     e.preventDefault();
     if (!unsealKey.trim()) return;
 
     setIsUnsealing(true);
     setUnsealMessage(null);
 
-    setTimeout(() => {
+    try {
+      const res = await unsealVault(unsealKey.trim());
+      if (res && res.sealed === false) {
+        setUnsealMessage({ type: 'success', text: 'הכספת נפתחה בהצלחה! מפתחות ה-Transit בריאים ופעילים.' });
+        setVaultStatus((prev) => ({ ...prev, isSealed: false, keyHealth: 'healthy' }));
+        setUnsealKey('');
+      } else {
+        setUnsealMessage({ type: 'error', text: res?.error || 'מפתח ה-Unseal שגוי או שהכספת עדיין נעולה' });
+      }
+    } catch (err) {
+      setUnsealMessage({ type: 'error', text: err.message || 'שגיאה בשחרור נעילת הכספת' });
+    } finally {
       setIsUnsealing(false);
-      setUnsealMessage({ type: 'success', text: 'הכספת נפתחה בהצלחה! מפתחות ה-Transit בריאים ופעילים.' });
-      setVaultStatus((prev) => ({ ...prev, isSealed: false, keyHealth: 'healthy' }));
-    }, 1500);
+    }
   };
 
   const handleRequestPushPermission = async () => {

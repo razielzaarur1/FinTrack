@@ -272,4 +272,86 @@ export default async function systemRoutes(fastify, options) {
       return reply.code(500).send({ error: 'Internal Server Error', message: err.message });
     }
   });
+
+  // POST /vault/init-auto - Automatic initial Vault setup if uninitialized
+  fastify.post('/vault/init-auto', async (request, reply) => {
+    try {
+      // 1. Check if initialized
+      const initCheckRes = await fetch(`${VAULT_ADDR.replace(/\/$/, '')}/v1/sys/init`);
+      const initCheckData = await initCheckRes.json();
+
+      if (initCheckData.initialized) {
+        return reply.code(400).send({
+          error: 'Vault is already initialized. Please provide Unseal Key 2 to unlock it.',
+        });
+      }
+
+      // 2. Initialize Vault with 2-of-2 Shamir keys
+      const initRes = await fetch(`${VAULT_ADDR.replace(/\/$/, '')}/v1/sys/init`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          secret_shares: 2,
+          secret_threshold: 2,
+        }),
+      });
+
+      if (!initRes.ok) {
+        const errText = await initRes.text();
+        return reply.code(initRes.status).send({ error: `Vault init failed: ${errText}` });
+      }
+
+      const initData = await initRes.json();
+      const unsealKey1 = initData.keys_base64[0];
+      const unsealKey2 = initData.keys_base64[1];
+      const rootToken = initData.root_token;
+
+      // 3. Unseal with Key 1 and Key 2
+      await fetch(`${VAULT_ADDR.replace(/\/$/, '')}/v1/sys/unseal`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: unsealKey1 }),
+      });
+
+      await fetch(`${VAULT_ADDR.replace(/\/$/, '')}/v1/sys/unseal`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: unsealKey2 }),
+      });
+
+      // 4. Configure Transit Secrets Engine
+      await fetch(`${VAULT_ADDR.replace(/\/$/, '')}/v1/sys/mounts/transit`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Vault-Token': rootToken,
+        },
+        body: JSON.stringify({ type: 'transit' }),
+      });
+
+      // 5. Create Transit Key
+      await fetch(`${VAULT_ADDR.replace(/\/$/, '')}/v1/transit/keys/bank-credentials`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Vault-Token': rootToken,
+        },
+      });
+
+      // 6. Set token in vaultClient so API Gateway can encrypt immediately
+      vaultClient.vault.token = rootToken;
+      vaultClient.initialized = true;
+
+      return reply.code(200).send({
+        success: true,
+        message: 'הכספת אותחלה ונפתחה בהצלחה!',
+        unsealKey1,
+        unsealKey2,
+        rootToken,
+      });
+    } catch (err) {
+      fastify.log.error(err, 'Failed to auto-init Vault');
+      return reply.code(500).send({ error: 'Internal Server Error', message: err.message });
+    }
+  });
 }

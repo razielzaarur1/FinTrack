@@ -21,14 +21,17 @@ import {
   KeyRound,
   ExternalLink,
 } from 'lucide-react';
-import { getAccounts, createAccount, deleteAccount, triggerScrape, formatILS, formatDate } from '../../lib/api';
+import { getAccounts, createAccount, deleteAccount, triggerScrape, getVaultStatus, formatILS, formatDate } from '../../lib/api';
 import { ISRAELI_INSTITUTIONS } from '../../lib/types';
+import VaultUnsealModal from '../../components/common/VaultUnsealModal';
 
 export default function AccountsPage() {
   const [accounts, setAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [syncingAccountId, setSyncingAccountId] = useState(null);
   const [syncAllLoading, setSyncAllLoading] = useState(false);
+  const [vaultStatus, setVaultStatus] = useState({ isSealed: false });
+  const [isUnsealModalOpen, setIsUnsealModalOpen] = useState(false);
 
   // Add Account Multi-Step Modal State
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -51,18 +54,20 @@ export default function AccountsPage() {
   // Deactivate confirmation modal
   const [accountToDeactivate, setAccountToDeactivate] = useState(null);
 
-  useEffect(() => {
-    async function loadAccounts() {
-      try {
-        const accs = await getAccounts();
-        setAccounts(accs || []);
-      } catch (e) {
-        console.error('Failed to load accounts:', e);
-      } finally {
-        setLoading(false);
-      }
+  const fetchVaultAndAccounts = async () => {
+    try {
+      const [accs, vStatus] = await Promise.all([getAccounts(), getVaultStatus()]);
+      setAccounts(accs || []);
+      if (vStatus) setVaultStatus(vStatus);
+    } catch (e) {
+      console.error('Failed to load accounts/vault:', e);
+    } finally {
+      setLoading(false);
     }
-    loadAccounts();
+  };
+
+  useEffect(() => {
+    fetchVaultAndAccounts();
   }, []);
 
   const handleSyncSingleAccount = async (accId) => {
@@ -261,6 +266,29 @@ export default function AccountsPage() {
           </button>
         </div>
       </div>
+
+      {/* ── 1.5. VAULT SEALED ALERT BANNER ───────────────────────────────── */}
+      {vaultStatus.isSealed && (
+        <div className="p-4 rounded-2xl bg-amber-500/15 border border-amber-500/40 text-amber-300 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-glow-amber">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-amber-500/20 text-amber-400">
+              <KeyRound className="w-5 h-5 animate-pulse" />
+            </div>
+            <div>
+              <h4 className="text-sm font-bold text-white">כספת HashiCorp Vault נעולה (Sealed)</h4>
+              <p className="text-xs text-amber-200/90 mt-0.5">
+                הכספת במצב נעול. להצפנת פרטי חשבונות חדשים וסריקה אוטומטית יש להזין מפתח Unseal.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => setIsUnsealModalOpen(true)}
+            className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-navy-950 text-xs font-bold transition-all shadow-sm self-end sm:self-auto cursor-pointer"
+          >
+            פתח כספת (Unseal) עכשיו
+          </button>
+        </div>
+      )}
 
       {/* ── 2. SUMMARY METRICS ────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -813,6 +841,15 @@ export default function AccountsPage() {
           </div>
         </div>
       )}
+
+      {/* ── 6. VAULT UNSEAL MODAL ─────────────────────────────────────────── */}
+      <VaultUnsealModal
+        isOpen={isUnsealModalOpen}
+        onClose={() => setIsUnsealModalOpen(false)}
+        onUnsealed={() => {
+          fetchVaultAndAccounts();
+        }}
+      />
     </div>
   );
 }
