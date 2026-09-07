@@ -13,6 +13,7 @@ services:
       - "80:80"
     depends_on:
       - api-gateway
+      - web
     volumes:
       - /opt/finapp/certs:/etc/ssl/tailscale:ro
     read_only: true
@@ -27,6 +28,27 @@ services:
         reservations:
           memory: 16m
 
+  # ── Web PWA Frontend ─────────────────────────────────────────────
+  web:
+    build: ./services/web
+    image: finapp/web:latest
+    container_name: finapp-web
+    networks:
+      - public-net
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_URL=/api
+    security_opt:
+      - no-new-privileges:true
+    read_only: false
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+        reservations:
+          memory: 64m
+
   # ── API Gateway ─────────────────────────────────────────────────
   api-gateway:
     build: ./services/api-gateway
@@ -38,6 +60,7 @@ services:
       - vault-net
     environment:
       - VAULT_ADDR=http://vault:8200
+      - NOTIFIER_URL=http://notifier:3001
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_NAME=finance
@@ -103,7 +126,6 @@ services:
       - worker-net
     environment:
       - POSTGRES_PASSWORD=${DB_PASSWORD:-}
-      - POSTGRES_PASSWORD_FILE=/opt/finapp/secrets/db_password.txt
       - POSTGRES_DB=finance
       - POSTGRES_USER=finance_admin
     volumes:
@@ -130,6 +152,7 @@ services:
       egress-net:
     read_only: true
     tmpfs:
+      - /run:rw,nosuid,size=32m
       - /var/run/squid:rw,nosuid,size=32m
       - /var/log/squid:rw,nosuid,size=32m
       - /var/spool/squid:rw,nosuid,size=64m
@@ -137,6 +160,9 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    cap_add:
+      - SETGID
+      - SETUID
     restart: unless-stopped
     deploy:
       resources:
@@ -284,6 +310,7 @@ networks:
   public-net:
   internal-net:
   vault-net:
+    internal: true
   scheduler-net:
   egress-net:
   worker-net:

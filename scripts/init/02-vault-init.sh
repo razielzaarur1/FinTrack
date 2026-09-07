@@ -4,6 +4,12 @@ set -euo pipefail
 VAULT_ADDR="${VAULT_ADDR:-http://127.0.0.1:8200}"
 export VAULT_ADDR
 
+if ! command -v vault &> /dev/null; then
+  vault() {
+    docker exec -e VAULT_ADDR="${VAULT_ADDR}" finapp-vault vault "$@"
+  }
+fi
+
 SECRETS_DIR="/opt/finapp/secrets"
 mkdir -p "${SECRETS_DIR}"
 
@@ -72,9 +78,9 @@ echo "===> Creating Transit encryption key for bank credentials..."
 vault write -f transit/keys/bank-credentials 2>/dev/null || true
 
 echo "===> Writing ACL Policies..."
-vault policy write scraper-policy  ./config/vault/policies/scraper-policy.hcl
-vault policy write api-policy      ./config/vault/policies/api-policy.hcl
-vault policy write notifier-policy ./config/vault/policies/notifier-policy.hcl
+vault policy write scraper-policy  /vault/config/policies/scraper-policy.hcl
+vault policy write api-policy      /vault/config/policies/api-policy.hcl
+vault policy write notifier-policy /vault/config/policies/notifier-policy.hcl
 
 echo "===> Configuring AppRoles..."
 # Scraper worker AppRole - bound to CIDR 10.50.0.0/16

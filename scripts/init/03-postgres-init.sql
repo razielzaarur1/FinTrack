@@ -41,6 +41,40 @@ CREATE TABLE IF NOT EXISTS transactions (
     CONSTRAINT uq_account_external UNIQUE (account_id, external_id)
 );
 
+-- 4. Budgets Table
+CREATE TABLE IF NOT EXISTS budgets (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    category VARCHAR(100) NOT NULL,
+    monthly_limit NUMERIC(12, 2) NOT NULL,
+    currency VARCHAR(10) NOT NULL DEFAULT 'ILS',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_budgets_user_category UNIQUE (user_id, category)
+);
+
+-- 5. Goals Table
+CREATE TABLE IF NOT EXISTS goals (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title VARCHAR(255) NOT NULL,
+    target_amount NUMERIC(12, 2) NOT NULL,
+    current_amount NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+    currency VARCHAR(10) NOT NULL DEFAULT 'ILS',
+    target_date DATE,
+    icon VARCHAR(50),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 6. System Settings Table
+CREATE TABLE IF NOT EXISTS system_settings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    settings JSONB NOT NULL DEFAULT '{}'::jsonb,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_system_settings_user UNIQUE (user_id)
+);
+
 -- Crucial: Insert default user
 INSERT INTO users (id, is_active)
 VALUES ('00000000-0000-0000-0000-000000000001', true)
@@ -52,6 +86,9 @@ CREATE INDEX IF NOT EXISTS idx_transactions_account_id ON transactions(account_i
 CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date);
 CREATE INDEX IF NOT EXISTS idx_transactions_is_notified ON transactions(is_notified) WHERE is_notified = false;
 CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions(category);
+CREATE INDEX IF NOT EXISTS idx_budgets_user_id ON budgets(user_id);
+CREATE INDEX IF NOT EXISTS idx_goals_user_id ON goals(user_id);
+CREATE INDEX IF NOT EXISTS idx_system_settings_user_id ON system_settings(user_id);
 
 -- Database Roles & User Creation
 DO $$
@@ -73,6 +110,9 @@ GRANT SELECT, INSERT, UPDATE ON TABLE users TO api_user;
 GRANT SELECT, INSERT, UPDATE ON TABLE bank_accounts TO api_user;
 GRANT SELECT ON TABLE transactions TO api_user;
 GRANT UPDATE (is_notified, category) ON TABLE transactions TO api_user;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE budgets TO api_user;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE goals TO api_user;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE system_settings TO api_user;
 
 -- Grants for scraper_user
 GRANT SELECT ON TABLE bank_accounts TO scraper_user;
