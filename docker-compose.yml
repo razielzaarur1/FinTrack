@@ -4,7 +4,6 @@ services:
   # ── Nginx Reverse Proxy (Exposed to Host / Tailscale Interface) ──
   nginx:
     build: ./config/nginx
-    image: finapp/nginx:latest
     container_name: finapp-nginx
     networks:
       - public-net
@@ -31,7 +30,6 @@ services:
   # ── Web PWA Frontend ─────────────────────────────────────────────
   web:
     build: ./services/web
-    image: finapp/web:latest
     container_name: finapp-web
     networks:
       - public-net
@@ -52,7 +50,6 @@ services:
   # ── API Gateway ─────────────────────────────────────────────────
   api-gateway:
     build: ./services/api-gateway
-    image: finapp/api-gateway:latest
     container_name: finapp-api-gateway
     networks:
       - public-net
@@ -94,7 +91,6 @@ services:
   # ── Vault ────────────────────────────────────────────────────────
   vault:
     build: ./config/vault
-    image: finapp/vault:latest
     container_name: finapp-vault
     networks:
       - vault-net
@@ -144,7 +140,6 @@ services:
   # ── Egress Proxy (Squid) ─────────────────────────────────────────
   egress-proxy:
     build: ./config/squid
-    image: finapp/egress-proxy:latest
     container_name: finapp-egress-proxy
     networks:
       worker-net:
@@ -174,7 +169,6 @@ services:
   # ── Scraper Worker (Daemon) ──────────────────────────────────────
   scraper-worker:
     build: ./services/scraper
-    image: finapp/scraper-worker:latest
     container_name: finapp-scraper-worker
     command: ["sleep", "infinity"]
     networks:
@@ -227,7 +221,6 @@ services:
   # ── Notifier ─────────────────────────────────────────────────────
   notifier:
     build: ./services/notifier
-    image: finapp/notifier:latest
     container_name: finapp-notifier
     networks:
       internal-net:
@@ -288,7 +281,6 @@ services:
   # ── Scheduler (Ofelia) ───────────────────────────────────────────
   scheduler:
     build: ./config/scheduler
-    image: finapp/scheduler:latest
     container_name: finapp-scheduler
     networks:
       - scheduler-net
