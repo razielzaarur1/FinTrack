@@ -209,9 +209,11 @@ export default function VaultUnsealModal({ isOpen, onClose, onUnsealed }) {
               </form>
             )}
           </>
+        )}
       </div>
     </div>
   );
 }
+
 
 
