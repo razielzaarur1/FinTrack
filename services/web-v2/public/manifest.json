@@ -1,0 +1,52 @@
+{
+  "name": "FinTrack - ניהול פיננסי מאובטח",
+  "short_name": "FinTrack",
+  "description": "מערכת ניהול פיננסי אישי מאובטחת עם סנכרון ישיר לבנקים וכרטיסי אשראי בישראל",
+  "start_url": "/",
+  "id": "/",
+  "display": "standalone",
+  "background_color": "#0b132b",
+  "theme_color": "#0f172a",
+  "orientation": "portrait-primary",
+  "dir": "rtl",
+  "lang": "he-IL",
+  "scope": "/",
+  "categories": ["finance", "productivity", "utilities"],
+  "icons": [
+    {
+      "src": "/icon-192.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "תנועות והוצאות",
+      "short_name": "תנועות",
+      "description": "צפייה וסינון תנועות פיננסיות",
+      "url": "/transactions",
+      "icons": [{ "src": "/icon-192.svg", "sizes": "192x192" }]
+    },
+    {
+      "name": "חשבונות בנק וכרטיסים",
+      "short_name": "חשבונות",
+      "description": "ניהול חשבונות וכרטיסי אשראי",
+      "url": "/accounts",
+      "icons": [{ "src": "/icon-192.svg", "sizes": "192x192" }]
+    },
+    {
+      "name": "תקציב ויעדים",
+      "short_name": "תקציב",
+      "description": "מעקב תקציבים ויעדי חיסכון",
+      "url": "/budgets",
+      "icons": [{ "src": "/icon-192.svg", "sizes": "192x192" }]
+    }
+  ]
+}

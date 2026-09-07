@@ -5,6 +5,18 @@ import Shell from '@/components/shell/Shell';
 export const metadata = {
   title: 'FinTrack v2 - Personal Finance',
   description: 'Fast, secure personal finance platform without friction',
+  manifest: '/manifest.json',
+  icons: {
+    icon: '/icon-192.svg',
+    shortcut: '/icon-192.svg',
+    apple: '/icon-192.svg',
+  },
+};
+
+export const viewport = {
+  themeColor: '#0a0d14',
+  width: 'device-width',
+  initialScale: 1,
 };
 
 export default function RootLayout({ children }) {
