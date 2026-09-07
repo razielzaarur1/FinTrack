@@ -96,10 +96,14 @@ CREATE INDEX IF NOT EXISTS idx_system_settings_user_id ON system_settings(user_i
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'api_user') THEN
-        CREATE ROLE api_user WITH LOGIN;
+        CREATE ROLE api_user WITH LOGIN PASSWORD 'postgres';
+    ELSE
+        ALTER ROLE api_user WITH LOGIN PASSWORD 'postgres';
     END IF;
     IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'scraper_user') THEN
-        CREATE ROLE scraper_user WITH LOGIN;
+        CREATE ROLE scraper_user WITH LOGIN PASSWORD 'postgres';
+    ELSE
+        ALTER ROLE scraper_user WITH LOGIN PASSWORD 'postgres';
     END IF;
 END
 $$;
