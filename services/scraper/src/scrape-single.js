@@ -161,7 +161,7 @@ async function run() {
 
     // 3. Configure scraper with Puppeteer args
     // NOTE: Strictly using specified args, NO --single-process, NO --no-sandbox
-    const proxyServer = process.env.PROXY_SERVER || 'http://172.30.0.254:3128';
+    const proxyServer = process.env.PROXY_SERVER || 'http://10.50.0.254:3128';
     const chromiumPath = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium';
 
     logger.info({ accountId, bank, startDate: startDate.toISOString(), proxyServer }, 'Initializing scraper...');

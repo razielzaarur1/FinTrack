@@ -77,10 +77,10 @@ vault policy write api-policy      ./config/vault/policies/api-policy.hcl
 vault policy write notifier-policy ./config/vault/policies/notifier-policy.hcl
 
 echo "===> Configuring AppRoles..."
-# Scraper worker AppRole - bound to CIDR 172.30.0.0/16
+# Scraper worker AppRole - bound to CIDR 10.50.0.0/16
 vault write auth/approle/role/scraper-worker \
-    secret_id_bound_cidrs="172.30.0.0/16" \
-    token_bound_cidrs="172.30.0.0/16" \
+    secret_id_bound_cidrs="10.50.0.0/16" \
+    token_bound_cidrs="10.50.0.0/16" \
     token_policies="scraper-policy" \
     token_ttl=1h \
     token_max_ttl=4h
