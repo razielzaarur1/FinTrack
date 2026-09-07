@@ -33,14 +33,8 @@ export default function VaultUnsealModal({ isOpen, onClose, onUnsealed }) {
           setUnsealKey('');
           onClose();
         }, 1500);
-      } else if (res && res.progress !== undefined) {
-        setSuccess(true);
-        if (onUnsealed) onUnsealed();
-        setTimeout(() => {
-          setSuccess(false);
-          setUnsealKey('');
-          onClose();
-        }, 1500);
+      } else if (res && res.sealed === true) {
+        setError(`נקלט מפתח (${res.progress}/${res.t || 2}). הכספת עדיין נעולה, יש להזין את המפתח הבא.`);
       } else {
         setError(res?.error || 'מפתח Unseal שגוי או שהכספת עדיין נעולה');
       }

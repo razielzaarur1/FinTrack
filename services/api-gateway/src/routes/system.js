@@ -134,7 +134,36 @@ export default async function systemRoutes(fastify, options) {
     const { key } = parseResult.data;
 
     try {
-      const response = await fetch(`${VAULT_ADDR.replace(/\/$/, '')}/v1/sys/unseal`, {
+      const vaultUrl = `${VAULT_ADDR.replace(/\/$/, '')}/v1/sys/unseal`;
+
+      // 1. Check current seal status
+      const statusRes = await fetch(`${VAULT_ADDR.replace(/\/$/, '')}/v1/sys/seal-status`);
+      const statusData = await statusRes.json();
+
+      if (statusData && statusData.sealed === false) {
+        try { await vaultClient.authenticate(); } catch (_) {}
+        return reply.code(200).send({ sealed: false, message: 'הכספת כבר פתוחה (Unsealed).' });
+      }
+
+      // 2. If progress is 0 and key1 file exists in secrets dir, apply key1 first!
+      const key1File = '/opt/finapp/secrets/vault_unseal_key1.txt';
+      if (statusData.progress === 0 && fs.existsSync(key1File)) {
+        try {
+          const key1 = fs.readFileSync(key1File, 'utf8').trim();
+          if (key1) {
+            await fetch(vaultUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ key: key1 }),
+            });
+          }
+        } catch (e) {
+          fastify.log.warn(`Failed to auto-apply Key 1 from file: ${e.message}`);
+        }
+      }
+
+      // 3. Apply user provided key
+      const response = await fetch(vaultUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ key }),
@@ -143,7 +172,7 @@ export default async function systemRoutes(fastify, options) {
 
       const data = await response.json();
 
-      // If Vault is unsealed now, trigger AppRole authentication
+      // 4. If Vault is unsealed now, trigger AppRole authentication
       if (data && data.sealed === false) {
         try {
           await vaultClient.authenticate();
