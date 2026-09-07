@@ -21,9 +21,8 @@ import {
   KeyRound,
   ExternalLink,
 } from 'lucide-react';
-import { getAccounts, triggerScrape, formatILS, formatDate } from '../../lib/api';
+import { getAccounts, createAccount, deleteAccount, triggerScrape, formatILS, formatDate } from '../../lib/api';
 import { ISRAELI_INSTITUTIONS } from '../../lib/types';
-import { useOtp } from '../../lib/otp-context';
 
 export default function AccountsPage() {
   const [accounts, setAccounts] = useState([]);
@@ -52,8 +51,6 @@ export default function AccountsPage() {
   // Deactivate confirmation modal
   const [accountToDeactivate, setAccountToDeactivate] = useState(null);
 
-  const { triggerDemoOtp } = useOtp();
-
   useEffect(() => {
     async function loadAccounts() {
       try {
@@ -81,7 +78,7 @@ export default function AccountsPage() {
         )
       );
     } catch (e) {
-      // error
+      console.error('Failed to sync account:', e);
     } finally {
       setTimeout(() => setSyncingAccountId(null), 1500);
     }
@@ -105,9 +102,15 @@ export default function AccountsPage() {
     }
   };
 
-  const handleDeactivateAccount = (accId) => {
-    setAccounts((prev) => prev.filter((a) => a.id !== accId));
-    setAccountToDeactivate(null);
+  const handleDeactivateAccount = async (accId) => {
+    try {
+      await deleteAccount(accId);
+      setAccounts((prev) => prev.filter((a) => a.id !== accId));
+      setAccountToDeactivate(null);
+    } catch (e) {
+      console.error('Failed to delete account:', e);
+      alert('שגיאה במחיקת החשבון: ' + e.message);
+    }
   };
 
   const handleSelectInstitution = (key) => {
@@ -128,33 +131,68 @@ export default function AccountsPage() {
     setIsSubmittingCredentials(true);
     setCredentialsError(null);
 
-    // Simulate backend encryption & registration via Vault Transit
-    setTimeout(() => {
+    try {
       const inst = ISRAELI_INSTITUTIONS[selectedInstitutionKey];
-      const newAcc = {
-        id: `acc-${selectedInstitutionKey}-${Date.now()}`,
+
+      // Format credentials required by israeli-bank-scrapers
+      const credentials = {
+        password: password.trim(),
+      };
+
+      if (selectedInstitutionKey === 'hapoalim') {
+        credentials.userCode = userCode.trim() || username.trim();
+        credentials.password = password.trim();
+      } else if (selectedInstitutionKey === 'discount') {
+        credentials.id = idNumber.trim();
+        credentials.num = userCode.trim() || username.trim();
+        credentials.password = password.trim();
+      } else if (selectedInstitutionKey === 'isracard') {
+        credentials.id = idNumber.trim() || username.trim();
+        if (cardLast4) credentials.card6Digits = cardLast4.trim();
+        credentials.password = password.trim();
+      } else if (selectedInstitutionKey === 'onezero') {
+        credentials.email = username.trim();
+        credentials.password = password.trim();
+      } else {
+        credentials.username = username.trim() || userCode.trim();
+        if (idNumber) credentials.id = idNumber.trim();
+        if (cardLast4) credentials.card6Digits = cardLast4.trim();
+      }
+
+      // 1. Send to API Gateway for HashiCorp Vault Transit AES-256-GCM encryption & PostgreSQL storage
+      const savedAccount = await createAccount({
         bankCompany: selectedInstitutionKey,
         displayName: accountNickname || inst?.name || 'חשבון חדש',
-        accountNumber: cardLast4 || '7721',
-        balance: inst?.type === 'credit' ? -1250.0 : 12400.0,
+        credentials,
+      });
+
+      // 2. Add to active accounts state
+      const formattedAcc = {
+        id: savedAccount.id,
+        bankCompany: savedAccount.bank_company || savedAccount.bankCompany || selectedInstitutionKey,
+        displayName: savedAccount.display_name || savedAccount.displayName || accountNickname || inst?.name,
+        accountNumber: cardLast4 || '****',
+        balance: 0,
         currency: 'ILS',
         isActive: true,
-        lastScrapedAt: new Date().toISOString(),
-        scrapeStatus: 'success',
+        lastScrapedAt: null,
+        scrapeStatus: 'idle',
         accountType: inst?.type === 'credit' ? 'credit' : 'checking',
       };
 
-      setAccounts((prev) => [newAcc, ...prev]);
-      setIsSubmittingCredentials(false);
+      setAccounts((prev) => [formattedAcc, ...prev]);
       setAddStep(3);
 
-      // If institution has OTP, trigger demo OTP notification
-      if (inst?.hasOtp) {
-        setTimeout(() => {
-          triggerDemoOtp(inst.name);
-        }, 1200);
-      }
-    }, 1800);
+      // 3. Trigger immediate scrape in background
+      triggerScrape(savedAccount.id).catch((err) => {
+        console.warn('Initial scrape trigger warning:', err);
+      });
+    } catch (err) {
+      console.error('Failed to create account:', err);
+      setCredentialsError(err.message || 'שגיאה בהצפנת הפרטים ושמירת החשבון');
+    } finally {
+      setIsSubmittingCredentials(false);
+    }
   };
 
   const resetAddModal = () => {

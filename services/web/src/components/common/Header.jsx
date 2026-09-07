@@ -94,8 +94,8 @@ export default function Header() {
 
         {/* Action Controls */}
         <div className="flex items-center gap-2 sm:gap-3">
-          {/* OTP Alert Indicator (Shows when OTP request is active or for testing) */}
-          {activeOtpRequest ? (
+          {/* OTP Alert Indicator (Shows ONLY when a real OTP request is active) */}
+          {activeOtpRequest && (
             <button
               onClick={() => {}}
               className="relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/20 border border-amber-500/50 text-amber-300 text-xs font-semibold animate-pulse shadow-glow-amber"
@@ -103,15 +103,6 @@ export default function Header() {
             >
               <BellRing className="w-4 h-4 text-amber-400 animate-bounce" />
               <span>קוד אימות פעיל ({activeOtpRequest.bank})</span>
-            </button>
-          ) : (
-            <button
-              onClick={() => triggerDemoOtp('בנק לאומי')}
-              className="hidden lg:flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] text-slate-400 hover:text-slate-200 transition-colors"
-              title="בדיקת דיאלוג OTP"
-            >
-              <KeyRound className="w-3.5 h-3.5 text-brand-cyan" />
-              <span>בדיקת OTP</span>
             </button>
           )}
 

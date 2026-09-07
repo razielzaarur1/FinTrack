@@ -38,15 +38,17 @@ export function OtpProvider({ children }) {
     setError(null);
   }, []);
 
-  // Listen to service worker push events / custom window events
+  // Listen to service worker push events / custom window events and poll backend
   useEffect(() => {
+    let isMounted = true;
+
     const handleCustomOtpEvent = (e) => {
-      if (e.detail) {
+      if (e.detail && isMounted) {
         const { bank, phoneHint, requestId, timeoutSeconds } = e.detail;
         const duration = timeoutSeconds || 180;
         setActiveOtpRequest({
-          bank: bank || 'בנק לאומי',
-          phoneHint: phoneHint || '****78',
+          bank: bank || 'בנק ישראלי',
+          phoneHint: phoneHint || 'SMS למכשירך',
           requestId: requestId || `req-${Date.now()}`,
           timeoutSeconds: duration,
           expiresAt: Date.now() + duration * 1000,
@@ -57,7 +59,39 @@ export function OtpProvider({ children }) {
     };
 
     window.addEventListener('fintrack-otp-request', handleCustomOtpEvent);
-    return () => window.removeEventListener('fintrack-otp-request', handleCustomOtpEvent);
+
+    // Periodically poll real backend pending OTP status from Notifier
+    async function checkBackendPendingOtp() {
+      try {
+        const res = await fetch('/api/system/otp/pending', { cache: 'no-store' });
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.pending && isMounted) {
+            const duration = data.timeout_seconds || data.timeoutSeconds || 180;
+            setActiveOtpRequest({
+              bank: data.bank || data.company || 'בנק ישראלי',
+              phoneHint: data.phone_hint || data.phoneHint || 'SMS למספר המעודכן בבנק',
+              requestId: data.request_id || data.requestId || `otp-${Date.now()}`,
+              timeoutSeconds: duration,
+              expiresAt: Date.now() + duration * 1000,
+            });
+          } else if (data && !data.pending && isMounted) {
+            setActiveOtpRequest((prev) => (prev && !prev.isManualDemo ? null : prev));
+          }
+        }
+      } catch (e) {
+        // offline or quiet
+      }
+    }
+
+    checkBackendPendingOtp();
+    const interval = setInterval(checkBackendPendingOtp, 4000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+      window.removeEventListener('fintrack-otp-request', handleCustomOtpEvent);
+    };
   }, []);
 
   // Submit entered OTP code
