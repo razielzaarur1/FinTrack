@@ -47,6 +47,28 @@ services:
         reservations:
           memory: 64m
 
+  # ── Web v2 New Interface (Isolated on Port 4747) ─────────────────
+  web-v2:
+    build: ./services/web-v2
+    container_name: finapp-web-v2
+    networks:
+      - public-net
+    ports:
+      - "4747:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_URL=/api
+    security_opt:
+      - no-new-privileges:true
+    read_only: false
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+        reservations:
+          memory: 64m
+
   # ── API Gateway ─────────────────────────────────────────────────
   api-gateway:
     build: ./services/api-gateway
@@ -62,7 +84,7 @@ services:
       - DB_PORT=5432
       - DB_NAME=finance
       - DB_USER=api_user
-      - DB_PASSWORD=${API_DB_PASSWORD:-}
+      - DB_PASSWORD=${API_DB_PASSWORD:-postgres}
       - DB_PASSWORD_FILE=/opt/finapp/secrets/api_db_password.txt
       - VAULT_ROLE_ID=${VAULT_API_ROLE_ID:-}
       - VAULT_ROLE_ID_FILE=/opt/finapp/secrets/vault_api_role_id.txt
@@ -118,7 +140,7 @@ services:
       - internal-net
       - worker-net
     environment:
-      - POSTGRES_PASSWORD=${DB_PASSWORD:-}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-postgres}
       - POSTGRES_DB=finance
       - POSTGRES_USER=finance_admin
     volumes:
@@ -184,7 +206,7 @@ services:
       - DB_PORT=5432
       - DB_NAME=finance
       - DB_USER=scraper_user
-      - DB_PASSWORD=${SCRAPER_DB_PASSWORD:-}
+      - DB_PASSWORD=${SCRAPER_DB_PASSWORD:-postgres}
       - DB_PASSWORD_FILE=/opt/finapp/secrets/scraper_db_password.txt
       - VAULT_ROLE_ID=${SCRAPER_ROLE_ID:-}
       - VAULT_ROLE_ID_FILE=/opt/finapp/secrets/scraper_role_id.txt

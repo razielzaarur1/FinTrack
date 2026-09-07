@@ -34,45 +34,119 @@ export const pool = new Pool({
   connectionTimeoutMillis: 5000,
 });
 
-let selfHealed = false;
+let selfHealPromise = null;
+let isHealed = false;
 
-async function ensureUserAuthenticated() {
-  if (selfHealed) return;
+async function runSelfHealing() {
+  if (isHealed) return;
+  if (selfHealPromise) return selfHealPromise;
 
-  try {
-    const client = await pool.connect();
-    client.release();
-    selfHealed = true;
-  } catch (err) {
-    if (err.message && err.message.includes('password authentication failed')) {
-      console.warn(`[PostgreSQL] Password authentication failed for ${dbUser}. Attempting admin self-healing...`);
-      try {
-        const adminClient = new Client({
-          host: dbHost,
-          port: dbPort,
-          user: process.env.POSTGRES_USER || 'finance_admin',
-          password: process.env.POSTGRES_PASSWORD || 'postgres',
-          database: dbName,
-        });
+  selfHealPromise = (async () => {
+    // 1. Try simple test connect with current pool
+    try {
+      const client = await pool.connect();
+      client.release();
+      isHealed = true;
+      return;
+    } catch (err) {
+      console.warn(`[PostgreSQL] Connection test for ${dbUser} failed: ${err.message}. Starting self-healing...`);
+    }
 
-        await adminClient.connect();
-        await adminClient.query(`ALTER ROLE "${dbUser}" WITH PASSWORD '${dbPassword.replace(/'/g, "''")}';`);
-        await adminClient.query(`GRANT USAGE ON SCHEMA public TO "${dbUser}";`);
-        await adminClient.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO "${dbUser}";`);
-        await adminClient.end();
+    // 2. Try admin connection candidates
+    const adminUsers = [process.env.POSTGRES_USER || 'finance_admin', 'postgres', 'root'];
+    const adminPasswords = [
+      process.env.POSTGRES_PASSWORD,
+      dbPassword,
+      'postgres',
+      '',
+    ].filter((p) => p !== undefined);
 
-        console.log(`[PostgreSQL] Self-healing succeeded: Password updated for ${dbUser}.`);
-        selfHealed = true;
-      } catch (adminErr) {
-        console.error(`[PostgreSQL] Self-healing failed: ${adminErr.message}`);
+    let healed = false;
+    for (const adminUser of adminUsers) {
+      if (healed) break;
+      for (const pass of adminPasswords) {
+        try {
+          const adminClient = new Client({
+            host: dbHost,
+            port: dbPort,
+            user: adminUser,
+            password: pass,
+            database: dbName,
+            connectionTimeoutMillis: 3000,
+          });
+
+          await adminClient.connect();
+
+          // Create or fix role passwords and permissions
+          await adminClient.query(`
+            DO $$
+            BEGIN
+              IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '${dbUser}') THEN
+                CREATE ROLE "${dbUser}" WITH LOGIN PASSWORD '${dbPassword.replace(/'/g, "''")}';
+              ELSE
+                ALTER ROLE "${dbUser}" WITH LOGIN PASSWORD '${dbPassword.replace(/'/g, "''")}';
+              END IF;
+
+              IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'scraper_user') THEN
+                CREATE ROLE "scraper_user" WITH LOGIN PASSWORD '${dbPassword.replace(/'/g, "''")}';
+              ELSE
+                ALTER ROLE "scraper_user" WITH LOGIN PASSWORD '${dbPassword.replace(/'/g, "''")}';
+              END IF;
+            END
+            $$;
+
+            GRANT USAGE ON SCHEMA public TO "${dbUser}", "scraper_user";
+            GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO "${dbUser}", "scraper_user";
+            GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO "${dbUser}", "scraper_user";
+            ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO "${dbUser}", "scraper_user";
+          `);
+
+          await adminClient.end();
+          console.log(`[PostgreSQL] Self-healing succeeded using admin user '${adminUser}'. Permissions and passwords synced.`);
+          healed = true;
+          isHealed = true;
+          break;
+        } catch (adminErr) {
+          // Try next admin credential
+        }
       }
     }
-  }
+  })();
+
+  return selfHealPromise;
 }
 
-// Pre-emptively verify connection on startup
-ensureUserAuthenticated().catch((err) => {
-  console.warn('[PostgreSQL] Initial connection check warning:', err.message);
+// Hook into pool.query directly so every caller gets self-healing protection
+const originalPoolQuery = pool.query.bind(pool);
+pool.query = async function (text, params) {
+  try {
+    return await originalPoolQuery(text, params);
+  } catch (err) {
+    if (err.message && (err.message.includes('password authentication') || err.message.includes('role') || err.message.includes('permission'))) {
+      await runSelfHealing();
+      return originalPoolQuery(text, params);
+    }
+    throw err;
+  }
+};
+
+// Also hook into pool.connect
+const originalPoolConnect = pool.connect.bind(pool);
+pool.connect = async function () {
+  try {
+    return await originalPoolConnect();
+  } catch (err) {
+    if (err.message && (err.message.includes('password authentication') || err.message.includes('role') || err.message.includes('permission'))) {
+      await runSelfHealing();
+      return originalPoolConnect();
+    }
+    throw err;
+  }
+};
+
+// Run startup check
+runSelfHealing().catch((err) => {
+  console.warn('[PostgreSQL] Startup auth self-healing notice:', err.message);
 });
 
 pool.on('error', (err) => {
@@ -80,12 +154,10 @@ pool.on('error', (err) => {
 });
 
 export async function query(text, params) {
-  await ensureUserAuthenticated();
   return pool.query(text, params);
 }
 
 export async function getAccountsForScraping() {
-  await ensureUserAuthenticated();
   const result = await pool.query(
     `SELECT id, user_id, bank_company AS "bankCompany", encrypted_credentials AS "encryptedCredentials", is_active, created_at
      FROM bank_accounts

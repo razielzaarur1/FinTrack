@@ -14,6 +14,9 @@ import systemRoutes from './routes/system.js';
 import dashboardRoutes from './routes/dashboard.js';
 import scraperRoutes from './routes/scraper.js';
 import internalRoutes from './routes/internal.js';
+import transactionsV2Routes from './routes/transactions-v2.js';
+import categoriesRoutes from './routes/categories.js';
+import analyticsRoutes from './routes/analytics.js';
 
 function readSecret(filePath, envVarName) {
   if (filePath && fs.existsSync(filePath)) {
@@ -84,10 +87,27 @@ fastify.get('/health', async (request, reply) => {
   return reply.type('text/plain').code(200).send('OK');
 });
 
+// Add CORS headers for web-v2 (port 4747) and same-origin
+fastify.addHook('onRequest', async (request, reply) => {
+  const origin = request.headers.origin;
+  if (origin) {
+    reply.header('Access-Control-Allow-Origin', origin);
+    reply.header('Access-Control-Allow-Credentials', 'true');
+    reply.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+    reply.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+  }
+  if (request.method === 'OPTIONS') {
+    return reply.code(204).send();
+  }
+});
+
 // Register Application Routes
 await fastify.register(dashboardRoutes, { prefix: '/api/dashboard' });
 await fastify.register(accountsRoutes, { prefix: '/api/accounts' });
 await fastify.register(transactionsRoutes, { prefix: '/api/transactions' });
+await fastify.register(transactionsV2Routes, { prefix: '/api/v2/transactions' });
+await fastify.register(categoriesRoutes, { prefix: '/api/categories' });
+await fastify.register(analyticsRoutes, { prefix: '/api/analytics' });
 await fastify.register(budgetsRoutes, { prefix: '/api/budgets' });
 await fastify.register(goalsRoutes, { prefix: '/api/goals' });
 await fastify.register(scraperRoutes, { prefix: '/api/scraper' });
