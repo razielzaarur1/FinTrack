@@ -90,6 +90,7 @@ services:
       - VAULT_ROLE_ID_FILE=/opt/finapp/secrets/vault_api_role_id.txt
       - VAULT_SECRET_ID=${VAULT_API_SECRET_ID:-}
       - VAULT_SECRET_ID_FILE=/opt/finapp/secrets/vault_api_secret_id.txt
+      - VAULT_TOKEN=${VAULT_TOKEN:-hvs.G5sUdb1lIi73aWnDlhpx6Wpm}
       - JWT_SECRET=${JWT_SECRET:-}
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - NODE_ENV=${NODE_ENV:-production}
@@ -212,6 +213,7 @@ services:
       - VAULT_ROLE_ID_FILE=/opt/finapp/secrets/scraper_role_id.txt
       - VAULT_SECRET_ID=${SCRAPER_SECRET_ID:-}
       - VAULT_SECRET_ID_FILE=/opt/finapp/secrets/scraper_secret_id.txt
+      - VAULT_TOKEN=${VAULT_TOKEN:-hvs.G5sUdb1lIi73aWnDlhpx6Wpm}
       - LOG_LEVEL=${LOG_LEVEL:-info}
     volumes:
       - finapp-secrets:/opt/finapp/secrets:ro

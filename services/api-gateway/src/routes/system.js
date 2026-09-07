@@ -384,6 +384,11 @@ export default async function systemRoutes(fastify, options) {
       vaultClient.vault.token = rootToken;
       vaultClient.initialized = true;
 
+      // Persist root token to secrets volume if writable
+      try {
+        fs.writeFileSync('/opt/finapp/secrets/vault_root_token.txt', rootToken, 'utf8');
+      } catch (_) {}
+
       return reply.code(200).send({
         success: true,
         message: 'הכספת אותחלה ונפתחה בהצלחה!',

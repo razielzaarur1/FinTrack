@@ -81,8 +81,15 @@ class VaultClientService {
   }
 
   async encryptCredentials(credentialsObj) {
-    if (!this.initialized) {
-      await this.authenticate();
+    if (!this.initialized && !this.vault.token) {
+      // Check if root token is available in env or secrets file
+      const rootToken = readSecret('/opt/finapp/secrets/vault_root_token.txt', 'VAULT_TOKEN');
+      if (rootToken) {
+        this.vault.token = rootToken;
+        this.initialized = true;
+      } else {
+        await this.authenticate();
+      }
     }
 
     const plaintext = JSON.stringify(credentialsObj);
