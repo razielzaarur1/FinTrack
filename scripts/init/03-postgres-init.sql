@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS bank_accounts (
     encrypted_credentials TEXT NOT NULL,
     vault_key_version INT NOT NULL DEFAULT 1,
     display_name VARCHAR(100),
+    account_number VARCHAR(50),
+    balance NUMERIC(14, 2) DEFAULT 0.00,
     is_active BOOLEAN NOT NULL DEFAULT true,
     last_scraped_at TIMESTAMPTZ,
     last_scrape_error TEXT,

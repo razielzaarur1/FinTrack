@@ -17,7 +17,28 @@ export default async function accountsRoutes(fastify, options) {
   fastify.get('/', async (request, reply) => {
     try {
       const result = await pool.query(
-        `SELECT id, user_id, bank_company, display_name, is_active, last_scraped_at, created_at
+        `SELECT
+           id,
+           user_id AS "userId",
+           bank_company AS "bankCompany",
+           display_name AS "displayName",
+           account_number AS "accountNumber",
+           COALESCE(balance, 0)::FLOAT AS balance,
+           'ILS' AS currency,
+           is_active AS "isActive",
+           last_scraped_at AS "lastScrapedAt",
+           last_scrape_error AS "lastScrapeError",
+           CASE
+             WHEN last_scrape_error IS NOT NULL THEN 'error'
+             WHEN last_scraped_at IS NOT NULL THEN 'success'
+             ELSE 'idle'
+           END AS "scrapeStatus",
+           CASE
+             WHEN bank_company IN ('max', 'cal', 'isracard', 'amex') THEN 'credit'
+             WHEN bank_company LIKE '%inv%' OR bank_company LIKE '%saving%' THEN 'savings'
+             ELSE 'checking'
+           END AS "accountType",
+           created_at AS "createdAt"
          FROM bank_accounts
          WHERE user_id = $1 AND is_active = true
          ORDER BY created_at DESC`,

@@ -32,9 +32,27 @@ function createDbPool() {
   });
 }
 
-async function saveTransactions(pool, accountId, transactions) {
+async function saveTransactions(pool, accountId, transactions, accountMeta = {}) {
   if (!transactions || transactions.length === 0) {
-    logger.info({ accountId }, 'No transactions to save');
+    logger.info({ accountId }, 'No transactions to save, updating account metadata...');
+    // Still update account balance and last_scraped_at
+    const client = await pool.connect();
+    try {
+      const balance = accountMeta?.balance !== undefined && accountMeta?.balance !== null ? accountMeta.balance : null;
+      const accountNumber = accountMeta?.accountNumber || null;
+      await client.query(`
+        UPDATE bank_accounts
+        SET last_scraped_at = NOW(),
+            last_scrape_error = NULL,
+            balance = COALESCE($2, balance),
+            account_number = COALESCE($3, account_number)
+        WHERE id = $1
+      `, [accountId, balance, accountNumber]);
+    } catch (e) {
+      logger.warn({ err: e.message, accountId }, 'Failed to update account meta on empty transactions');
+    } finally {
+      client.release();
+    }
     return { inserted: 0, total: 0 };
   }
 
@@ -92,16 +110,21 @@ async function saveTransactions(pool, accountId, transactions) {
       }
     }
 
-    // Update bank_accounts last_scraped_at
+    // Update bank_accounts last_scraped_at, balance, and account_number if available
+    const balance = accountMeta?.balance !== undefined && accountMeta?.balance !== null ? accountMeta.balance : null;
+    const accountNumber = accountMeta?.accountNumber || null;
+
     await client.query(`
       UPDATE bank_accounts
       SET last_scraped_at = NOW(),
-          last_scrape_error = NULL
+          last_scrape_error = NULL,
+          balance = COALESCE($2, balance),
+          account_number = COALESCE($3, account_number)
       WHERE id = $1
-    `, [accountId]);
+    `, [accountId, balance, accountNumber]);
 
     await client.query('COMMIT');
-    logger.info({ accountId, total: transactions.length, inserted: insertedCount }, 'Saved transactions to database');
+    logger.info({ accountId, total: transactions.length, inserted: insertedCount, balance, accountNumber }, 'Saved transactions and account state to database');
     return { inserted: insertedCount, total: transactions.length };
   } catch (err) {
     await client.query('ROLLBACK');
@@ -229,8 +252,18 @@ async function run() {
 
     logger.info({ accountId, bank, txCount: allTransactions.length }, 'Scraping successful. Persisting transactions...');
 
-    // 6. Save to PostgreSQL
-    const { inserted, total } = await saveTransactions(dbPool, accountId, allTransactions);
+    // 6. Extract account metadata (balance, accountNumber) from primary account
+    const primaryAccount = Array.isArray(scrapeResult.accounts) && scrapeResult.accounts.length > 0
+      ? scrapeResult.accounts[0]
+      : {};
+
+    const accountMeta = {
+      balance: typeof primaryAccount.balance === 'number' ? primaryAccount.balance : null,
+      accountNumber: primaryAccount.accountNumber ? String(primaryAccount.accountNumber).slice(-4) : null,
+    };
+
+    // 7. Save to PostgreSQL
+    const { inserted, total } = await saveTransactions(dbPool, accountId, allTransactions, accountMeta);
 
     logger.info({ accountId, bank, total, inserted }, 'Successfully completed scraping and saved transactions.');
     await dbPool.end();

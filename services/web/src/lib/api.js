@@ -307,71 +307,82 @@ const MOCK_GOALS = [
 // ── API CLIENT FUNCTIONS ──────────────────────────────────────────────────
 
 /**
- * Fetch dashboard high-level KPIs and charts
+ * Fetch dashboard high-level KPIs and charts directly from PostgreSQL
  */
 export async function getDashboardKPIs() {
   try {
     const res = await fetch(`${API_BASE}/api/dashboard/kpis`, { cache: 'no-store' });
-    if (res.ok) return await res.json();
+    if (res.ok) {
+      return await res.json();
+    }
   } catch (e) {
-    // fallback to mock
+    console.warn('[API] /api/dashboard/kpis failed, falling back:', e.message);
   }
 
-  const liquidCash = 34250.8;
-  const investments = 145000.0;
-  const totalCreditDue = 9310.5;
-  const netWorth = liquidCash + investments - totalCreditDue;
-  const monthlyIncome = 24500.0;
-  const monthlyExpenses = 14230.0;
-  const savingsRate = Math.round(((monthlyIncome - monthlyExpenses) / monthlyIncome) * 100);
-
+  // Graceful initial fallback when database is fresh or backend is starting
   return {
-    netWorth,
-    liquidCash,
-    investments,
-    totalCreditDue,
-    monthlyIncome,
-    monthlyExpenses,
-    savingsRate,
-    lastScrapedAt: new Date().toISOString(),
-    monthlyTrend: [
-      { month: 'אפר׳', income: 22000, expenses: 13500, savings: 8500 },
-      { month: 'מאי', income: 22500, expenses: 14100, savings: 8400 },
-      { month: 'יוני', income: 23000, expenses: 15200, savings: 7800 },
-      { month: 'יולי', income: 22500, expenses: 16800, savings: 5700 },
-      { month: 'אוג׳', income: 24000, expenses: 15100, savings: 8900 },
-      { month: 'ספט׳', income: 24500, expenses: 14230, savings: 10270 },
-    ],
-    categoryBreakdown: [
-      { name: 'דיור וחשבונות', amount: 5400, color: '#3b82f6' },
-      { name: 'סופרמרקט ומזון', amount: 2640, color: '#10b981' },
-      { name: 'מסעדות ובתי קפה', amount: 1380, color: '#f59e0b' },
-      { name: 'קניות וביגוד', amount: 920, color: '#8b5cf6' },
-      { name: 'תחבורה ודלק', amount: 750, color: '#6366f1' },
-      { name: 'שונות ופנאי', amount: 3140, color: '#06b6d4' },
-    ],
-    recentTransactions: MOCK_TRANSACTIONS.slice(0, 5),
+    netWorth: 0,
+    liquidCash: 0,
+    investments: 0,
+    totalCreditDue: 0,
+    monthlyIncome: 0,
+    monthlyExpenses: 0,
+    savingsRate: 0,
+    lastScrapedAt: null,
+    monthlyTrend: [],
+    categoryBreakdown: [],
+    recentTransactions: [],
   };
 }
 
 /**
- * Fetch accounts list
+ * Fetch active bank accounts list directly from PostgreSQL
  */
 export async function getAccounts() {
   try {
     const res = await fetch(`${API_BASE}/api/accounts`, { cache: 'no-store' });
     if (res.ok) {
       const data = await res.json();
-      if (Array.isArray(data) && data.length > 0) return data;
+      if (Array.isArray(data)) return data;
     }
   } catch (e) {
-    // fallback
+    console.warn('[API] /api/accounts failed:', e.message);
   }
-  return MOCK_ACCOUNTS;
+  return [];
 }
 
 /**
- * Fetch transactions with query filters
+ * Connect and encrypt a new bank account via HashiCorp Vault
+ */
+export async function createAccount(accountData) {
+  const res = await fetch(`${API_BASE}/api/accounts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(accountData),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || 'שגיאה ביצירת החשבון והצפנת הפרטים');
+  }
+  return await res.json();
+}
+
+/**
+ * Soft delete / deactivate an account
+ */
+export async function deleteAccount(id) {
+  const res = await fetch(`${API_BASE}/api/accounts/${id}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || 'שגיאה בהשבתת החשבון');
+  }
+  return await res.json();
+}
+
+/**
+ * Fetch transactions with query filters directly from PostgreSQL
  */
 export async function getTransactions(filters = {}) {
   const params = new URLSearchParams();
@@ -388,29 +399,13 @@ export async function getTransactions(filters = {}) {
     });
     if (res.ok) return await res.json();
   } catch (e) {
-    // fallback
-  }
-
-  let filtered = [...MOCK_TRANSACTIONS];
-  if (filters.category) {
-    filtered = filtered.filter((t) => t.category === filters.category);
-  }
-  if (filters.accountId) {
-    filtered = filtered.filter((t) => t.accountId === filters.accountId);
-  }
-  if (filters.query) {
-    const q = filters.query.toLowerCase();
-    filtered = filtered.filter(
-      (t) =>
-        t.description.toLowerCase().includes(q) ||
-        (t.merchantName && t.merchantName.toLowerCase().includes(q))
-    );
+    console.warn('[API] /api/transactions failed:', e.message);
   }
 
   return {
-    data: filtered,
+    data: [],
     pagination: {
-      total: filtered.length,
+      total: 0,
       limit: filters.limit || 50,
       page: filters.page || 1,
       pages: 1,
@@ -419,72 +414,173 @@ export async function getTransactions(filters = {}) {
 }
 
 /**
- * Update transaction category
+ * Update transaction category directly in PostgreSQL
  */
 export async function updateTransactionCategory(id, category) {
-  try {
-    const res = await fetch(`${API_BASE}/api/transactions/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ category }),
-    });
-    if (res.ok) return await res.json();
-  } catch (e) {
-    // fallback
+  const res = await fetch(`${API_BASE}/api/transactions/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ category }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || 'שגיאה בעדכון קטגוריית התנועה');
   }
-  const tx = MOCK_TRANSACTIONS.find((t) => t.id === id);
-  if (tx) tx.category = category;
-  return { status: 'success', transaction: tx };
+  return await res.json();
 }
 
 /**
- * Fetch budgets
+ * Fetch category budgets from PostgreSQL
  */
 export async function getBudgets() {
   try {
     const res = await fetch(`${API_BASE}/api/budgets`, { cache: 'no-store' });
     if (res.ok) return await res.json();
   } catch (e) {
-    // fallback
+    console.warn('[API] /api/budgets failed:', e.message);
   }
-  return MOCK_BUDGETS;
+  return [];
 }
 
 /**
- * Fetch savings goals
+ * Save or update a category budget
+ */
+export async function saveBudget(budget) {
+  const res = await fetch(`${API_BASE}/api/budgets`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(budget),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || 'שגיאה בשמירת התקציב');
+  }
+  return await res.json();
+}
+
+/**
+ * Delete a category budget
+ */
+export async function deleteBudget(id) {
+  const res = await fetch(`${API_BASE}/api/budgets/${id}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || 'שגיאה במחיקת התקציב');
+  }
+  return await res.json();
+}
+
+/**
+ * Fetch financial savings goals from PostgreSQL
  */
 export async function getGoals() {
   try {
     const res = await fetch(`${API_BASE}/api/goals`, { cache: 'no-store' });
     if (res.ok) return await res.json();
   } catch (e) {
-    // fallback
+    console.warn('[API] /api/goals failed:', e.message);
   }
-  return MOCK_GOALS;
+  return [];
 }
 
 /**
- * Fetch Vault Security Status
+ * Save a new savings goal
+ */
+export async function createGoal(goal) {
+  const res = await fetch(`${API_BASE}/api/goals`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(goal),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || 'שגיאה ביצירת יעד החיסכון');
+  }
+  return await res.json();
+}
+
+/**
+ * Update an existing savings goal (e.g. deposit / currentAmount)
+ */
+export async function updateGoal(id, updates) {
+  const res = await fetch(`${API_BASE}/api/goals/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || 'שגיאה בעדכון היעד');
+  }
+  return await res.json();
+}
+
+/**
+ * Delete a savings goal
+ */
+export async function deleteGoal(id) {
+  const res = await fetch(`${API_BASE}/api/goals/${id}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || 'שגיאה במחיקת היעד');
+  }
+  return await res.json();
+}
+
+/**
+ * Fetch Vault & System Security Status
  */
 export async function getVaultStatus() {
   try {
-    const res = await fetch(`${API_BASE}/api/vault/status`, { cache: 'no-store' });
-    if (res.ok) return await res.json();
+    const res = await fetch(`${API_BASE}/api/system/status`, { cache: 'no-store' });
+    if (res.ok) {
+      const data = await res.json();
+      return {
+        isSealed: data.vault?.sealed ?? false,
+        initialized: data.vault?.initialized ?? true,
+        secretCount: data.vault?.secretCount || 0,
+        keyHealth: data.vault?.healthy ? 'healthy' : 'warning',
+        lastAudit: new Date().toISOString(),
+        transitKeyVersion: data.vault?.transitKeyVersion || 1,
+        raw: data,
+      };
+    }
   } catch (e) {
-    // fallback
+    console.warn('[API] /api/system/status failed:', e.message);
   }
+
   return {
     isSealed: false,
     initialized: true,
-    secretCount: 14,
+    secretCount: 0,
     keyHealth: 'healthy',
-    lastAudit: new Date(Date.now() - 1000 * 60 * 12).toISOString(),
-    transitKeyVersion: 3,
+    lastAudit: new Date().toISOString(),
+    transitKeyVersion: 1,
   };
 }
 
 /**
- * Trigger immediate account sync scraping
+ * Submit Vault Unseal Key (Shamir 2-of-2)
+ */
+export async function unsealVault(key) {
+  const res = await fetch(`${API_BASE}/api/system/unseal`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || 'שגיאה בשחרור נעילת הכספת (Unseal)');
+  }
+  return await res.json();
+}
+
+/**
+ * Trigger immediate account sync scraping with israeli-bank-scrapers
  */
 export async function triggerScrape(accountId = null) {
   try {
@@ -495,28 +591,27 @@ export async function triggerScrape(accountId = null) {
     });
     if (res.ok) return await res.json();
   } catch (e) {
-    // fallback
+    console.warn('[API] /api/scraper/trigger failed:', e.message);
   }
   return {
     status: 'triggered',
     message: 'תהליך הסנכרון הופעל בהצלחה ברקע',
-    jobId: `job-${Date.now()}`,
+    timestamp: new Date().toISOString(),
   };
 }
 
 /**
- * Submit OTP response to backend
+ * Submit OTP 2FA response to backend notifier & scraper
  */
 export async function submitOtp(code, requestId = null) {
-  try {
-    const res = await fetch(`${API_BASE}/api/otp-resolve`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, requestId }),
-    });
-    if (res.ok) return await res.json();
-  } catch (e) {
-    // fallback
+  const res = await fetch(`${API_BASE}/api/system/otp`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ otp: code, requestId }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || 'שגיאה באימות קוד ה-OTP');
   }
-  return { status: 'success', message: 'קוד OTP אומת בהצלחה' };
+  return await res.json();
 }

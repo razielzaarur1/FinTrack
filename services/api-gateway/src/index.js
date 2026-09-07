@@ -11,6 +11,8 @@ import transactionsRoutes from './routes/transactions.js';
 import budgetsRoutes from './routes/budgets.js';
 import goalsRoutes from './routes/goals.js';
 import systemRoutes from './routes/system.js';
+import dashboardRoutes from './routes/dashboard.js';
+import scraperRoutes from './routes/scraper.js';
 import internalRoutes from './routes/internal.js';
 
 function readSecret(filePath, envVarName) {
@@ -69,10 +71,12 @@ fastify.get('/health', async (request, reply) => {
 });
 
 // Register Application Routes
+await fastify.register(dashboardRoutes, { prefix: '/api/dashboard' });
 await fastify.register(accountsRoutes, { prefix: '/api/accounts' });
 await fastify.register(transactionsRoutes, { prefix: '/api/transactions' });
 await fastify.register(budgetsRoutes, { prefix: '/api/budgets' });
 await fastify.register(goalsRoutes, { prefix: '/api/goals' });
+await fastify.register(scraperRoutes, { prefix: '/api/scraper' });
 await fastify.register(systemRoutes, { prefix: '/api/system' });
 await fastify.register(internalRoutes, { prefix: '/internal' });
 
