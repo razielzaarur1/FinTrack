@@ -98,13 +98,10 @@ services:
       - IPC_LOCK
     ports:
       - "127.0.0.1:8200:8200"
-    command: vault server -config=/vault/config/vault.hcl
     volumes:
       - vault-data:/vault/data
       - vault-audit:/vault/logs
       - finapp-secrets:/opt/finapp/secrets
-    security_opt:
-      - no-new-privileges:true
     restart: unless-stopped
     deploy:
       resources:
