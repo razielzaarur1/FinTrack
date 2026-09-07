@@ -39,7 +39,7 @@ export async function requestOtp({ accountId, bank, prompt, timeoutMs = 185000 }
     throw new Error(msg);
   }
 
-  const notifierUrl = process.env.NOTIFIER_URL || 'http://172.28.0.200:3001';
+  const notifierUrl = process.env.NOTIFIER_URL || 'http://172.30.0.200:3001';
   const endpoint = `${notifierUrl.replace(/\/$/, '')}/api/otp-request`;
 
   logger.info({ accountId, bank, endpoint, timeoutMs }, 'Sending OTP request to Notifier service (direct internal connection)...');

@@ -23,7 +23,7 @@ function createDbPool() {
   return new Pool({
     host: process.env.DB_HOST || 'postgres',
     port: parseInt(process.env.DB_PORT || '5432', 10),
-    database: process.env.DB_NAME || 'financial_management',
+    database: process.env.DB_NAME || 'finance',
     user: process.env.DB_USER || 'scraper_user',
     password: getDbPassword(),
     max: 5,
@@ -161,7 +161,7 @@ async function run() {
 
     // 3. Configure scraper with Puppeteer args
     // NOTE: Strictly using specified args, NO --single-process, NO --no-sandbox
-    const proxyServer = process.env.PROXY_SERVER || 'http://172.28.0.254:3128';
+    const proxyServer = process.env.PROXY_SERVER || 'http://172.30.0.254:3128';
     const chromiumPath = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium';
 
     logger.info({ accountId, bank, startDate: startDate.toISOString(), proxyServer }, 'Initializing scraper...');

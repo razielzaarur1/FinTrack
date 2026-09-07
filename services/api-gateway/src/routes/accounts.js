@@ -6,6 +6,7 @@ const DEFAULT_USER_ID = '00000000-0000-0000-0000-000000000001';
 
 const createAccountSchema = z.object({
   bankCompany: z.string().min(1, 'bankCompany is required'),
+  displayName: z.string().optional(),
   credentials: z.record(z.any()).refine((val) => Object.keys(val).length > 0, {
     message: 'credentials object must not be empty',
   }),

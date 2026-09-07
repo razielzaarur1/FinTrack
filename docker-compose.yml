@@ -124,7 +124,7 @@ services:
     container_name: finapp-egress-proxy
     networks:
       worker-net:
-        ipv4_address: 172.28.0.254
+        ipv4_address: 172.30.0.254
       egress-net:
     volumes:
       - ./config/squid/squid.conf:/etc/squid/squid.conf:ro
@@ -154,14 +154,14 @@ services:
     networks:
       vault-net:
       worker-net:
-        ipv4_address: 172.28.0.100
+        ipv4_address: 172.30.0.100
     environment:
       - VAULT_ADDR=http://vault:8200
-      - NOTIFIER_URL=http://172.28.0.200:3001
+      - NOTIFIER_URL=http://172.30.0.200:3001
       - INTERNAL_API_URL=http://api-gateway:3000
-      - HTTPS_PROXY=http://172.28.0.254:3128
-      - HTTP_PROXY=http://172.28.0.254:3128
-      - NO_PROXY=vault,postgres,api-gateway,172.28.0.200
+      - HTTPS_PROXY=http://172.30.0.254:3128
+      - HTTP_PROXY=http://172.30.0.254:3128
+      - NO_PROXY=vault,postgres,api-gateway,172.30.0.200
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_NAME=finance
@@ -204,7 +204,7 @@ services:
     networks:
       internal-net:
       worker-net:
-        ipv4_address: 172.28.0.200
+        ipv4_address: 172.30.0.200
       vault-net:
     expose:
       - "3001"
@@ -214,8 +214,8 @@ services:
       - TELEGRAM_BOT_TOKEN_FILE=/run/secrets/telegram_token
       - TELEGRAM_ALLOWED_CHAT_ID_FILE=/run/secrets/telegram_chat_id
       - VAULT_ADDR=http://vault:8200
-      - HTTPS_PROXY=http://172.28.0.254:3128
-      - NO_PROXY=vault,postgres,api-gateway,172.28.0.100
+      - HTTPS_PROXY=http://172.30.0.254:3128
+      - NO_PROXY=vault,postgres,api-gateway,172.30.0.100
     secrets:
       - telegram_token
       - telegram_chat_id
@@ -318,7 +318,7 @@ networks:
     ipam:
       driver: default
       config:
-        - subnet: 172.28.0.0/16
+        - subnet: 172.30.0.0/16
 
 volumes:
   vault-data:
