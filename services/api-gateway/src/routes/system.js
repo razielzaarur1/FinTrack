@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import { z } from 'zod';
 import { pool } from '../db.js';
 import { vaultClient } from '../vault-client.js';
