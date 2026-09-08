@@ -16,26 +16,44 @@ export default async function scraperRoutes(fastify, options) {
       fastify.log.info({ accountId, scraperUrl }, 'Manual scraper execution triggered via HTTP');
 
       let responseData = null;
-      try {
-        const scraperRes = await fetch(`${scraperUrl}/scrape`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ accountId }),
-          signal: AbortSignal.timeout(8000),
-        });
+      const targetUrls = [
+        scraperUrl,
+        'http://finapp-scraper-worker:3002',
+        'http://scraper-worker:3002',
+      ].filter((v, i, a) => a.indexOf(v) === i);
 
-        if (!scraperRes.ok) {
-          const errText = await scraperRes.text();
-          return reply.code(scraperRes.status).send({
-            error: `שירות הסריקה החזיר שגיאה: ${errText}`,
+      let lastError = null;
+      let connected = false;
+
+      for (const target of targetUrls) {
+        try {
+          const scraperRes = await fetch(`${target}/scrape`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ accountId }),
+            signal: AbortSignal.timeout(8000),
           });
-        }
 
-        responseData = await scraperRes.json();
-      } catch (httpErr) {
-        fastify.log.error({ err: httpErr.message }, 'Failed to reach scraper service via HTTP');
+          if (!scraperRes.ok) {
+            const errText = await scraperRes.text();
+            return reply.code(scraperRes.status).send({
+              error: `שירות הסריקה החזיר שגיאה: ${errText}`,
+            });
+          }
+
+          responseData = await scraperRes.json();
+          connected = true;
+          break;
+        } catch (httpErr) {
+          lastError = httpErr;
+          fastify.log.warn({ target, err: httpErr.message, code: httpErr.cause?.code }, 'Failed attempt to reach scraper');
+        }
+      }
+
+      if (!connected) {
+        const errDetail = lastError?.cause?.code || lastError?.message || 'Connection failed';
         return reply.code(502).send({
-          error: `שירות הסריקה (finapp-scraper-worker) אינו זמין בפורט 3002: ${httpErr.message}. ודא שהקונטיינר רץ.`,
+          error: `שירות הסריקה (finapp-scraper-worker) אינו זמין בפורט 3002 (${errDetail}). ודא ב-Portainer שהקונטיינר רץ ובדוק את הלוגים שלו.`,
         });
       }
 
