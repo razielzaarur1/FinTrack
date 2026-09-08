@@ -86,11 +86,11 @@ const server = http.createServer(async (req, res) => {
       (async () => {
         try {
           if (accountId) {
-            logger.info({ jobId, accountId }, 'Running single account scrape in background...');
+            logger.info({ jobId, accountId, daysBack }, 'Running single account scrape in background...');
             await scrapeAccount({ accountId, daysBack, startDate });
           } else {
-            logger.info({ jobId }, 'Running all accounts scrape in background...');
-            await scrapeAllAccounts();
+            logger.info({ jobId, daysBack }, 'Running all accounts scrape in background...');
+            await scrapeAllAccounts({ daysBack, startDate });
           }
         } catch (taskErr) {
           logger.error({ jobId, err: taskErr.message }, 'Background scrape job encountered an error');

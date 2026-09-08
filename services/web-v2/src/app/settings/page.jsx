@@ -20,12 +20,26 @@ export default function SettingsPage() {
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // Scraping range settings
+  const [scrapeDaysBack, setScrapeDaysBack] = useState(30);
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [settingsSaved, setSettingsSaved] = useState(false);
+
   // New Category form
   const [name, setName] = useState('');
   const [nameEn, setNameEn] = useState('');
   const [type, setType] = useState('expense');
   const [color, setColor] = useState('#6366f1');
   const [submitting, setSubmitting] = useState(false);
+
+  const loadSettings = async () => {
+    try {
+      const res = await api.getSystemSettings();
+      if (res.data?.settings?.scrapeDaysBack) {
+        setScrapeDaysBack(parseInt(res.data.settings.scrapeDaysBack, 10) || 30);
+      }
+    } catch (_) {}
+  };
 
   const loadCategories = async () => {
     setLoading(true);
@@ -39,7 +53,26 @@ export default function SettingsPage() {
 
   useEffect(() => {
     loadCategories();
+    loadSettings();
   }, []);
+
+  const handleSaveSyncSettings = async (days) => {
+    const val = parseInt(days, 10) || 30;
+    setScrapeDaysBack(val);
+    setSavingSettings(true);
+    setSettingsSaved(false);
+    try {
+      const res = await api.getSystemSettings();
+      const current = res.data?.settings || {};
+      await api.updateSystemSettings({ ...current, scrapeDaysBack: val });
+      setSettingsSaved(true);
+      setTimeout(() => setSettingsSaved(false), 3000);
+    } catch (err) {
+      console.error('Failed to save scraping settings:', err);
+    } finally {
+      setSavingSettings(false);
+    }
+  };
 
   const handleCreateCategory = async (e) => {
     e.preventDefault();
@@ -112,6 +145,59 @@ export default function SettingsPage() {
             >
               {theme === 'dark' ? '☀️ ' + t('lightMode') : '🌙 ' + t('darkMode')}
             </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Scraping & Sync Range Preferences */}
+      <div className="p-5 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface space-y-4">
+        <div>
+          <h3 className="font-semibold text-base flex items-center gap-2">
+            <RefreshCw className="w-5 h-5 text-brand-primary" />
+            <span>{lang === 'he' ? 'הגדרות סנכרון וסריקה בנקאית' : 'Scraping & Sync Settings'}</span>
+          </h3>
+          <p className="text-xs text-dark-text-muted mt-0.5">
+            {lang === 'he'
+              ? 'בחר כמה זמן היסטוריה למשוך בכל סריקה של חשבונות הבנק וכרטיסי האשראי'
+              : 'Configure transaction history range fetched during scraping'}
+          </p>
+        </div>
+
+        <div className="p-4 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+            <div>
+              <div className="font-semibold text-sm">
+                {lang === 'he' ? 'טווח משיכת עסקאות אחורה' : 'Transaction History Range'}
+              </div>
+              <div className="text-dark-text-muted text-[11px] mt-0.5">
+                {lang === 'he'
+                  ? 'הספריות של Max, כאל ובנקים תומכות במשיכה של עד שנה (365 יום) או שנתיים אחורה'
+                  : 'Israeli bank scrapers support fetching up to 1 year (365 days) or 2 years back'}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <select
+                value={scrapeDaysBack}
+                onChange={(e) => handleSaveSyncSettings(e.target.value)}
+                disabled={savingSettings}
+                className="p-2.5 rounded-xl border border-dark-border bg-dark-surface light:bg-light-surface font-semibold text-xs focus:ring-2 focus:ring-brand-primary/50"
+              >
+                <option value="30">{lang === 'he' ? 'חודש אחד אחורה (30 יום) - ברירת מחדל' : '1 Month (30 days) - Default'}</option>
+                <option value="60">{lang === 'he' ? 'חודשיים אחורה (60 יום)' : '2 Months (60 days)'}</option>
+                <option value="90">{lang === 'he' ? '3 חודשים אחורה (90 יום)' : '3 Months (90 days)'}</option>
+                <option value="180">{lang === 'he' ? 'חצי שנה אחורה (180 יום)' : '6 Months (180 days)'}</option>
+                <option value="365">{lang === 'he' ? 'שנה אחורה (365 יום - מומלץ למשיכה מלאה)' : '1 Year (365 days - Full History)'}</option>
+                <option value="730">{lang === 'he' ? 'שנתיים אחורה (730 יום - מוסדות תומכים)' : '2 Years (730 days)'}</option>
+              </select>
+
+              {settingsSaved && (
+                <span className="flex items-center gap-1 text-brand-income font-medium text-xs">
+                  <Check className="w-4 h-4" />
+                  <span>{lang === 'he' ? 'נשמר' : 'Saved'}</span>
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </div>

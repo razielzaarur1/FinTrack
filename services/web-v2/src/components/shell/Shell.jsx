@@ -45,8 +45,8 @@ export default function Shell({ children }) {
 
   return (
     <div className="min-h-screen flex bg-dark-bg text-dark-text light:bg-light-bg light:text-light-text selection:bg-brand-primary selection:text-white">
-      {/* Desktop Sidebar */}
-      <aside className="hidden md:flex flex-col w-64 border-r border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface p-4 shrink-0 justify-between">
+      {/* Desktop Sidebar (Fixed Sticky Height) */}
+      <aside className="hidden md:flex flex-col w-64 border-r border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface p-4 shrink-0 justify-between sticky top-0 h-screen overflow-y-auto z-20">
         <div className="space-y-6">
           <div className="flex items-center gap-3 px-2">
             <div className="w-10 h-10 rounded-xl bg-brand-primary flex items-center justify-center text-white font-bold text-xl shadow-lg shadow-brand-primary/25">
@@ -114,7 +114,7 @@ export default function Shell({ children }) {
       </aside>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0 pb-20 md:pb-6">
+      <div className="flex-1 flex flex-col min-w-0 pb-20 md:pb-6 overflow-x-hidden">
         {/* Mobile Header */}
         <header className="md:hidden flex items-center justify-between p-4 border-b border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface sticky top-0 z-30">
           <div className="flex items-center gap-2">

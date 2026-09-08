@@ -110,6 +110,14 @@ export const api = {
   updateGoal: (id, data) => request(`/api/goals/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteGoal: (id) => request(`/api/goals/${id}`, { method: 'DELETE' }),
 
+  // System Settings
+  getSystemSettings: () => request('/api/system/settings'),
+  updateSystemSettings: (settings) => request('/api/system/settings', { method: 'PUT', body: JSON.stringify({ settings }) }),
+
   // Scraper Trigger
-  triggerScrape: (accountId = null) => request('/api/scraper/trigger', { method: 'POST', body: JSON.stringify({ accountId }) }),
+  triggerScrape: (accountId = null, daysBack = null) =>
+    request('/api/scraper/trigger', {
+      method: 'POST',
+      body: JSON.stringify({ accountId, ...(daysBack ? { daysBack } : {}) }),
+    }),
 };

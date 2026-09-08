@@ -3,6 +3,7 @@ import { pool } from '../db.js';
 
 const triggerSchema = z.object({
   accountId: z.string().uuid().optional().nullable(),
+  daysBack: z.number().int().positive().optional().nullable(),
 });
 
 export default async function scraperRoutes(fastify, options) {
@@ -10,10 +11,30 @@ export default async function scraperRoutes(fastify, options) {
   fastify.post('/trigger', async (request, reply) => {
     const parseResult = triggerSchema.safeParse(request.body || {});
     const accountId = parseResult.success ? parseResult.data.accountId : null;
+    let daysBack = parseResult.success && parseResult.data.daysBack ? parseResult.data.daysBack : null;
+
+    // If not passed in body, fetch user preference from system_settings
+    if (!daysBack) {
+      try {
+        const settingsRes = await pool.query(
+          `SELECT settings FROM system_settings WHERE user_id = '00000000-0000-0000-0000-000000000001'`
+        );
+        if (settingsRes.rows[0]?.settings?.scrapeDaysBack) {
+          daysBack = parseInt(settingsRes.rows[0].settings.scrapeDaysBack, 10);
+        }
+      } catch (e) {
+        fastify.log.warn({ err: e.message }, 'Failed to read scrapeDaysBack from system_settings');
+      }
+    }
+
+    if (!daysBack || isNaN(daysBack)) {
+      daysBack = 30;
+    }
+
     const scraperUrl = process.env.SCRAPER_URL || 'http://scraper-worker:3002';
 
     try {
-      fastify.log.info({ accountId, scraperUrl }, 'Manual scraper execution triggered via HTTP');
+      fastify.log.info({ accountId, daysBack, scraperUrl }, 'Manual scraper execution triggered via HTTP');
 
       let responseData = null;
       const targetUrls = [
@@ -30,7 +51,7 @@ export default async function scraperRoutes(fastify, options) {
           const scraperRes = await fetch(`${target}/scrape`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ accountId }),
+            body: JSON.stringify({ accountId, daysBack }),
             signal: AbortSignal.timeout(8000),
           });
 
@@ -73,11 +94,23 @@ export default async function scraperRoutes(fastify, options) {
   // GET /api/scraper/status - Check status of recent scrape jobs
   fastify.get('/status', async (request, reply) => {
     try {
+      let isJobRunning = false;
+      const scraperUrl = process.env.SCRAPER_URL || 'http://scraper-worker:3002';
+      try {
+        const healthRes = await fetch(`${scraperUrl}/health`, { signal: AbortSignal.timeout(2000) });
+        if (healthRes.ok) {
+          const healthData = await healthRes.json();
+          isJobRunning = Boolean(healthData.isJobRunning);
+        }
+      } catch (_) {}
+
       const result = await pool.query(
         `SELECT
            id,
            bank_company AS "bankCompany",
            display_name AS "displayName",
+           account_number AS "accountNumber",
+           balance,
            last_scraped_at AS "lastScrapedAt",
            last_scrape_error AS "lastScrapeError",
            CASE
@@ -87,10 +120,11 @@ export default async function scraperRoutes(fastify, options) {
            END AS "status"
          FROM bank_accounts
          WHERE is_active = true
-         ORDER BY last_scraped_at DESC NULLS LAST`
+         ORDER BY created_at ASC`
       );
 
       return reply.code(200).send({
+        isJobRunning,
         accounts: result.rows,
         lastGlobalSync: result.rows[0]?.lastScrapedAt || null,
       });

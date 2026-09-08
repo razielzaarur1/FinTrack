@@ -223,14 +223,21 @@ export default function AccountsPage() {
                     </div>
                   </div>
 
-                  <div className="text-2xl font-bold tracking-tight">
-                    {formatILS(acc.balance)}
+                  <div className="space-y-0.5">
+                    <div className="text-[11px] font-medium text-dark-text-muted light:text-light-text-muted">
+                      {inst.type === 'credit'
+                        ? (lang === 'he' ? 'חיוב חודשי צפוי' : 'Monthly Charge')
+                        : (lang === 'he' ? 'יתרה בעו״ש' : 'Current Balance')}
+                    </div>
+                    <div className={`text-2xl font-bold tracking-tight ${inst.type === 'credit' ? 'text-brand-amber' : ''}`}>
+                      {formatILS(acc.balance)}
+                    </div>
                   </div>
 
                   {isSyncing && (
                     <div className="p-2.5 rounded-xl bg-brand-primary/10 border border-brand-primary/20 text-[11px] text-brand-primary flex items-center gap-2 animate-pulse">
                       <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" />
-                      <span>{lang === 'he' ? 'מתחבר לבנק ומבצע סריקה (עשוי לקחת 20-40 שניות)...' : 'Connecting to bank and scraping (takes 20-40s)...'}</span>
+                      <span>{lang === 'he' ? 'מתחבר למוסד ומסנכרן כרטיסים ועסקאות...' : 'Connecting to institution and syncing cards & transactions...'}</span>
                     </div>
                   )}
 
