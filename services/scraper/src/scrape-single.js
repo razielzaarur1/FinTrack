@@ -1,9 +1,27 @@
 import fs from 'node:fs';
 import pg from 'pg';
-import { createScraper, SCRAPER_EVENT_TYPES } from 'israeli-bank-scrapers';
+import israeliBankScrapersPkg from 'israeli-bank-scrapers';
 import { logger } from './logger.js';
 import { decryptCredentials } from './crypto.js';
 import { requestOtp } from './notifier-client.js';
+
+// Support both ESM and CJS exports from israeli-bank-scrapers
+const scrapersModule =
+  (israeliBankScrapersPkg && israeliBankScrapersPkg.default)
+    ? israeliBankScrapersPkg.default
+    : israeliBankScrapersPkg;
+
+const createScraper =
+  scrapersModule?.createScraper ||
+  (typeof scrapersModule === 'function' ? scrapersModule : null) ||
+  israeliBankScrapersPkg?.createScraper;
+
+const SCRAPER_EVENT_TYPES =
+  scrapersModule?.SCRAPER_EVENT_TYPES ||
+  scrapersModule?.SCRAPER_EVENTS ||
+  israeliBankScrapersPkg?.SCRAPER_EVENT_TYPES ||
+  israeliBankScrapersPkg?.SCRAPER_EVENTS ||
+  {};
 
 const { Pool } = pg;
 
@@ -229,6 +247,12 @@ export async function scrapeAccount({ accountId, bank, encryptedCreds, daysBack 
       'Initializing israeli-bank-scrapers...'
     );
 
+    if (typeof createScraper !== 'function') {
+      throw new Error(
+        `Failed to initialize scraper: createScraper is not a function (resolved type: ${typeof createScraper})`
+      );
+    }
+
     const scraper = createScraper({
       companyId: targetBank,
       startDate: effectiveStartDate,
@@ -240,7 +264,7 @@ export async function scrapeAccount({ accountId, bank, encryptedCreds, daysBack 
     });
 
     // Handle OTP callback
-    if (typeof scraper.onOtp === 'function') {
+    if (typeof scraper?.onOtp === 'function') {
       scraper.onOtp(async (otpDetails) => {
         logger.info({ accountId, targetBank, otpDetails }, 'Bank requested OTP verification code');
         return await requestOtp({
@@ -251,8 +275,9 @@ export async function scrapeAccount({ accountId, bank, encryptedCreds, daysBack 
       });
     }
 
-    if (typeof scraper.on === 'function' && SCRAPER_EVENT_TYPES?.OTP_REQUEST) {
-      scraper.on(SCRAPER_EVENT_TYPES.OTP_REQUEST, async (data) => {
+    const otpEventType = SCRAPER_EVENT_TYPES?.OTP_REQUEST || scrapersModule?.SCRAPER_EVENTS?.OTP_REQUEST || 'OTP_REQUEST';
+    if (typeof scraper?.on === 'function' && otpEventType) {
+      scraper.on(otpEventType, async (data) => {
         logger.info({ accountId, targetBank, data }, 'Received OTP_REQUEST event');
         return await requestOtp({
           accountId,
