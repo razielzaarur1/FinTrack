@@ -3,6 +3,7 @@ version: "3.9"
 services:
   # ── Nginx Reverse Proxy (Exposed to Host / Tailscale) ─────────────────────
   nginx:
+    image: ghcr.io/razielzaarur1/fintrack-nginx:latest
     build: ./config/nginx
     container_name: finapp-nginx
     networks:
@@ -29,6 +30,7 @@ services:
 
   # ── Web PWA Frontend (Original) ──────────────────────────────────────────
   web:
+    image: ghcr.io/razielzaarur1/fintrack-web:latest
     build: ./services/web
     container_name: finapp-web
     networks:
@@ -49,6 +51,7 @@ services:
 
   # ── Web v2 New Interface (Port 4747) ─────────────────────────────────────
   web-v2:
+    image: ghcr.io/razielzaarur1/fintrack-web-v2:latest
     build: ./services/web-v2
     container_name: finapp-web-v2
     networks:
@@ -71,6 +74,7 @@ services:
 
   # ── API Gateway ──────────────────────────────────────────────────────────
   api-gateway:
+    image: ghcr.io/razielzaarur1/fintrack-api-gateway:latest
     build: ./services/api-gateway
     container_name: finapp-api-gateway
     networks:
@@ -125,6 +129,7 @@ services:
 
   # ── Scraper Microservice (Port 3002) ─────────────────────────────────────
   scraper-worker:
+    image: ghcr.io/razielzaarur1/fintrack-scraper-worker:latest
     build: ./services/scraper
     container_name: finapp-scraper-worker
     command: ["node", "src/server.js"]
@@ -162,6 +167,7 @@ services:
 
   # ── Notifier (Telegram & OTP) ────────────────────────────────────────────
   notifier:
+    image: ghcr.io/razielzaarur1/fintrack-notifier:latest
     build: ./services/notifier
     container_name: finapp-notifier
     networks:
