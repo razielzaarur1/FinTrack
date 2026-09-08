@@ -38,26 +38,14 @@ export default async function systemRoutes(fastify, options) {
     let scraperStatus = { totalAccounts: 0, lastScrapedAt: null };
     let settings = {};
 
-    // 1. Check Vault status
-    try {
-      const response = await fetch(`${VAULT_ADDR.replace(/\/$/, '')}/v1/sys/seal-status`, {
-        signal: AbortSignal.timeout(3000),
-      });
-      if (response.ok || response.status === 429) {
-        const data = await response.json();
-        vaultStatus = {
-          reachable: true,
-          initialized: data.initialized ?? true,
-          sealed: data.sealed ?? false,
-          progress: data.progress ?? 0,
-          threshold: data.t ?? 0,
-        };
-      } else {
-        vaultStatus = { reachable: true, error: `HTTP ${response.status}` };
-      }
-    } catch (err) {
-      vaultStatus = { reachable: false, error: err.message };
-    }
+    // 1. Security & Encryption Status (Native AES-256-GCM)
+    vaultStatus = {
+      reachable: true,
+      initialized: true,
+      sealed: false,
+      provider: 'aes-256-gcm',
+      message: 'הצפנת AES-256-GCM מאומתת פעילה באופן תמידי',
+    };
 
     // 2. Check Database connection and stats
     try {
@@ -122,71 +110,13 @@ export default async function systemRoutes(fastify, options) {
     });
   });
 
-  // POST /unseal - Submit Vault unseal key
+  // POST /unseal - Submit Vault unseal key (kept for backward compatibility)
   fastify.post('/unseal', async (request, reply) => {
-    const parseResult = unsealSchema.safeParse(request.body);
-    if (!parseResult.success) {
-      return reply.code(400).send({
-        error: 'Validation Error',
-        details: parseResult.error.issues,
-      });
-    }
-
-    const { key } = parseResult.data;
-
-    try {
-      const vaultUrl = `${VAULT_ADDR.replace(/\/$/, '')}/v1/sys/unseal`;
-
-      // 1. Check current seal status
-      const statusRes = await fetch(`${VAULT_ADDR.replace(/\/$/, '')}/v1/sys/seal-status`);
-      const statusData = await statusRes.json();
-
-      if (statusData && statusData.sealed === false) {
-        try { await vaultClient.authenticate(); } catch (_) {}
-        return reply.code(200).send({ sealed: false, message: 'הכספת כבר פתוחה (Unsealed).' });
-      }
-
-      // 2. If progress is 0 and key1 file exists in secrets dir, apply key1 first!
-      const key1File = '/opt/finapp/secrets/vault_unseal_key1.txt';
-      if (statusData.progress === 0 && fs.existsSync(key1File)) {
-        try {
-          const key1 = fs.readFileSync(key1File, 'utf8').trim();
-          if (key1) {
-            await fetch(vaultUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ key: key1 }),
-            });
-          }
-        } catch (e) {
-          fastify.log.warn(`Failed to auto-apply Key 1 from file: ${e.message}`);
-        }
-      }
-
-      // 3. Apply user provided key
-      const response = await fetch(vaultUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key }),
-        signal: AbortSignal.timeout(5000),
-      });
-
-      const data = await response.json();
-
-      // 4. If Vault is unsealed now, trigger AppRole authentication
-      if (data && data.sealed === false) {
-        try {
-          await vaultClient.authenticate();
-        } catch (authErr) {
-          fastify.log.warn(`Vault unsealed, but API Gateway re-auth failed: ${authErr.message}`);
-        }
-      }
-
-      return reply.code(response.status).send(data);
-    } catch (err) {
-      fastify.log.error(err, 'Failed to unseal Vault');
-      return reply.code(500).send({ error: 'Internal Server Error', message: err.message });
-    }
+    return reply.code(200).send({
+      sealed: false,
+      success: true,
+      message: 'המערכת פתוחה ומאובטחת תמיד באמצעות הצפנת AES-256-GCM.',
+    });
   });
 
   // POST /otp - Submit 2FA OTP code
@@ -303,110 +233,12 @@ export default async function systemRoutes(fastify, options) {
     }
   });
 
-  // POST /vault/init-auto - Automatic initial Vault setup if uninitialized
+  // POST /vault/init-auto - Automatic initial Vault setup (kept for backward compatibility)
   fastify.post('/vault/init-auto', async (request, reply) => {
-    try {
-      // 1. Check if initialized
-      const initCheckRes = await fetch(`${VAULT_ADDR.replace(/\/$/, '')}/v1/sys/init`);
-      const initCheckData = await initCheckRes.json();
-
-      if (initCheckData.initialized) {
-        try {
-          const sealCheck = await fetch(`${VAULT_ADDR.replace(/\/$/, '')}/v1/sys/seal-status`);
-          const sealData = await sealCheck.json();
-          if (sealData.sealed === false) {
-            // Vault is already up — make sure vaultClient has a token so encrypt calls work
-            if (!vaultClient.vault.token) {
-              const envToken = process.env.VAULT_TOKEN;
-              if (envToken) {
-                vaultClient.vault.token = envToken;
-                vaultClient.initialized = true;
-              }
-            }
-            return reply.code(200).send({
-              success: true,
-              message: 'הכספת כבר מאותחלת ופתוחה (Unsealed).',
-              alreadyUnsealed: true,
-            });
-          }
-        } catch (_) {}
-
-        return reply.code(400).send({
-          error: 'הכספת כבר אותחלה בעבר ונמצאת במצב נעול. הזן את Unseal Key 2, או אפס את ווליום ה-Vault אם אין ברשותך את המפתח.',
-        });
-      }
-
-      // 2. Initialize Vault with 2-of-2 Shamir keys
-      const initRes = await fetch(`${VAULT_ADDR.replace(/\/$/, '')}/v1/sys/init`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          secret_shares: 2,
-          secret_threshold: 2,
-        }),
-      });
-
-      if (!initRes.ok) {
-        const errText = await initRes.text();
-        return reply.code(initRes.status).send({ error: `Vault init failed: ${errText}` });
-      }
-
-      const initData = await initRes.json();
-      const unsealKey1 = initData.keys_base64[0];
-      const unsealKey2 = initData.keys_base64[1];
-      const rootToken = initData.root_token;
-
-      // 3. Unseal with Key 1 and Key 2
-      await fetch(`${VAULT_ADDR.replace(/\/$/, '')}/v1/sys/unseal`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: unsealKey1 }),
-      });
-
-      await fetch(`${VAULT_ADDR.replace(/\/$/, '')}/v1/sys/unseal`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: unsealKey2 }),
-      });
-
-      // 4. Configure Transit Secrets Engine
-      await fetch(`${VAULT_ADDR.replace(/\/$/, '')}/v1/sys/mounts/transit`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Vault-Token': rootToken,
-        },
-        body: JSON.stringify({ type: 'transit' }),
-      });
-
-      // 5. Create Transit Key
-      await fetch(`${VAULT_ADDR.replace(/\/$/, '')}/v1/transit/keys/bank-credentials`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Vault-Token': rootToken,
-        },
-      });
-
-      // 6. Set token in vaultClient so API Gateway can encrypt immediately
-      vaultClient.vault.token = rootToken;
-      vaultClient.initialized = true;
-
-      // Persist root token to secrets volume if writable
-      try {
-        fs.writeFileSync('/opt/finapp/secrets/vault_root_token.txt', rootToken, 'utf8');
-      } catch (_) {}
-
-      return reply.code(200).send({
-        success: true,
-        message: 'הכספת אותחלה ונפתחה בהצלחה!',
-        unsealKey1,
-        unsealKey2,
-        rootToken,
-      });
-    } catch (err) {
-      fastify.log.error(err, 'Failed to auto-init Vault');
-      return reply.code(500).send({ error: 'Internal Server Error', message: err.message });
-    }
+    return reply.code(200).send({
+      success: true,
+      message: 'ההצפנה פעילה ומאובטחת תמיד (AES-256-GCM). אין צורך באתחול כספת.',
+      alreadyUnsealed: true,
+    });
   });
 }

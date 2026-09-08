@@ -6,59 +6,38 @@ const triggerSchema = z.object({
 });
 
 export default async function scraperRoutes(fastify, options) {
-  // POST /api/scraper/trigger - Trigger a manual scraping run
+  // POST /api/scraper/trigger - Trigger a manual scraping run via HTTP Microservice
   fastify.post('/trigger', async (request, reply) => {
     const parseResult = triggerSchema.safeParse(request.body || {});
     const accountId = parseResult.success ? parseResult.data.accountId : null;
+    const scraperUrl = process.env.SCRAPER_URL || 'http://scraper:3002';
 
     try {
-      fastify.log.info({ accountId }, 'Manual scraper execution triggered');
+      fastify.log.info({ accountId, scraperUrl }, 'Manual scraper execution triggered via HTTP');
 
-      // Attempt to invoke scraper via docker-socket-proxy if available
-      const dockerHost = process.env.DOCKER_HOST || 'http://docker-socket-proxy:2375';
-      const containerName = 'finapp-scraper-worker';
-
-      let triggeredViaDocker = false;
-
+      let responseData = null;
       try {
-        const cmd = accountId
-          ? ['node', '/app/src/scrape-single.js']
-          : ['bash', '/app/scripts/run-scrape-all.sh'];
-
-        const env = accountId ? [`ACCOUNT_ID=${accountId}`] : [];
-
-        const execRes = await fetch(`${dockerHost}/containers/${containerName}/exec`, {
+        const scraperRes = await fetch(`${scraperUrl}/scrape`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            AttachStdout: true,
-            AttachStderr: true,
-            Cmd: cmd,
-            Env: env,
-          }),
+          body: JSON.stringify({ accountId }),
+          signal: AbortSignal.timeout(8000),
         });
 
-        if (execRes.ok) {
-          const execData = await execRes.json();
-          if (execData.Id) {
-            // Start exec in detached mode
-            fetch(`${dockerHost}/exec/${execData.Id}/start`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ Detach: true, Tty: false }),
-            }).catch((e) => fastify.log.warn({ err: e.message }, 'Exec start warning'));
-            triggeredViaDocker = true;
-          }
+        if (scraperRes.ok) {
+          responseData = await scraperRes.json();
+        } else {
+          fastify.log.warn({ status: scraperRes.status }, 'Scraper service returned non-200');
         }
-      } catch (dockerErr) {
-        fastify.log.warn({ err: dockerErr.message }, 'Docker socket execution skipped, returning queued status');
+      } catch (httpErr) {
+        fastify.log.warn({ err: httpErr.message }, 'Failed to reach scraper service via HTTP');
       }
 
       return reply.code(200).send({
         status: 'triggered',
         message: 'סריקת חשבונות הבנק הופעלה בהצלחה ברקע',
         accountId: accountId || 'all',
-        triggeredViaDocker,
+        details: responseData,
         timestamp: new Date().toISOString(),
       });
     } catch (err) {

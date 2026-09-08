@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { pool } from '../db.js';
-import { vaultClient } from '../vault-client.js';
+import { encryptCredentials } from '../crypto.js';
 
 const DEFAULT_USER_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -64,19 +64,10 @@ export default async function accountsRoutes(fastify, options) {
 
     const { bankCompany, credentials, displayName } = parseResult.data;
 
-    // ── Encrypt credentials ──────────────────────────────────────────────────
-    let ciphertext;
     try {
-      ciphertext = await vaultClient.encryptCredentials(credentials);
-    } catch (vaultErr) {
-      // TEMPORARY TEST BYPASS: if vault is unavailable, store a clearly-marked
-      // placeholder so we can verify DB connectivity independently of vault.
-      // TODO: remove this bypass once vault is stable.
-      fastify.log.warn({ err: vaultErr.message }, '[TEST BYPASS] Vault unavailable — storing placeholder credentials');
-      ciphertext = `TEST_BYPASS:${Date.now()}`;
-    }
+      // ── Encrypt credentials with AES-256-GCM ──
+      const ciphertext = encryptCredentials(credentials);
 
-    try {
       const result = await pool.query(
         `INSERT INTO bank_accounts (user_id, bank_company, encrypted_credentials, display_name, is_active, created_at)
          VALUES ($1, $2, $3, $4, true, NOW())
@@ -84,6 +75,7 @@ export default async function accountsRoutes(fastify, options) {
         [DEFAULT_USER_ID, bankCompany, ciphertext, displayName || null]
       );
 
+      fastify.log.info({ accountId: result.rows[0].id, bankCompany }, 'Bank account created and credentials encrypted');
       return reply.code(201).send(result.rows[0]);
     } catch (err) {
       fastify.log.error(err, 'Failed to create account');

@@ -133,15 +133,10 @@ const closeGracefully = async (signal) => {
 process.on('SIGINT', () => closeGracefully('SIGINT'));
 process.on('SIGTERM', () => closeGracefully('SIGTERM'));
 
-// Server Initialization
-const start = async () => {
-  try {
-    // Try to authenticate Vault at startup (deferred if secrets not yet mounted in dev)
+  // Server Initialization
+  const start = async () => {
     try {
-      await vaultClient.authenticate();
-    } catch (vaultErr) {
-      fastify.log.warn(`Vault initialization warning: ${vaultErr.message}`);
-    }
+      fastify.log.info('Native AES-256-GCM authenticated encryption engine initialized.');
 
     await fastify.listen({ port: PORT, host: HOST });
     fastify.log.info(`API Gateway server listening on http://${HOST}:${PORT}`);

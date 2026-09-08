@@ -36,4 +36,6 @@ RUN chmod +x ./scripts/run-scrape-all.sh && \
 # Switch to non-root user
 USER scraper
 
-CMD ["bash", "/app/scripts/run-scrape-all.sh"]
+EXPOSE 3002
+
+CMD ["node", "src/server.js"]
