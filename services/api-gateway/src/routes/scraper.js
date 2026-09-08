@@ -24,13 +24,19 @@ export default async function scraperRoutes(fastify, options) {
           signal: AbortSignal.timeout(8000),
         });
 
-        if (scraperRes.ok) {
-          responseData = await scraperRes.json();
-        } else {
-          fastify.log.warn({ status: scraperRes.status }, 'Scraper service returned non-200');
+        if (!scraperRes.ok) {
+          const errText = await scraperRes.text();
+          return reply.code(scraperRes.status).send({
+            error: `שירות הסריקה החזיר שגיאה: ${errText}`,
+          });
         }
+
+        responseData = await scraperRes.json();
       } catch (httpErr) {
-        fastify.log.warn({ err: httpErr.message }, 'Failed to reach scraper service via HTTP');
+        fastify.log.error({ err: httpErr.message }, 'Failed to reach scraper service via HTTP');
+        return reply.code(502).send({
+          error: `שירות הסריקה (finapp-scraper-worker) אינו זמין בפורט 3002: ${httpErr.message}. ודא שהקונטיינר רץ.`,
+        });
       }
 
       return reply.code(200).send({

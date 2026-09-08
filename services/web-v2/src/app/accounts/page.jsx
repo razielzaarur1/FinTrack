@@ -51,7 +51,12 @@ export default function AccountsPage() {
   const handleSyncAccount = async (id) => {
     setSyncingId(id);
     try {
-      await api.triggerScrape(id);
+      const triggerRes = await api.triggerScrape(id);
+      if (triggerRes.error) {
+        alert(`שגיאה בהפעלת הסריקה: ${triggerRes.error}`);
+        setSyncingId(null);
+        return;
+      }
 
       // Poll status every 3 seconds for up to 45 seconds
       let attempts = 0;

@@ -127,6 +127,7 @@ services:
   scraper-worker:
     build: ./services/scraper
     container_name: finapp-scraper-worker
+    command: ["node", "src/server.js"]
     networks:
       - fintrack-net
     expose:
