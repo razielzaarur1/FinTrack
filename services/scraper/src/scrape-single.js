@@ -25,7 +25,7 @@ export function createDbPool() {
     host: process.env.DB_HOST || 'postgres',
     port: parseInt(process.env.DB_PORT || '5432', 10),
     database: process.env.DB_NAME || 'finance',
-    user: process.env.DB_USER || 'scraper_user',
+    user: process.env.DB_USER || 'finance_admin',
     password: getDbPassword(),
     max: 5,
     idleTimeoutMillis: 10000,
