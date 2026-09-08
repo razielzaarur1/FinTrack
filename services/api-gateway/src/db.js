@@ -5,7 +5,8 @@ const { Pool, Client } = pg;
 
 function readSecret(filePath, envVarName) {
   if (filePath && fs.existsSync(filePath)) {
-    return fs.readFileSync(filePath, 'utf8').trim();
+    const content = fs.readFileSync(filePath, 'utf8').trim();
+    if (content) return content; // Only return non-empty content; fall through to env var if empty
   }
   if (process.env[envVarName]) {
     return process.env[envVarName].trim();
@@ -14,7 +15,7 @@ function readSecret(filePath, envVarName) {
 }
 
 const dbPassword =
-  readSecret(process.env.DB_PASSWORD_FILE || '/run/secrets/api_db_password', 'DB_PASSWORD') ||
+  readSecret(process.env.DB_PASSWORD_FILE || '/opt/finapp/secrets/api_db_password.txt', 'DB_PASSWORD') ||
   process.env.DB_PASSWORD ||
   'postgres';
 
@@ -22,6 +23,8 @@ const dbUser = process.env.DB_USER || 'api_user';
 const dbHost = process.env.DB_HOST || 'postgres';
 const dbPort = parseInt(process.env.DB_PORT || '5432', 10);
 const dbName = process.env.DB_NAME || process.env.DB_DATABASE || 'finance';
+
+console.log(`[PostgreSQL] Connecting as user='${dbUser}' host='${dbHost}' db='${dbName}'`);
 
 export const pool = new Pool({
   host: dbHost,
@@ -31,9 +34,18 @@ export const pool = new Pool({
   database: dbName,
   max: 20,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 5000,
+  connectionTimeoutMillis: 8000,
+  // Kill runaway queries after 15 seconds so handlers never hang indefinitely
+  options: '-c statement_timeout=15000',
 });
 
+// ─── Self-Healing ────────────────────────────────────────────────────────────
+//
+// IMPORTANT: self-healing MUST use originalPoolConnect (not pool.connect) to
+// avoid a circular dependency:
+//   runSelfHealing → pool.connect (overridden) → runSelfHealing → returns
+//   existing selfHealPromise → deadlock (promise waits for itself)
+//
 let selfHealPromise = null;
 let isHealed = false;
 
@@ -42,28 +54,26 @@ async function runSelfHealing() {
   if (selfHealPromise) return selfHealPromise;
 
   selfHealPromise = (async () => {
-    // 1. Try simple test connect with current pool
+    // 1. Quick test with the ORIGINAL (non-overridden) pool connect to avoid circular dep
     try {
-      const client = await pool.connect();
+      const client = await originalPoolConnect();
       client.release();
       isHealed = true;
+      console.log(`[PostgreSQL] Connection verified for '${dbUser}'.`);
       return;
     } catch (err) {
-      console.warn(`[PostgreSQL] Connection test for ${dbUser} failed: ${err.message}. Starting self-healing...`);
+      console.warn(`[PostgreSQL] Connection test for '${dbUser}' failed: ${err.message}. Attempting self-healing...`);
     }
 
-    // 2. Try admin connection candidates
-    const adminUsers = [process.env.POSTGRES_USER || 'finance_admin', 'postgres', 'root'];
+    // 2. Try admin connection candidates to create/fix the role
+    const adminUsers = [process.env.POSTGRES_USER || 'finance_admin', 'postgres'];
     const adminPasswords = [
       process.env.POSTGRES_PASSWORD,
       dbPassword,
       'postgres',
-      '',
-    ].filter((p) => p !== undefined);
+    ].filter(Boolean);
 
-    let healed = false;
     for (const adminUser of adminUsers) {
-      if (healed) break;
       for (const pass of adminPasswords) {
         try {
           const adminClient = new Client({
@@ -72,12 +82,11 @@ async function runSelfHealing() {
             user: adminUser,
             password: pass,
             database: dbName,
-            connectionTimeoutMillis: 3000,
+            connectionTimeoutMillis: 5000,
           });
 
           await adminClient.connect();
 
-          // Create or fix role passwords and permissions
           await adminClient.query(`
             DO $$
             BEGIN
@@ -102,27 +111,36 @@ async function runSelfHealing() {
           `);
 
           await adminClient.end();
-          console.log(`[PostgreSQL] Self-healing succeeded using admin user '${adminUser}'. Permissions and passwords synced.`);
-          healed = true;
+          console.log(`[PostgreSQL] Self-healing succeeded via admin user '${adminUser}'.`);
           isHealed = true;
-          break;
+          return;
         } catch (adminErr) {
-          // Try next admin credential
+          // Try next credential combination
         }
       }
     }
+
+    console.error('[PostgreSQL] Self-healing exhausted all admin credentials. DB may be unavailable.');
   })();
 
   return selfHealPromise;
 }
 
-// Hook into pool.query directly so every caller gets self-healing protection
+// Keep references to the originals BEFORE overriding
 const originalPoolQuery = pool.query.bind(pool);
+const originalPoolConnect = pool.connect.bind(pool);
+
+// Override pool.query so every caller gets self-healing on auth errors
 pool.query = async function (text, params) {
   try {
     return await originalPoolQuery(text, params);
   } catch (err) {
-    if (err.message && (err.message.includes('password authentication') || err.message.includes('role') || err.message.includes('permission'))) {
+    if (
+      err.message &&
+      (err.message.includes('password authentication') ||
+        err.message.includes('role') ||
+        err.message.includes('permission denied'))
+    ) {
       await runSelfHealing();
       return originalPoolQuery(text, params);
     }
@@ -130,13 +148,18 @@ pool.query = async function (text, params) {
   }
 };
 
-// Also hook into pool.connect
-const originalPoolConnect = pool.connect.bind(pool);
+// Override pool.connect so callers also get self-healing
+// NOTE: uses originalPoolConnect internally to avoid circular dependency
 pool.connect = async function () {
   try {
     return await originalPoolConnect();
   } catch (err) {
-    if (err.message && (err.message.includes('password authentication') || err.message.includes('role') || err.message.includes('permission'))) {
+    if (
+      err.message &&
+      (err.message.includes('password authentication') ||
+        err.message.includes('role') ||
+        err.message.includes('permission denied'))
+    ) {
       await runSelfHealing();
       return originalPoolConnect();
     }
@@ -144,9 +167,9 @@ pool.connect = async function () {
   }
 };
 
-// Run startup check
+// Startup check (non-blocking)
 runSelfHealing().catch((err) => {
-  console.warn('[PostgreSQL] Startup auth self-healing notice:', err.message);
+  console.warn('[PostgreSQL] Startup self-healing notice:', err?.message);
 });
 
 pool.on('error', (err) => {
