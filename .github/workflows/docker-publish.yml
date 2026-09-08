@@ -1,0 +1,69 @@
+﻿name: Build and Push Docker Images
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: api-gateway
+            context: ./services/api-gateway
+            image: fintrack-api-gateway
+          - service: scraper-worker
+            context: ./services/scraper
+            image: fintrack-scraper-worker
+          - service: web-v2
+            context: ./services/web-v2
+            image: fintrack-web-v2
+          - service: web
+            context: ./services/web
+            image: fintrack-web
+          - service: notifier
+            context: ./services/notifier
+            image: fintrack-notifier
+          - service: nginx
+            context: ./config/nginx
+            image: fintrack-nginx
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Downcase repository owner
+        id: repo_owner
+        run: |
+          echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> $GITHUB_OUTPUT
+
+      - name: Build and push Docker image (${{ matrix.service }})
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ steps.repo_owner.outputs.owner }}/${{ matrix.image }}:latest
+            ${{ env.REGISTRY }}/${{ steps.repo_owner.outputs.owner }}/${{ matrix.image }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
