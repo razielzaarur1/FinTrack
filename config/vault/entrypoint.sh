@@ -8,7 +8,7 @@ chmod -R 775 /vault/data /vault/logs /opt/finapp/secrets 2>/dev/null || true
 
 # Auto-unseal in background when vault server starts
 (
-  sleep 3
+  sleep 10
   export VAULT_ADDR='http://127.0.0.1:8200'
   vault operator unseal otrmDuCE+VOc0ngzQTsAXK5bfTipDBsj5Vlo+osKkZwv 2>/dev/null || true
   vault operator unseal EUj616rjoNZIYu+Db7M9efYu2NqJwpaREuee7vy810NA 2>/dev/null || true
