@@ -10,7 +10,7 @@ export default async function scraperRoutes(fastify, options) {
   fastify.post('/trigger', async (request, reply) => {
     const parseResult = triggerSchema.safeParse(request.body || {});
     const accountId = parseResult.success ? parseResult.data.accountId : null;
-    const scraperUrl = process.env.SCRAPER_URL || 'http://scraper:3002';
+    const scraperUrl = process.env.SCRAPER_URL || 'http://scraper-worker:3002';
 
     try {
       fastify.log.info({ accountId, scraperUrl }, 'Manual scraper execution triggered via HTTP');

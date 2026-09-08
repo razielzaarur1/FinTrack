@@ -77,7 +77,7 @@ services:
       - fintrack-net
     environment:
       - APP_ENCRYPTION_KEY=${APP_ENCRYPTION_KEY:-fintrack-master-production-key-2026-v2-secure}
-      - SCRAPER_URL=http://scraper:3002
+      - SCRAPER_URL=http://scraper-worker:3002
       - NOTIFIER_URL=http://notifier:3001
       - DB_HOST=postgres
       - DB_PORT=5432
@@ -124,7 +124,7 @@ services:
           memory: 128m
 
   # ── Scraper Microservice (Port 3002) ─────────────────────────────────────
-  scraper:
+  scraper-worker:
     build: ./services/scraper
     container_name: finapp-scraper-worker
     networks:
