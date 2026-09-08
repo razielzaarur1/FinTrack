@@ -58,7 +58,11 @@ export default function AccountsPage() {
         return;
       }
 
-      // Poll status every 3 seconds for up to 45 seconds
+      // Record current account state to detect when update completes
+      const targetAccount = accounts.find((a) => a.id === id);
+      const initialScrapedAt = targetAccount?.lastScrapedAt || null;
+
+      // Poll status every 3 seconds for up to 90 seconds (30 attempts)
       let attempts = 0;
       const interval = setInterval(async () => {
         attempts++;
@@ -67,7 +71,14 @@ export default function AccountsPage() {
           if (res.data) {
             setAccounts(res.data);
             const current = res.data.find((a) => a.id === id);
-            if (current && (current.lastScrapedAt || current.lastScrapeError || attempts >= 15)) {
+            if (
+              current &&
+              (
+                (current.lastScrapedAt && current.lastScrapedAt !== initialScrapedAt) ||
+                current.lastScrapeError ||
+                attempts >= 30
+              )
+            ) {
               clearInterval(interval);
               setSyncingId(null);
             }

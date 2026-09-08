@@ -258,10 +258,24 @@ export async function scrapeAccount({ accountId, bank, encryptedCreds, daysBack 
       startDate: effectiveStartDate,
       combineInstallments: false,
       showBrowser: false,
-      verbose: process.env.LOG_LEVEL === 'debug',
+      verbose: true,
       executablePath: chromiumPath,
       args: puppeteerArgs,
     });
+
+    // Handle progress reporting
+    if (typeof scraper?.onProgress === 'function') {
+      try {
+        scraper.onProgress((companyId, payload) => {
+          logger.info(
+            { accountId, targetBank: companyId, stage: payload?.type },
+            `[Scraper Progress] ${payload?.type || JSON.stringify(payload)}`
+          );
+        });
+      } catch (e) {
+        logger.warn({ err: e.message }, 'Failed to attach onProgress listener');
+      }
+    }
 
     // Handle OTP callback
     if (typeof scraper?.onOtp === 'function') {
@@ -289,7 +303,28 @@ export async function scrapeAccount({ accountId, bank, encryptedCreds, daysBack 
 
     // 5. Execute scraping
     logger.info({ accountId, targetBank }, 'Executing scraper.scrape()...');
-    const scrapeResult = await scraper.scrape(credentials);
+    let scrapeResult;
+    try {
+      scrapeResult = await scraper.scrape(credentials);
+    } catch (scrapeErr) {
+      logger.error(
+        { accountId, targetBank, err: scrapeErr.message, stack: scrapeErr.stack },
+        'scraper.scrape() threw an unexpected exception'
+      );
+      await markScrapingFailed(dbPool, accountId, scrapeErr.message);
+      return { success: false, error: scrapeErr.message };
+    }
+
+    logger.info(
+      {
+        accountId,
+        targetBank,
+        success: scrapeResult?.success,
+        errorType: scrapeResult?.errorType,
+        errorMessage: scrapeResult?.errorMessage,
+      },
+      'Scraper execution returned result'
+    );
 
     if (!scrapeResult.success) {
       const errorMsg = `Scraping failed: ${scrapeResult.errorType || 'UNKNOWN_ERROR'} - ${
