@@ -52,9 +52,25 @@ export default function AccountsPage() {
     setSyncingId(id);
     try {
       await api.triggerScrape(id);
-      setTimeout(() => loadAccounts(), 4000);
-    } finally {
-      setTimeout(() => setSyncingId(null), 3000);
+
+      // Poll status every 3 seconds for up to 45 seconds
+      let attempts = 0;
+      const interval = setInterval(async () => {
+        attempts++;
+        try {
+          const res = await api.getAccounts();
+          if (res.data) {
+            setAccounts(res.data);
+            const current = res.data.find((a) => a.id === id);
+            if (current && (current.lastScrapedAt || current.lastScrapeError || attempts >= 15)) {
+              clearInterval(interval);
+              setSyncingId(null);
+            }
+          }
+        } catch (_) {}
+      }, 3000);
+    } catch (_) {
+      setSyncingId(null);
     }
   };
 
@@ -99,6 +115,9 @@ export default function AccountsPage() {
       } else {
         setStep(3);
         loadAccounts();
+        if (res.data?.id) {
+          handleSyncAccount(res.data.id);
+        }
       }
     } catch (err) {
       setFormError(err.message || 'Failed to connect account');
@@ -191,6 +210,23 @@ export default function AccountsPage() {
                   <div className="text-2xl font-bold tracking-tight">
                     {formatILS(acc.balance)}
                   </div>
+
+                  {isSyncing && (
+                    <div className="p-2.5 rounded-xl bg-brand-primary/10 border border-brand-primary/20 text-[11px] text-brand-primary flex items-center gap-2 animate-pulse">
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" />
+                      <span>{lang === 'he' ? 'מתחבר לבנק ומבצע סריקה (עשוי לקחת 20-40 שניות)...' : 'Connecting to bank and scraping (takes 20-40s)...'}</span>
+                    </div>
+                  )}
+
+                  {acc.lastScrapeError && !isSyncing && (
+                    <div className="p-2.5 rounded-xl bg-brand-expense/10 border border-brand-expense/20 text-[11px] text-brand-expense flex items-start gap-2">
+                      <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                      <div className="space-y-0.5 overflow-hidden">
+                        <div className="font-semibold">{lang === 'he' ? 'שגיאה בהתחברות לבנק:' : 'Bank Connection Error:'}</div>
+                        <div className="opacity-90 break-words line-clamp-2" title={acc.lastScrapeError}>{acc.lastScrapeError}</div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="pt-3 border-t border-dark-border/60 light:border-light-border/60 flex items-center justify-between text-xs">
