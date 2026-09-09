@@ -647,6 +647,12 @@ export default async function transactionsV2Routes(fastify, options) {
       if (result.rows.length === 0) {
         return reply.code(404).send({ error: 'Link not found' });
       }
+      return reply.code(200).send({ success: true });
+    } catch (err) {
+      return reply.code(500).send({ error: 'Database error', message: err.message });
+    }
+  });
+
   // GET /api/v2/transactions/review-queue - Get transactions awaiting review
   fastify.get('/review-queue', async (request, reply) => {
     const { flaggedOnly } = request.query;
