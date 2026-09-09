@@ -162,7 +162,7 @@ export default function ReviewPage() {
           <button
             onClick={() => loadReviewQueue(activeTab)}
             disabled={loading}
-            className="p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text-muted hover:text-dark-text shadow-sm transition-colors"
+            className="p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text shadow-sm transition-colors"
             title="רענן"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-brand-primary' : ''}`} />
@@ -178,7 +178,7 @@ export default function ReviewPage() {
           className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl transition-all ${
             activeTab === 'pending'
               ? 'bg-brand-primary text-white font-bold shadow-sm'
-              : 'text-dark-text-muted hover:text-dark-text'
+              : 'text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
           }`}
         >
           <span>ממתינות לאישור</span>
@@ -193,7 +193,7 @@ export default function ReviewPage() {
           className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl transition-all ${
             activeTab === 'flagged'
               ? 'bg-amber-500 text-black font-bold shadow-sm'
-              : 'text-dark-text-muted hover:text-dark-text'
+              : 'text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
           }`}
         >
           <Flag className="w-3.5 h-3.5" />
@@ -209,7 +209,7 @@ export default function ReviewPage() {
           className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl transition-all ${
             activeTab === 'approved'
               ? 'bg-emerald-600 text-white font-bold shadow-sm'
-              : 'text-dark-text-muted hover:text-dark-text'
+              : 'text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
           }`}
         >
           <CheckCircle2 className="w-3.5 h-3.5" />
@@ -222,7 +222,7 @@ export default function ReviewPage() {
 
       {/* Queue List */}
       {loading ? (
-        <div className="p-16 text-center text-dark-text-muted">
+        <div className="p-16 text-center text-dark-text-muted light:text-light-text-muted">
           <RefreshCw className="w-6 h-6 animate-spin mx-auto text-brand-primary mb-2" />
           <p className="text-sm font-medium">טוען תנועות...</p>
         </div>
@@ -238,7 +238,7 @@ export default function ReviewPage() {
               ? 'אין תנועות מסומנות בדגל'
               : 'אין היסטוריית תנועות מאושרות עדיין'}
           </h3>
-          <p className="text-xs text-dark-text-muted max-w-sm mx-auto">
+          <p className="text-xs text-dark-text-muted light:text-light-text-muted max-w-sm mx-auto">
             {activeTab === 'pending'
               ? 'כל העסקאות מסווגות ומאושרות. כשתבצע סנכרון חדש או משיכת מזומן, תנועות חדשות יופיעו כאן.'
               : activeTab === 'flagged'
@@ -353,7 +353,7 @@ export default function ReviewPage() {
                         type="button"
                         onClick={() => handleAction(tx, 'unapprove')}
                         disabled={actionLoadingId === tx.id}
-                        className="flex items-center gap-1 px-3 py-1.5 rounded-xl border border-dark-border light:border-light-border hover:bg-dark-surface-elevated text-xs font-medium text-dark-text-muted hover:text-dark-text transition-all shrink-0"
+                        className="flex items-center gap-1 px-3 py-1.5 rounded-xl border border-dark-border light:border-light-border hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-xs font-medium text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text transition-all shrink-0"
                         title="בטל אישור והחזר לתור"
                       >
                         <Undo2 className="w-3.5 h-3.5" />
@@ -365,7 +365,7 @@ export default function ReviewPage() {
                     <button
                       type="button"
                       onClick={() => setEditingCatId(editingCatId === tx.id ? null : tx.id)}
-                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-dark-border light:border-light-border hover:border-brand-primary text-xs font-semibold transition-colors shrink-0"
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface hover:border-brand-primary text-xs font-semibold text-dark-text light:text-light-text transition-colors shrink-0"
                       title="שנה קטגוריה"
                     >
                       <Tag className="w-3.5 h-3.5 text-pink-400" />
@@ -379,8 +379,8 @@ export default function ReviewPage() {
                       onClick={() => handleAction(tx, tx.isFlagged ? 'unflag' : 'flag')}
                       className={`p-1.5 rounded-xl border transition-colors shrink-0 ${
                         tx.isFlagged
-                          ? 'border-amber-500/50 bg-amber-500/15 text-amber-400'
-                          : 'border-dark-border light:border-light-border hover:bg-dark-surface-elevated text-dark-text-muted hover:text-amber-400'
+                          ? 'border-amber-500/50 bg-amber-500/15 text-amber-500 dark:text-amber-400'
+                          : 'border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-dark-text-muted light:text-light-text-muted hover:text-amber-500'
                       }`}
                       title={tx.isFlagged ? 'הסר דגל' : 'סמן בדגל לטיפול מאוחר יותר'}
                     >

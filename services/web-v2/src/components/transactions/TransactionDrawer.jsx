@@ -247,7 +247,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
             className={`py-3 px-2.5 sm:px-3 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
               activeTab === 'details'
                 ? 'border-brand-primary text-brand-primary font-semibold'
-                : 'border-transparent text-dark-text-muted light:text-light-text-muted hover:text-dark-text'
+                : 'border-transparent text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
             }`}
           >
             <FileText className="w-3.5 h-3.5" />
@@ -259,7 +259,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
             className={`py-3 px-2.5 sm:px-3 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
               activeTab === 'splits'
                 ? 'border-brand-primary text-brand-primary font-semibold'
-                : 'border-transparent text-dark-text-muted light:text-light-text-muted hover:text-dark-text'
+                : 'border-transparent text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
             }`}
           >
             <Split className="w-3.5 h-3.5" />
@@ -271,7 +271,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
             className={`py-3 px-2.5 sm:px-3 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
               activeTab === 'links'
                 ? 'border-brand-primary text-brand-primary font-semibold'
-                : 'border-transparent text-dark-text-muted light:text-light-text-muted hover:text-dark-text'
+                : 'border-transparent text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
             }`}
           >
             <Link2 className="w-3.5 h-3.5" />
@@ -283,7 +283,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
             className={`py-3 px-2.5 sm:px-3 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
               activeTab === 'notes'
                 ? 'border-brand-primary text-brand-primary font-semibold'
-                : 'border-transparent text-dark-text-muted light:text-light-text-muted hover:text-dark-text'
+                : 'border-transparent text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
             }`}
           >
             <span>💬</span>
@@ -295,7 +295,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
             className={`py-3 px-2.5 sm:px-3 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
               activeTab === 'scraper'
                 ? 'border-brand-primary text-brand-primary font-semibold'
-                : 'border-transparent text-dark-text-muted light:text-light-text-muted hover:text-dark-text'
+                : 'border-transparent text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
             }`}
           >
             <Database className="w-3.5 h-3.5" />
@@ -340,7 +340,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
                   value={userDesc}
                   onChange={(e) => setUserDesc(e.target.value)}
                   placeholder={tx.merchantName || tx.description}
-                  className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-sm focus:outline-none focus:border-brand-primary"
+                  className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-sm focus:outline-none focus:border-brand-primary"
                 />
               </div>
 
@@ -448,7 +448,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
 
               <div className="space-y-2.5">
                 {splits.map((s, idx) => (
-                  <div key={idx} className="p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated/40 space-y-2">
+                  <div key={idx} className="p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40 space-y-2">
                     <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
                       <div className="relative w-28 shrink-0">
                         <input
@@ -457,9 +457,9 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
                           value={s.amount || ''}
                           onChange={(e) => handleSplitChange(idx, 'amount', e.target.value)}
                           placeholder="0.00"
-                          className="w-full p-2 rtl:pr-6 ltr:pl-6 rounded-lg border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-xs font-mono text-left rtl:text-right"
+                          className="w-full p-2 rtl:pr-6 ltr:pl-6 rounded-lg border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text text-xs font-mono text-left rtl:text-right"
                         />
-                        <span className="absolute left-2 rtl:left-auto rtl:right-2 top-2 text-xs text-dark-text-muted pointer-events-none">₪</span>
+                        <span className="absolute left-2 rtl:left-auto rtl:right-2 top-2 text-xs text-dark-text-muted light:text-light-text-muted pointer-events-none">₪</span>
                       </div>
                       <div className="flex-1 min-w-[140px]">
                         <CategoryPicker
@@ -472,7 +472,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
                       <button
                         type="button"
                         onClick={() => handleRemoveSplitRow(idx)}
-                        className="p-2 text-brand-expense hover:bg-dark-surface-elevated rounded-lg transition-colors shrink-0"
+                        className="p-2 text-brand-expense hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated rounded-lg transition-colors shrink-0"
                         title="הסר שורה"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -483,7 +483,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
                       value={s.description || ''}
                       onChange={(e) => handleSplitChange(idx, 'description', e.target.value)}
                       placeholder={lang === 'he' ? 'תיאור לפיצול (אופציונלי)...' : 'Split note (optional)...'}
-                      className="w-full p-2 rounded-lg border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-xs"
+                      className="w-full p-2 rounded-lg border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text text-xs"
                     />
                   </div>
                 ))}
@@ -493,7 +493,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
                 <button
                   type="button"
                   onClick={handleAddSplitRow}
-                  className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-dark-border light:border-light-border hover:border-brand-primary text-xs font-semibold transition-colors"
+                  className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface hover:border-brand-primary text-xs font-semibold text-dark-text light:text-light-text transition-colors"
                 >
                   <Plus className="w-4 h-4" />
                   <span>{lang === 'he' ? 'הוסף שורת פיצול' : 'Add Split Row'}</span>
@@ -687,7 +687,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
                   <div className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">
                     JSON גולמי מלא (Full Raw Scraper Object):
                   </div>
-                  <pre className="p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated/90 light:bg-light-surface-elevated/90 text-[11px] font-mono text-emerald-500 dark:text-emerald-400 overflow-x-auto max-h-60 leading-relaxed text-left" dir="ltr">
+                  <pre className="p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated/90 light:bg-light-surface-elevated/90 text-[11px] font-mono text-emerald-600 dark:text-emerald-400 overflow-x-auto max-h-60 leading-relaxed text-left" dir="ltr">
                     {rawJsonString}
                   </pre>
                 </div>

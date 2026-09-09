@@ -181,7 +181,7 @@ export default function AnalyticsPage() {
                 className={`px-3 py-1.5 rounded-xl font-semibold transition-all ${
                   period === p.id
                     ? 'bg-brand-primary text-white shadow-sm'
-                    : 'text-dark-text-muted hover:text-dark-text'
+                    : 'text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
                 }`}
               >
                 {p.label}
@@ -192,7 +192,7 @@ export default function AnalyticsPage() {
           <button
             onClick={loadData}
             disabled={loading}
-            className="p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text-muted hover:text-dark-text shadow-sm transition-colors"
+            className="p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text shadow-sm transition-colors"
             title="רענן"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-brand-primary' : ''}`} />
@@ -207,14 +207,14 @@ export default function AnalyticsPage() {
             <Sparkles className="w-4 h-4 text-amber-400" />
             <span>ממוצעים חודשיים (על פי נתוני 12 החודשים האחרונים)</span>
           </h2>
-          <span className="text-[11px] text-dark-text-muted">מחושב מתוך נתוני ההוצאות בפועל בחשבונותיך</span>
+          <span className="text-[11px] text-dark-text-muted light:text-light-text-muted">מחושב מתוך נתוני ההוצאות בפועל בחשבונותיך</span>
         </div>
 
         {(() => {
           const avgList = Array.isArray(averages) ? averages : (averages?.data && Array.isArray(averages.data) ? averages.data : []);
           if (avgList.length === 0) {
             return (
-              <div className="p-8 text-center rounded-2xl border border-dark-border/60 bg-dark-surface text-xs text-dark-text-muted">
+              <div className="p-8 text-center rounded-2xl border border-dark-border/60 light:border-light-border/60 bg-dark-surface light:bg-light-surface text-xs text-dark-text-muted light:text-light-text-muted">
                 טרם נצברו מספיק עסקאות לחישוב ממוצעים חודשיים. הממוצעים יחושבו אוטומטית ככל שיצטברו תנועות.
               </div>
             );
@@ -252,8 +252,8 @@ export default function AnalyticsPage() {
                       <div className="text-base sm:text-lg font-bold text-dark-text light:text-light-text font-mono mt-0.5" dir="ltr">
                         {formatILS(item.monthlyAverage || item.amount || 0)}
                       </div>
-                      <div className="text-[10px] text-dark-text-muted mt-0.5">
-                        החודש: <span className="font-mono font-semibold">{formatILS(item.currentMonth || 0)}</span>
+                      <div className="text-[10px] text-dark-text-muted light:text-light-text-muted mt-0.5">
+                        החודש: <span className="font-mono font-semibold text-dark-text light:text-light-text">{formatILS(item.currentMonth || 0)}</span>
                       </div>
                     </div>
                   </div>
@@ -267,15 +267,15 @@ export default function AnalyticsPage() {
       {/* 5 Largest Single Expenses in Selected Period */}
       <div className="p-5 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface space-y-4 shadow-sm">
         <div className="flex items-center justify-between">
-          <h3 className="font-semibold text-base flex items-center gap-2">
+          <h3 className="font-semibold text-base flex items-center gap-2 text-dark-text light:text-light-text">
             <Receipt className="w-5 h-5 text-rose-500" />
             <span>5 ההוצאות הגדולות ביותר בתקופה</span>
           </h3>
-          <span className="text-xs text-dark-text-muted font-medium">עסקאות בודדות בולטות</span>
+          <span className="text-xs text-dark-text-muted light:text-light-text-muted font-medium">עסקאות בודדות בולטות</span>
         </div>
 
         {topExpenses.length === 0 ? (
-          <div className="py-6 text-center text-xs text-dark-text-muted">
+          <div className="py-6 text-center text-xs text-dark-text-muted light:text-light-text-muted">
             לא נמצאו עסקאות בתקופה זו
           </div>
         ) : (
@@ -291,12 +291,12 @@ export default function AnalyticsPage() {
                     <div className="font-bold text-sm text-dark-text light:text-light-text truncate">
                       {exp.userDescription || exp.merchantName || exp.description || 'ללא שם'}
                     </div>
-                    <div className="text-[11px] text-dark-text-muted flex items-center gap-1.5 mt-0.5">
+                    <div className="text-[11px] text-dark-text-muted light:text-light-text-muted flex items-center gap-1.5 mt-0.5">
                       <span>{formatDate(exp.date, lang)}</span>
                       <span>•</span>
-                      <span>{exp.accountDisplayName || exp.bankCompany}</span>
+                      <span className="font-mono">{exp.accountDisplayName || exp.bankCompany}</span>
                       <span>•</span>
-                      <span className="px-1.5 py-0.2 rounded bg-dark-surface-elevated text-[10px]">{exp.category || 'ללא סיווג'}</span>
+                      <span className="px-1.5 py-0.2 rounded bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text-muted light:text-light-text-muted text-[10px]">{exp.category || 'ללא סיווג'}</span>
                     </div>
                   </div>
                 </div>
@@ -313,14 +313,14 @@ export default function AnalyticsPage() {
       {/* Multi-Month Trend Chart */}
       <div className="p-5 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface space-y-4 shadow-sm">
         <div className="flex items-center justify-between">
-          <h3 className="font-semibold text-base flex items-center gap-2">
+          <h3 className="font-semibold text-base flex items-center gap-2 text-dark-text light:text-light-text">
             <BarChart3 className="w-5 h-5 text-brand-primary" />
             <span>הכנסות מול הוצאות לאורך זמן</span>
           </h3>
         </div>
 
         {trend.length === 0 ? (
-          <div className="h-64 flex items-center justify-center text-xs text-dark-text-muted">
+          <div className="h-64 flex items-center justify-center text-xs text-dark-text-muted light:text-light-text-muted">
             {t('noData')}
           </div>
         ) : (
@@ -357,16 +357,16 @@ export default function AnalyticsPage() {
         {/* Category Breakdown Donut */}
         <div className="p-5 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface space-y-4 shadow-sm">
           <div className="flex items-center justify-between">
-            <h3 className="font-semibold text-base flex items-center gap-2">
+            <h3 className="font-semibold text-base flex items-center gap-2 text-dark-text light:text-light-text">
               <PieIcon className="w-5 h-5 text-brand-cyan" />
               <span>{t('categoryBreakdown')}</span>
             </h3>
 
-            <div className="flex rounded-lg border border-dark-border light:border-light-border p-0.5 text-xs">
+            <div className="flex rounded-lg border border-dark-border light:border-light-border p-0.5 text-xs bg-dark-surface-elevated light:bg-light-surface-elevated">
               <button
                 onClick={() => setBreakdownType('expense')}
                 className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
-                  breakdownType === 'expense' ? 'bg-brand-expense text-white' : 'text-dark-text-muted hover:text-dark-text'
+                  breakdownType === 'expense' ? 'bg-brand-expense text-white' : 'text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
                 }`}
               >
                 {t('expense')}
@@ -374,7 +374,7 @@ export default function AnalyticsPage() {
               <button
                 onClick={() => setBreakdownType('income')}
                 className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
-                  breakdownType === 'income' ? 'bg-brand-income text-white' : 'text-dark-text-muted hover:text-dark-text'
+                  breakdownType === 'income' ? 'bg-brand-income text-white' : 'text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
                 }`}
               >
                 {t('income')}
@@ -383,7 +383,7 @@ export default function AnalyticsPage() {
           </div>
 
           {breakdown.data.length === 0 ? (
-            <div className="h-64 flex items-center justify-center text-xs text-dark-text-muted">
+            <div className="h-64 flex items-center justify-center text-xs text-dark-text-muted light:text-light-text-muted">
               {t('noData')}
             </div>
           ) : (
@@ -426,11 +426,11 @@ export default function AnalyticsPage() {
                   <div key={idx} className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color || COLORS[idx % COLORS.length] }} />
-                      <span className="font-medium">{item.name}</span>
+                      <span className="font-medium text-dark-text light:text-light-text">{item.name}</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-dark-text-muted">{item.percentage}%</span>
-                      <span className="font-semibold">{formatILS(item.amount)}</span>
+                      <span className="text-dark-text-muted light:text-light-text-muted">{item.percentage}%</span>
+                      <span className="font-semibold text-dark-text light:text-light-text font-mono">{formatILS(item.amount)}</span>
                     </div>
                   </div>
                 ))}
@@ -441,26 +441,26 @@ export default function AnalyticsPage() {
 
         {/* Top Merchants Leaderboard */}
         <div className="p-5 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface space-y-4 shadow-sm">
-          <h3 className="font-semibold text-base flex items-center gap-2">
+          <h3 className="font-semibold text-base flex items-center gap-2 text-dark-text light:text-light-text">
             <Store className="w-5 h-5 text-brand-amber" />
             <span>בתי עסק מובילים</span>
           </h3>
 
           {merchants.length === 0 ? (
-            <div className="h-64 flex items-center justify-center text-xs text-dark-text-muted">
+            <div className="h-64 flex items-center justify-center text-xs text-dark-text-muted light:text-light-text-muted">
               {t('noData')}
             </div>
           ) : (
             <div className="space-y-3">
               {merchants.map((m, idx) => (
-                <div key={idx} className="flex items-center justify-between p-2.5 rounded-xl border border-dark-border/40 light:border-light-border/40 bg-dark-surface-elevated/40 text-xs">
+                <div key={idx} className="flex items-center justify-between p-2.5 rounded-xl border border-dark-border/40 light:border-light-border/40 bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40 text-xs">
                   <div className="flex items-center gap-3">
                     <div className="w-6 h-6 rounded-lg bg-brand-primary/10 text-brand-primary font-bold flex items-center justify-center text-[10px]">
                       {idx + 1}
                     </div>
                     <div>
-                      <div className="font-semibold text-sm">{m.merchant}</div>
-                      <div className="text-dark-text-muted">{m.count} עסקאות • {m.category || 'כללי'}</div>
+                      <div className="font-semibold text-sm text-dark-text light:text-light-text">{m.merchant}</div>
+                      <div className="text-dark-text-muted light:text-light-text-muted">{m.count} עסקאות • {m.category || 'כללי'}</div>
                     </div>
                   </div>
                   <div className="font-bold text-sm text-brand-expense font-mono" dir="ltr">

@@ -124,7 +124,7 @@ export default function Shell({ children }) {
 
           <button
             onClick={lock}
-            className="w-full flex items-center justify-center gap-2 px-3 py-1.5 rounded-xl border border-dark-border light:border-light-border hover:border-rose-500/40 hover:text-rose-400 transition-all text-[11px] font-medium text-dark-text-muted"
+            className="w-full flex items-center justify-center gap-2 px-3 py-1.5 rounded-xl border border-dark-border light:border-light-border hover:border-rose-500/40 hover:text-rose-400 transition-all text-[11px] font-medium text-dark-text-muted light:text-light-text-muted"
             title="נעילת אפליקציה"
           >
             <Lock className="w-3 h-3" />
@@ -166,20 +166,20 @@ export default function Shell({ children }) {
             <button
               onClick={handleSyncAll}
               disabled={syncing}
-              className="p-2 rounded-xl border border-dark-border/80 light:border-light-border/80 hover:border-brand-primary transition-colors"
+              className="p-2 rounded-xl border border-dark-border/80 light:border-light-border/80 hover:border-brand-primary text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text transition-colors"
               title="סנכרן נתונים"
             >
               <RefreshCw className={`w-3.5 h-3.5 text-brand-cyan ${syncing ? 'animate-spin' : ''}`} />
             </button>
             <button
               onClick={toggleTheme}
-              className="p-2 rounded-xl border border-dark-border/80 light:border-light-border/80 text-dark-text-muted"
+              className="p-2 rounded-xl border border-dark-border/80 light:border-light-border/80 text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text transition-colors"
             >
               {theme === 'dark' ? <Sun className="w-3.5 h-3.5 text-brand-amber" /> : <Moon className="w-3.5 h-3.5" />}
             </button>
             <button
               onClick={lock}
-              className="p-2 rounded-xl border border-dark-border/80 light:border-light-border/80 text-dark-text-muted hover:text-rose-400"
+              className="p-2 rounded-xl border border-dark-border/80 light:border-light-border/80 text-dark-text-muted light:text-light-text-muted hover:text-rose-400 transition-colors"
               title="נעילת מסך"
             >
               <Lock className="w-3.5 h-3.5" />
@@ -205,7 +205,7 @@ export default function Shell({ children }) {
               className={`flex flex-col items-center justify-center gap-1 py-1 px-2.5 rounded-xl transition-all ${
                 isActive
                   ? 'text-brand-primary font-bold'
-                  : 'text-dark-text-muted light:text-light-text-muted hover:text-dark-text'
+                  : 'text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
               }`}
             >
               <div className={`p-1 rounded-lg transition-all ${isActive ? 'bg-brand-primary/15 scale-110' : ''}`}>
@@ -222,7 +222,7 @@ export default function Shell({ children }) {
           className={`flex flex-col items-center justify-center gap-1 py-1 px-2.5 rounded-xl transition-all ${
             isSecondaryActive || mobileMenuOpen
               ? 'text-brand-primary font-bold'
-              : 'text-dark-text-muted light:text-light-text-muted hover:text-dark-text'
+              : 'text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
           }`}
         >
           <div className={`p-1 rounded-lg transition-all ${isSecondaryActive || mobileMenuOpen ? 'bg-brand-primary/15 scale-110' : ''}`}>
@@ -240,13 +240,13 @@ export default function Shell({ children }) {
           >
             {/* Drawer Header */}
             <div className="flex items-center justify-between pb-3 border-b border-dark-border light:border-light-border">
-              <div className="flex items-center gap-2 font-bold text-base">
+              <div className="flex items-center gap-2 font-bold text-base text-dark-text light:text-light-text">
                 <Menu className="w-4 h-4 text-brand-primary" />
                 <span>תפריט נוסף</span>
               </div>
               <button
                 onClick={() => setMobileMenuOpen(false)}
-                className="p-1.5 rounded-xl bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text-muted hover:text-dark-text"
+                className="p-1.5 rounded-xl bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -265,13 +265,13 @@ export default function Shell({ children }) {
                     className={`p-3.5 rounded-2xl border transition-all flex flex-col gap-1.5 ${
                       isActive
                         ? 'border-brand-primary bg-brand-primary/10 text-brand-primary'
-                        : 'border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated hover:border-brand-primary/50'
+                        : 'border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated hover:border-brand-primary/50 text-dark-text light:text-light-text'
                     }`}
                   >
                     <Icon className="w-5 h-5 text-brand-primary" />
                     <div>
                       <div className="font-bold text-xs">{item.label}</div>
-                      <div className="text-[10px] text-dark-text-muted line-clamp-1">{item.desc}</div>
+                      <div className="text-[10px] text-dark-text-muted light:text-light-text-muted line-clamp-1">{item.desc}</div>
                     </div>
                   </Link>
                 );
@@ -282,7 +282,7 @@ export default function Shell({ children }) {
             <div className="pt-2 border-t border-dark-border light:border-light-border grid grid-cols-3 gap-2 text-center text-xs">
               <button
                 onClick={() => { toggleLanguage(); setMobileMenuOpen(false); }}
-                className="p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated flex flex-col items-center gap-1"
+                className="p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text flex flex-col items-center gap-1 hover:border-brand-primary transition-colors"
               >
                 <Globe className="w-4 h-4 text-brand-cyan" />
                 <span className="text-[11px] font-medium">{lang === 'he' ? 'English' : 'עברית'}</span>
@@ -290,7 +290,7 @@ export default function Shell({ children }) {
 
               <button
                 onClick={() => { toggleTheme(); setMobileMenuOpen(false); }}
-                className="p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated flex flex-col items-center gap-1"
+                className="p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text flex flex-col items-center gap-1 hover:border-brand-primary transition-colors"
               >
                 {theme === 'dark' ? <Sun className="w-4 h-4 text-brand-amber" /> : <Moon className="w-4 h-4" />}
                 <span className="text-[11px] font-medium">{theme === 'dark' ? 'מצב יום' : 'מצב לילה'}</span>
@@ -298,7 +298,7 @@ export default function Shell({ children }) {
 
               <button
                 onClick={() => { lock(); setMobileMenuOpen(false); }}
-                className="p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated flex flex-col items-center gap-1 text-rose-400"
+                className="p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated flex flex-col items-center gap-1 text-rose-500 hover:border-rose-500/50 transition-colors"
               >
                 <Lock className="w-4 h-4" />
                 <span className="text-[11px] font-medium">נעילת מסך</span>

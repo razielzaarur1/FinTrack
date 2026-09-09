@@ -308,14 +308,14 @@ export default function SettingsPage() {
         </h3>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-          <div className="p-4 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated flex items-center justify-between">
+          <div className="p-4 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated flex items-center justify-between">
             <div>
-              <div className="font-semibold">{lang === 'he' ? 'שפת ממשק' : 'Interface Language'}</div>
-              <div className="text-dark-text-muted">{lang === 'he' ? 'עברית (RTL) / English (LTR)' : 'English (LTR) / Hebrew (RTL)'}</div>
+              <div className="font-semibold text-dark-text light:text-light-text">{lang === 'he' ? 'שפת ממשק' : 'Interface Language'}</div>
+              <div className="text-dark-text-muted light:text-light-text-muted">{lang === 'he' ? 'עברית (RTL) / English (LTR)' : 'English (LTR) / Hebrew (RTL)'}</div>
             </div>
             <button
               onClick={toggleLanguage}
-              className="px-3 py-1.5 rounded-lg bg-brand-primary text-white font-semibold"
+              className="px-3 py-1.5 rounded-lg bg-brand-primary text-white font-semibold shadow-sm hover:bg-brand-primary-hover transition-colors"
             >
               {lang === 'he' ? 'Switch to English' : 'עבור לעברית'}
             </button>
@@ -471,8 +471,8 @@ export default function SettingsPage() {
               onClick={() => setActiveTab('expense')}
               className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
                 activeTab === 'expense'
-                  ? 'bg-rose-500/15 text-rose-500 border border-rose-500/30'
-                  : 'text-dark-text-muted hover:text-dark-text'
+                  ? 'bg-rose-500 text-white shadow-sm'
+                  : 'bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text border border-dark-border/40 light:border-light-border/40'
               }`}
             >
               הוצאות ({expenseCategories.length})
@@ -481,8 +481,8 @@ export default function SettingsPage() {
               onClick={() => setActiveTab('income')}
               className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
                 activeTab === 'income'
-                  ? 'bg-emerald-500/15 text-emerald-500 border border-emerald-500/30'
-                  : 'text-dark-text-muted hover:text-dark-text'
+                  ? 'bg-emerald-600 text-white shadow-sm'
+                  : 'bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text border border-dark-border/40 light:border-light-border/40'
               }`}
             >
               הכנסות ({incomeCategories.length})
@@ -532,7 +532,7 @@ export default function SettingsPage() {
                             ({cat.nameEn})
                           </span>
                         )}
-                        <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-dark-surface light:bg-light-surface border border-dark-border/60 text-dark-text-muted shrink-0">
+                        <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-dark-surface light:bg-light-surface border border-dark-border/60 light:border-light-border/60 text-dark-text-muted light:text-light-text-muted shrink-0">
                           {subs.length} תתי-קטגוריות
                         </span>
                         <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 ${
@@ -549,7 +549,7 @@ export default function SettingsPage() {
                     <button
                       type="button"
                       onClick={() => handleOpenAddSub(cat)}
-                      className="px-2.5 py-1.5 rounded-lg border border-dark-border light:border-light-border hover:border-brand-primary text-[11px] font-semibold flex items-center gap-1 transition-colors bg-dark-surface light:bg-light-surface shrink-0"
+                      className="px-2.5 py-1.5 rounded-lg border border-dark-border light:border-light-border hover:border-brand-primary text-[11px] font-semibold flex items-center gap-1 transition-colors bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text shrink-0"
                       title="הוסף תת-קטגוריה"
                     >
                       <Plus className="w-3.5 h-3.5 text-brand-primary" />
@@ -559,7 +559,7 @@ export default function SettingsPage() {
                     <button
                       type="button"
                       onClick={() => handleOpenEdit(cat)}
-                      className="p-1.5 rounded-lg border border-dark-border/60 light:border-light-border/60 hover:bg-dark-surface text-dark-text-muted hover:text-dark-text transition-colors shrink-0"
+                      className="p-1.5 rounded-lg border border-dark-border/60 light:border-light-border/60 hover:bg-dark-surface light:hover:bg-light-surface text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text transition-colors shrink-0"
                       title="ערוך קטגוריה ראשית"
                     >
                       <Edit2 className="w-3.5 h-3.5" />
@@ -568,7 +568,7 @@ export default function SettingsPage() {
                     <button
                       type="button"
                       onClick={() => handleDeleteCategory(cat)}
-                      className="p-1.5 rounded-lg border border-dark-border/60 light:border-light-border/60 hover:bg-rose-500/10 text-dark-text-muted hover:text-rose-500 transition-colors shrink-0"
+                      className="p-1.5 rounded-lg border border-dark-border/60 light:border-light-border/60 hover:bg-rose-500/10 text-dark-text-muted light:text-light-text-muted hover:text-rose-500 transition-colors shrink-0"
                       title="מחק קטגוריה ראשית"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
@@ -577,7 +577,7 @@ export default function SettingsPage() {
                     <button
                       type="button"
                       onClick={() => toggleExpand(cat.id)}
-                      className="p-1.5 rounded-lg hover:bg-dark-surface text-dark-text-muted transition-transform shrink-0"
+                      className="p-1.5 rounded-lg hover:bg-dark-surface light:hover:bg-light-surface text-dark-text-muted light:text-light-text-muted transition-transform shrink-0"
                       title={isExpanded ? 'סגור תתי-קטגוריות' : 'הצג תתי-קטגוריות'}
                     >
                       <ChevronDown className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
@@ -601,7 +601,7 @@ export default function SettingsPage() {
                                 {sub.name}
                               </div>
                               {sub.nameEn && (
-                                <div className="text-[10px] text-dark-text-muted truncate">
+                                <div className="text-[10px] text-dark-text-muted light:text-light-text-muted truncate">
                                   {sub.nameEn}
                                 </div>
                               )}
@@ -612,7 +612,7 @@ export default function SettingsPage() {
                             <button
                               type="button"
                               onClick={() => handleOpenEdit(sub, cat.name)}
-                              className="p-1 rounded-md text-dark-text-muted hover:text-dark-text hover:bg-dark-surface-elevated transition-colors"
+                              className="p-1 rounded-md text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated transition-colors"
                               title="ערוך תת-קטגוריה"
                             >
                               <Edit2 className="w-3 h-3" />
@@ -620,7 +620,7 @@ export default function SettingsPage() {
                             <button
                               type="button"
                               onClick={() => handleDeleteCategory(sub)}
-                              className="p-1 rounded-md text-dark-text-muted hover:text-rose-500 hover:bg-rose-500/10 transition-colors"
+                              className="p-1 rounded-md text-dark-text-muted light:text-light-text-muted hover:text-rose-500 hover:bg-rose-500/10 transition-colors"
                               title="מחק תת-קטגוריה"
                             >
                               <Trash2 className="w-3 h-3" />
@@ -633,7 +633,7 @@ export default function SettingsPage() {
                       <button
                         type="button"
                         onClick={() => handleOpenAddSub(cat)}
-                        className="p-2.5 rounded-xl border border-dashed border-dark-border hover:border-brand-primary text-dark-text-muted hover:text-brand-primary flex items-center justify-center gap-2 text-xs font-medium transition-colors"
+                        className="p-2.5 rounded-xl border border-dashed border-dark-border light:border-light-border hover:border-brand-primary text-dark-text-muted light:text-light-text-muted hover:text-brand-primary flex items-center justify-center gap-2 text-xs font-medium transition-colors bg-dark-surface/30 light:bg-light-surface/30"
                       >
                         <Plus className="w-4 h-4" />
                         <span>הוסף תת-קטגוריה</span>

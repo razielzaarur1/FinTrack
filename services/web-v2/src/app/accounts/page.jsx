@@ -444,20 +444,20 @@ export default function AccountsPage() {
                   {isCredit && (
                     <div className="p-3 rounded-xl bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40 border border-dark-border/40 light:border-light-border/40 space-y-2">
                       <div className="flex items-center justify-between text-xs">
-                        <span className="text-dark-text-muted text-[11px]">
+                        <span className="text-dark-text-muted light:text-light-text-muted text-[11px]">
                           סך שיצא במחזור הנוכחי:
                         </span>
-                        <span className="font-bold text-dark-text font-mono" dir="ltr">
+                        <span className="font-bold text-dark-text light:text-light-text font-mono" dir="ltr">
                           {formatILS(acc.periodSpend ?? acc.balance ?? 0)}
                         </span>
                       </div>
 
                       {acc.nextBillingDate && (
                         <div className="flex items-center justify-between text-xs pt-1 border-t border-dark-border/20 light:border-light-border/20">
-                          <span className="text-dark-text-muted text-[11px]">
+                          <span className="text-dark-text-muted light:text-light-text-muted text-[11px]">
                             מועד החיוב הקרוב:
                           </span>
-                          <span className="font-semibold text-dark-text font-mono">
+                          <span className="font-semibold text-dark-text light:text-light-text font-mono">
                             {formatDate(acc.nextBillingDate)}
                           </span>
                         </div>
@@ -545,7 +545,7 @@ export default function AccountsPage() {
               </div>
               <button
                 onClick={() => setEditingAccount(null)}
-                className="p-1 rounded-lg hover:bg-dark-surface-elevated text-dark-text-muted"
+                className="p-1 rounded-lg hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -553,7 +553,7 @@ export default function AccountsPage() {
 
             <form onSubmit={handleSaveEdit} className="space-y-4">
               <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-dark-text-muted">
+                <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">
                   {editingAccount.bankCompany === 'wallet' || editingAccount.accountType === 'wallet'
                     ? 'שם הארנק'
                     : 'שם / כינוי הכרטיס'}
@@ -564,13 +564,13 @@ export default function AccountsPage() {
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
                   placeholder="לדוגמה: ארנק מזומנים אישי"
-                  className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-sm focus:outline-none focus:border-brand-primary"
+                  className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-sm focus:outline-none focus:border-brand-primary"
                 />
               </div>
 
               {editingAccount.bankCompany === 'wallet' || editingAccount.accountType === 'wallet' ? (
                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-dark-text-muted">
+                  <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">
                     יתרת מזומן נוכחית בארנק (₪)
                   </label>
                   <input
@@ -580,21 +580,21 @@ export default function AccountsPage() {
                     value={editBalance}
                     onChange={(e) => setEditBalance(e.target.value)}
                     placeholder="0.00"
-                    className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-sm font-mono focus:outline-none focus:border-brand-primary"
+                    className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-sm font-mono focus:outline-none focus:border-brand-primary"
                   />
-                  <p className="text-[11px] text-dark-text-muted">
+                  <p className="text-[11px] text-dark-text-muted light:text-light-text-muted">
                     סכום המזומנים הפיזי שבידך. פיצול משיכות מזומן לארנק יעלה יתרה זו אוטומטית.
                   </p>
                 </div>
               ) : (
                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-dark-text-muted">
+                  <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">
                     מועד חיוב חודשי
                   </label>
                   <select
                     value={editBillingDay}
                     onChange={(e) => setEditBillingDay(e.target.value)}
-                    className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-sm focus:outline-none focus:border-brand-primary cursor-pointer"
+                    className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-sm focus:outline-none focus:border-brand-primary cursor-pointer"
                   >
                     <option value="1">1 לחודש (תחילת חודש קלנדרי)</option>
                     <option value="2">2 לחודש</option>
@@ -603,7 +603,7 @@ export default function AccountsPage() {
                     <option value="20">20 לחודש</option>
                     <option value="25">25 לחודש</option>
                   </select>
-                  <p className="text-[11px] text-dark-text-muted">
+                  <p className="text-[11px] text-dark-text-muted light:text-light-text-muted">
                     החיוב החודשי יחושב עבור כל התנועות השייכות למחזור חיוב זה.
                   </p>
                 </div>
@@ -613,7 +613,7 @@ export default function AccountsPage() {
                 <button
                   type="button"
                   onClick={() => setEditingAccount(null)}
-                  className="px-4 py-2.5 rounded-xl border border-dark-border light:border-light-border text-xs font-semibold"
+                  className="px-4 py-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text text-xs font-semibold hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated transition-colors"
                 >
                   ביטול
                 </button>

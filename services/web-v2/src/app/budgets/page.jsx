@@ -107,7 +107,7 @@ export default function BudgetsPage() {
         <button
           onClick={() => setActiveTab('budgets')}
           className={`pb-3 border-b-2 transition-all ${
-            activeTab === 'budgets' ? 'border-brand-primary text-brand-primary' : 'border-transparent text-dark-text-muted hover:text-dark-text'
+            activeTab === 'budgets' ? 'border-brand-primary text-brand-primary' : 'border-transparent text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
           }`}
         >
           {lang === 'he' ? 'תקציבים חודשיים' : 'Monthly Budgets'} ({budgets.length})
@@ -115,7 +115,7 @@ export default function BudgetsPage() {
         <button
           onClick={() => setActiveTab('goals')}
           className={`pb-3 border-b-2 transition-all ${
-            activeTab === 'goals' ? 'border-brand-primary text-brand-primary' : 'border-transparent text-dark-text-muted hover:text-dark-text'
+            activeTab === 'goals' ? 'border-brand-primary text-brand-primary' : 'border-transparent text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
           }`}
         >
           {lang === 'he' ? 'יעדי חיסכון' : 'Savings Goals'} ({goals.length})
@@ -126,20 +126,20 @@ export default function BudgetsPage() {
       {activeTab === 'budgets' && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {budgets.length === 0 ? (
-            <div className="col-span-full py-16 text-center text-xs text-dark-text-muted">
+            <div className="col-span-full py-16 text-center text-xs text-dark-text-muted light:text-light-text-muted">
               {lang === 'he' ? 'לא הוגדרו תקציבים עדיין. לחץ למעלה להוספת תקציב ראשון.' : 'No budgets set yet. Click above to add your first budget.'}
             </div>
           ) : (
             budgets.map((b) => (
               <div key={b.id} className="p-5 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface space-y-3">
                 <div className="flex items-center justify-between">
-                  <span className="font-bold text-sm">{b.category}</span>
-                  <button onClick={() => handleDeleteBudget(b.id)} className="text-brand-expense p-1 hover:bg-dark-surface-elevated rounded">
+                  <span className="font-bold text-sm text-dark-text light:text-light-text">{b.category}</span>
+                  <button onClick={() => handleDeleteBudget(b.id)} className="text-brand-expense p-1 hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated rounded transition-colors">
                     <Trash2 className="w-4 h-4" />
                   </button>
                 </div>
-                <div className="text-xl font-bold">{formatILS(b.monthly_limit || b.monthlyLimit)}</div>
-                <div className="text-xs text-dark-text-muted">{lang === 'he' ? 'מגבלה חודשית' : 'Monthly Limit'}</div>
+                <div className="text-xl font-bold text-dark-text light:text-light-text">{formatILS(b.monthly_limit || b.monthlyLimit)}</div>
+                <div className="text-xs text-dark-text-muted light:text-light-text-muted">{lang === 'he' ? 'מגבלה חודשית' : 'Monthly Limit'}</div>
               </div>
             ))
           )}
@@ -150,7 +150,7 @@ export default function BudgetsPage() {
       {activeTab === 'goals' && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {goals.length === 0 ? (
-            <div className="col-span-full py-16 text-center text-xs text-dark-text-muted">
+            <div className="col-span-full py-16 text-center text-xs text-dark-text-muted light:text-light-text-muted">
               {lang === 'he' ? 'לא הוגדרו יעדי חיסכון עדיין.' : 'No savings goals created yet.'}
             </div>
           ) : (
@@ -162,19 +162,19 @@ export default function BudgetsPage() {
               return (
                 <div key={g.id} className="p-5 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface space-y-3">
                   <div className="flex items-center justify-between">
-                    <span className="font-bold text-sm">{g.title}</span>
-                    <button onClick={() => handleDeleteGoal(g.id)} className="text-brand-expense p-1 hover:bg-dark-surface-elevated rounded">
+                    <span className="font-bold text-sm text-dark-text light:text-light-text">{g.title}</span>
+                    <button onClick={() => handleDeleteGoal(g.id)} className="text-brand-expense p-1 hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated rounded transition-colors">
                       <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
                   <div className="flex justify-between items-baseline text-xs">
-                    <span className="text-base font-bold">{formatILS(current)}</span>
-                    <span className="text-dark-text-muted">יעד: {formatILS(target)}</span>
+                    <span className="text-base font-bold text-dark-text light:text-light-text">{formatILS(current)}</span>
+                    <span className="text-dark-text-muted light:text-light-text-muted">יעד: {formatILS(target)}</span>
                   </div>
                   <div className="w-full bg-dark-surface-elevated light:bg-light-surface-elevated rounded-full h-2 overflow-hidden">
                     <div className="bg-brand-primary h-full rounded-full transition-all" style={{ width: `${pct}%` }} />
                   </div>
-                  <div className="text-[11px] text-dark-text-muted text-left rtl:text-right">{pct}% הושלם</div>
+                  <div className="text-[11px] text-dark-text-muted light:text-light-text-muted text-left rtl:text-right">{pct}% הושלם</div>
                 </div>
               );
             })

@@ -127,7 +127,7 @@ function CategoryTransactionsDrawer({ categoryName, year, month, accountIds, onC
 
           <button
             onClick={onClose}
-            className="p-2 rounded-xl hover:bg-dark-surface-elevated text-dark-text-muted hover:text-dark-text cursor-pointer"
+            className="p-2 rounded-xl hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text cursor-pointer transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
@@ -136,12 +136,12 @@ function CategoryTransactionsDrawer({ categoryName, year, month, accountIds, onC
         {/* Transactions List Grouped by Subcategory */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {loading ? (
-            <div className="p-16 text-center text-dark-text-muted">
+            <div className="p-16 text-center text-dark-text-muted light:text-light-text-muted">
               <RefreshCw className="w-5 h-5 animate-spin mx-auto text-brand-primary mb-2" />
               <p className="text-xs">טוען תנועות...</p>
             </div>
           ) : txs.length === 0 ? (
-            <div className="py-16 text-center text-dark-text-muted text-xs">
+            <div className="py-16 text-center text-dark-text-muted light:text-light-text-muted text-xs">
               לא נמצאו תנועות בקטגוריה זו בחודש הנבחר
             </div>
           ) : (
@@ -151,13 +151,13 @@ function CategoryTransactionsDrawer({ categoryName, year, month, accountIds, onC
                 <div key={group.name} className="space-y-2">
                   {/* Group header if multiple groups or distinct from drawer category */}
                   {(groupedTxs.length > 1 || group.name !== categoryName) && (
-                    <div className="flex items-center justify-between px-1 py-1 text-xs font-semibold text-dark-text-muted border-b border-dark-border/40 light:border-light-border/40">
+                    <div className="flex items-center justify-between px-1 py-1 text-xs font-semibold text-dark-text-muted light:text-light-text-muted border-b border-dark-border/40 light:border-light-border/40">
                       <div className="flex items-center gap-2">
                         <CategoryBadge category={group.name} size={16} />
                         <span className="text-dark-text light:text-light-text font-bold">{group.name}</span>
-                        <span className="text-[10px] text-dark-text-muted font-normal">({group.items.length} תנועות)</span>
+                        <span className="text-[10px] text-dark-text-muted light:text-light-text-muted font-normal">({group.items.length} תנועות)</span>
                       </div>
-                      <span className={`font-mono font-bold text-xs ${isGroupIncome ? 'text-emerald-500' : 'text-dark-text'}`} dir="ltr">
+                      <span className={`font-mono font-bold text-xs ${isGroupIncome ? 'text-emerald-500' : 'text-dark-text light:text-light-text'}`} dir="ltr">
                         {formatILS(group.total)}
                       </span>
                     </div>
@@ -170,20 +170,20 @@ function CategoryTransactionsDrawer({ categoryName, year, month, accountIds, onC
                         <div
                           key={t.id}
                           onClick={() => setSelectedTx(t)}
-                          className="p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated/50 hover:bg-dark-surface-elevated transition-colors cursor-pointer flex items-center justify-between gap-3"
+                          className="p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated/50 light:bg-light-surface-elevated/50 hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated transition-colors cursor-pointer flex items-center justify-between gap-3 shadow-2xs"
                         >
                           <div className="min-w-0 flex-1">
                             <div className="font-semibold text-xs sm:text-sm text-dark-text light:text-light-text truncate">
                               {t.userDescription || t.merchantName || t.description || 'ללא תיאור'}
                             </div>
-                            <div className="text-[11px] text-dark-text-muted mt-0.5 flex items-center gap-1.5 truncate">
+                            <div className="text-[11px] text-dark-text-muted light:text-light-text-muted mt-0.5 flex items-center gap-1.5 truncate">
                               <span>{formatDate(t.date, lang)}</span>
                               <span>•</span>
                               <span className="font-mono">{t.accountDisplayName || t.bankCompany}</span>
                             </div>
                           </div>
 
-                          <div className={`font-bold text-xs sm:text-sm font-mono shrink-0 ${isIncome ? 'text-emerald-500' : 'text-dark-text'}`} dir="ltr">
+                          <div className={`font-bold text-xs sm:text-sm font-mono shrink-0 ${isIncome ? 'text-emerald-500 dark:text-emerald-400' : 'text-dark-text light:text-light-text'}`} dir="ltr">
                             {formatILS(t.amount, { showSign: true })}
                           </div>
                         </div>
@@ -197,7 +197,7 @@ function CategoryTransactionsDrawer({ categoryName, year, month, accountIds, onC
         </div>
 
         {/* Footer Link to full search */}
-        <div className="p-4 border-t border-dark-border light:border-light-border bg-dark-surface-elevated/40">
+        <div className="p-4 border-t border-dark-border light:border-light-border bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40">
           <Link
             href={`/transactions?categories=${encodeURIComponent(categoryName)}`}
             className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-brand-primary/15 text-brand-primary font-bold text-xs hover:bg-brand-primary/25 transition-colors"
@@ -471,7 +471,7 @@ function CategoriesContent() {
               className={`flex items-center gap-1.5 px-4 py-2 rounded-lg font-semibold transition-all ${
                 categoryType === 'expense'
                   ? 'bg-rose-500 text-white shadow-sm'
-                  : 'text-dark-text-muted hover:text-dark-text'
+                  : 'text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
               }`}
             >
               <TrendingDown className="w-3.5 h-3.5" />
@@ -482,7 +482,7 @@ function CategoriesContent() {
               className={`flex items-center gap-1.5 px-4 py-2 rounded-lg font-semibold transition-all ${
                 categoryType === 'income'
                   ? 'bg-emerald-600 text-white shadow-sm'
-                  : 'text-dark-text-muted hover:text-dark-text'
+                  : 'text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
               }`}
             >
               <TrendingUp className="w-3.5 h-3.5" />
@@ -498,13 +498,13 @@ function CategoriesContent() {
         <div className="flex items-center gap-2 w-full md:w-auto justify-between md:justify-start">
           <button
             onClick={handleNextMonth}
-            className="p-2 rounded-xl border border-dark-border light:border-light-border hover:bg-dark-surface-elevated text-dark-text-muted hover:text-dark-text transition-colors"
+            className="p-2 rounded-xl border border-dark-border light:border-light-border hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text transition-colors"
             title="חודש הבא"
           >
             <ChevronRight className="w-4 h-4" />
           </button>
 
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-dark-surface-elevated light:bg-light-surface-elevated border border-dark-border/60">
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-dark-surface-elevated light:bg-light-surface-elevated border border-dark-border/60 light:border-light-border/60">
             <span className="font-bold text-sm text-dark-text light:text-light-text min-w-[110px] text-center">
               {MONTH_NAMES[selectedMonth - 1]} {selectedYear}
             </span>
@@ -512,7 +512,7 @@ function CategoriesContent() {
 
           <button
             onClick={handlePrevMonth}
-            className="p-2 rounded-xl border border-dark-border light:border-light-border hover:bg-dark-surface-elevated text-dark-text-muted hover:text-dark-text transition-colors"
+            className="p-2 rounded-xl border border-dark-border light:border-light-border hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text transition-colors"
             title="חודש קודם"
           >
             <ChevronLeft className="w-4 h-4" />
@@ -531,13 +531,13 @@ function CategoriesContent() {
         {/* Multi-Account Filter & Search */}
         <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto justify-end">
           <div className="relative flex-1 md:w-48">
-            <Search className="w-3.5 h-3.5 absolute right-3 rtl:right-3 ltr:left-3 top-1/2 -translate-y-1/2 text-dark-text-muted" />
+            <Search className="w-3.5 h-3.5 absolute right-3 rtl:right-3 ltr:left-3 top-1/2 -translate-y-1/2 text-dark-text-muted light:text-light-text-muted pointer-events-none" />
             <input
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               placeholder="חפש קטגוריה..."
-              className="w-full pr-8 rtl:pr-8 ltr:pl-8 pl-3 py-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated text-xs focus:outline-none focus:border-brand-primary"
+              className="w-full pr-8 rtl:pr-8 ltr:pl-8 pl-3 py-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-xs text-dark-text light:text-light-text focus:outline-none focus:border-brand-primary"
             />
           </div>
 
@@ -553,7 +553,7 @@ function CategoriesContent() {
           <button
             onClick={loadData}
             disabled={loading}
-            className="p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated text-dark-text-muted hover:text-dark-text shadow-xs"
+            className="p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text shadow-xs transition-colors"
             title="רענן"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-brand-primary' : ''}`} />
@@ -583,7 +583,7 @@ function CategoriesContent() {
           <span>•</span>
           <button
             onClick={collapseAll}
-            className="text-dark-text-muted hover:text-dark-text font-medium"
+            className="text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text font-medium"
           >
             כווץ הכל
           </button>
@@ -592,14 +592,14 @@ function CategoriesContent() {
 
       {/* Category Cards / Drill-down Tree */}
       {loading ? (
-        <div className="p-16 text-center text-dark-text-muted">
+        <div className="p-16 text-center text-dark-text-muted light:text-light-text-muted">
           <RefreshCw className="w-6 h-6 animate-spin mx-auto text-brand-primary mb-2" />
           <p className="text-sm font-medium">טוען קטגוריות...</p>
         </div>
       ) : treeData.length === 0 ? (
-        <div className="py-16 text-center text-dark-text-muted space-y-2">
+        <div className="py-16 text-center text-dark-text-muted light:text-light-text-muted space-y-2">
           <PieIcon className="w-10 h-10 mx-auto opacity-30" />
-          <div className="font-semibold text-sm">אין נתונים לחודש זה</div>
+          <div className="font-semibold text-sm text-dark-text light:text-light-text">אין נתונים לחודש זה</div>
           <p className="text-xs max-w-xs mx-auto opacity-75">לא נמצאו תנועות בקטגוריה זו בטווח הנבחר</p>
         </div>
       ) : (
@@ -611,11 +611,11 @@ function CategoriesContent() {
             return (
               <div
                 key={cat.id}
-                className="rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface overflow-hidden shadow-xs transition-all hover:border-dark-border-hover"
+                className="rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface overflow-hidden shadow-xs transition-all hover:border-brand-primary/40"
               >
                 {/* Main Category Header Card */}
                 <div
-                  className="p-4 flex items-center justify-between gap-3 hover:bg-dark-surface-elevated/40 transition-colors"
+                  className="p-4 flex items-center justify-between gap-3 hover:bg-dark-surface-elevated/40 light:hover:bg-light-surface-elevated/40 transition-colors"
                 >
                   <div
                     onClick={() => setDrawerCategory(cat.name)}
@@ -627,7 +627,7 @@ function CategoriesContent() {
                       <div className="font-bold text-xs sm:text-sm text-dark-text light:text-light-text flex items-center gap-1.5 flex-wrap">
                         <span className="truncate group-hover:text-brand-primary transition-colors">{cat.name}</span>
                         {hasSubs && (
-                          <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-dark-surface-elevated text-dark-text-muted font-medium shrink-0">
+                          <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text-muted light:text-light-text-muted font-medium shrink-0">
                             {cat.subcategories.length} תתי-קטגוריות
                           </span>
                         )}
@@ -664,7 +664,7 @@ function CategoriesContent() {
                           e.stopPropagation();
                           toggleExpand(cat.id);
                         }}
-                        className="p-1 text-dark-text-muted hover:text-dark-text transition-transform rounded-lg cursor-pointer"
+                        className="p-1 text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text transition-transform rounded-lg cursor-pointer"
                         title={isExpanded ? 'כווץ תתי-קטגוריות' : 'הרחב תתי-קטגוריות'}
                       >
                         <ChevronDown
@@ -679,19 +679,19 @@ function CategoriesContent() {
 
                 {/* Subcategories Drill-down Drawer */}
                 {isExpanded && hasSubs && (
-                  <div className="border-t border-dark-border/40 light:border-light-border/40 bg-dark-surface-elevated/30 light:bg-light-surface-elevated/30 divide-y divide-dark-border/30">
+                  <div className="border-t border-dark-border/40 light:border-light-border/40 bg-dark-surface-elevated/30 light:bg-light-surface-elevated/30 divide-y divide-dark-border/30 light:divide-light-border/30">
                     {cat.subcategories.map((sub, idx) => (
                       <div
                         key={idx}
                         onClick={() => setDrawerCategory(sub.name)}
-                        className="px-6 py-3 flex items-center justify-between text-xs hover:bg-dark-surface-elevated/60 transition-colors cursor-pointer group"
+                        className="px-6 py-3 flex items-center justify-between text-xs hover:bg-dark-surface-elevated/60 light:hover:bg-light-surface-elevated/60 transition-colors cursor-pointer group"
                       >
                         <div className="flex items-center gap-3">
                           <CategoryBadge category={sub.name} size={18} />
                           <span className="font-semibold text-dark-text light:text-light-text group-hover:text-brand-primary transition-colors">
                             {sub.name}
                           </span>
-                          <span className="text-[11px] text-dark-text-muted">
+                          <span className="text-[11px] text-dark-text-muted light:text-light-text-muted">
                             ({sub.count} תנועות)
                           </span>
                         </div>

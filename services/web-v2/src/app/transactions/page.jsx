@@ -327,7 +327,7 @@ function TransactionsContent() {
             className={`inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl border text-xs font-semibold shadow-sm transition-all ${
               selectMode
                 ? 'bg-brand-primary text-white border-brand-primary shadow-brand-primary/20'
-                : 'bg-dark-surface light:bg-light-surface border-dark-border light:border-light-border text-dark-text hover:border-brand-primary/40'
+                : 'bg-dark-surface light:bg-light-surface border-dark-border light:border-light-border text-dark-text light:text-light-text hover:border-brand-primary/40'
             }`}
           >
             <CheckSquare className="w-3.5 h-3.5" />
@@ -337,7 +337,7 @@ function TransactionsContent() {
           <button
             onClick={() => loadTransactions(null, null, true)}
             disabled={loading}
-            className="p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text-muted hover:text-dark-text shadow-sm transition-colors"
+            className="p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text shadow-sm transition-colors"
             title="רענן"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-brand-primary' : ''}`} />
@@ -345,7 +345,7 @@ function TransactionsContent() {
 
           <button
             onClick={handleExportCSV}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface hover:bg-dark-surface-elevated text-xs font-semibold shadow-sm transition-colors"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-dark-text light:text-light-text text-xs font-semibold shadow-sm transition-colors"
           >
             <Download className="w-3.5 h-3.5" />
             <span>{t('exportCSV')}</span>
@@ -364,13 +364,13 @@ function TransactionsContent() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="חפש לפי שם בית עסק, תיאור, הערות או סכום..."
-              className="w-full py-2.5 rtl:pr-9 rtl:pl-9 ltr:pl-9 ltr:pr-9 rounded-xl border border-dark-border/80 light:border-light-border/80 bg-dark-surface-elevated/70 light:bg-light-surface-elevated/70 text-xs sm:text-sm focus:outline-none focus:border-brand-primary"
+              className="w-full py-2.5 rtl:pr-9 rtl:pl-9 ltr:pl-9 ltr:pr-9 rounded-xl border border-dark-border/80 light:border-light-border/80 bg-dark-surface-elevated/70 light:bg-light-surface-elevated/70 text-dark-text light:text-light-text text-xs sm:text-sm focus:outline-none focus:border-brand-primary"
             />
             {search && (
               <button
                 type="button"
                 onClick={() => { setSearch(''); loadTransactions(null, null, true); }}
-                className="absolute left-3 rtl:left-3 ltr:right-3 top-1/2 -translate-y-1/2 text-dark-text-muted hover:text-dark-text p-1"
+                className="absolute left-3 rtl:left-3 ltr:right-3 top-1/2 -translate-y-1/2 text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text p-1"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
@@ -384,7 +384,7 @@ function TransactionsContent() {
               <button
                 onClick={() => setType('all')}
                 className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg font-semibold text-center transition-all ${
-                  type === 'all' ? 'bg-brand-primary text-white shadow-sm' : 'text-dark-text-muted hover:text-dark-text'
+                  type === 'all' ? 'bg-brand-primary text-white shadow-sm' : 'text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
                 }`}
               >
                 הכל
@@ -392,7 +392,7 @@ function TransactionsContent() {
               <button
                 onClick={() => setType('expense')}
                 className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg font-semibold text-center transition-all ${
-                  type === 'expense' ? 'bg-rose-500 text-white shadow-sm' : 'text-dark-text-muted hover:text-dark-text'
+                  type === 'expense' ? 'bg-rose-500 text-white shadow-sm' : 'text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
                 }`}
               >
                 הוצאות
@@ -400,7 +400,7 @@ function TransactionsContent() {
               <button
                 onClick={() => setType('income')}
                 className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg font-semibold text-center transition-all ${
-                  type === 'income' ? 'bg-emerald-600 text-white shadow-sm' : 'text-dark-text-muted hover:text-dark-text'
+                  type === 'income' ? 'bg-emerald-600 text-white shadow-sm' : 'text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
                 }`}
               >
                 הכנסות
@@ -413,7 +413,7 @@ function TransactionsContent() {
               className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-semibold transition-all shrink-0 justify-center ${
                 showFilters || activeFiltersCount > 0
                   ? 'bg-brand-primary/10 border-brand-primary text-brand-primary'
-                  : 'border-dark-border light:border-light-border bg-dark-surface-elevated text-dark-text-muted hover:text-dark-text'
+                  : 'border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
               }`}
             >
               <SlidersHorizontal className="w-3.5 h-3.5" />
@@ -432,7 +432,7 @@ function TransactionsContent() {
           <div className="pt-3 border-t border-dark-border/60 light:border-light-border/60 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 animate-in fade-in duration-200">
             {/* 1. Account / Card Multi-Select Filter */}
             <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-dark-text-muted flex items-center gap-1">
+              <label className="text-[11px] font-semibold text-dark-text-muted light:text-light-text-muted flex items-center gap-1">
                 <CreditCard className="w-3 h-3 text-indigo-400" />
                 <span>חשבונות וכרטיסים (בחירה מרובה)</span>
               </label>
@@ -449,7 +449,7 @@ function TransactionsContent() {
 
             {/* 2. Category Multi-Select Filter */}
             <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-dark-text-muted flex items-center gap-1">
+              <label className="text-[11px] font-semibold text-dark-text-muted light:text-light-text-muted flex items-center gap-1">
                 <Tag className="w-3 h-3 text-pink-400" />
                 <span>קטגוריות (בחירה מרובה)</span>
               </label>
@@ -466,7 +466,7 @@ function TransactionsContent() {
 
             {/* 3. Amount Range (Min - Max) */}
             <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-dark-text-muted">
+              <label className="text-[11px] font-semibold text-dark-text-muted light:text-light-text-muted">
                 סכום (₪) מינימום - מקסימום
               </label>
               <div className="flex items-center gap-1.5">
@@ -476,30 +476,30 @@ function TransactionsContent() {
                   value={minAmount}
                   onChange={(e) => setMinAmount(e.target.value)}
                   onBlur={() => loadTransactions(null, null, true)}
-                  className="w-1/2 p-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated text-xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none font-mono"
+                  className="w-1/2 p-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none font-mono focus:outline-none focus:border-brand-primary"
                 />
-                <span className="text-dark-text-muted text-xs">-</span>
+                <span className="text-dark-text-muted light:text-light-text-muted text-xs">-</span>
                 <input
                   type="number"
                   placeholder="עד"
                   value={maxAmount}
                   onChange={(e) => setMaxAmount(e.target.value)}
                   onBlur={() => loadTransactions(null, null, true)}
-                  className="w-1/2 p-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated text-xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none font-mono"
+                  className="w-1/2 p-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none font-mono focus:outline-none focus:border-brand-primary"
                 />
               </div>
             </div>
 
             {/* 4. Date Filter */}
             <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-dark-text-muted flex items-center gap-1">
+              <label className="text-[11px] font-semibold text-dark-text-muted light:text-light-text-muted flex items-center gap-1">
                 <Calendar className="w-3 h-3 text-sky-400" />
                 <span>תקופה ותאריכים</span>
               </label>
               <select
                 value={datePreset}
                 onChange={(e) => setDatePreset(e.target.value)}
-                className="w-full p-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-xs font-medium focus:outline-none focus:border-brand-primary cursor-pointer"
+                className="w-full p-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs font-medium focus:outline-none focus:border-brand-primary cursor-pointer"
               >
                 <option value="all">כל הזמנים</option>
                 <option value="current_month">חודש נוכחי</option>
@@ -515,14 +515,14 @@ function TransactionsContent() {
                   type="date"
                   value={startDate}
                   onChange={(e) => setStartDate(e.target.value)}
-                  className="p-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated text-xs"
+                  className="p-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs"
                 />
-                <span className="text-xs text-dark-text-muted">עד</span>
+                <span className="text-xs text-dark-text-muted light:text-light-text-muted">עד</span>
                 <input
                   type="date"
                   value={endDate}
                   onChange={(e) => setEndDate(e.target.value)}
-                  className="p-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated text-xs"
+                  className="p-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs"
                 />
               </div>
             )}
@@ -537,7 +537,7 @@ function TransactionsContent() {
             </span>
 
             {search && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-dark-surface-elevated border border-dark-border text-[11px]">
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-dark-surface-elevated light:bg-light-surface-elevated border border-dark-border light:border-light-border text-dark-text light:text-light-text text-[11px]">
                 <span>חיפוש: "{search}"</span>
                 <button onClick={() => { setSearch(''); loadTransactions(null, null, true); }}>
                   <X className="w-3 h-3" />
@@ -557,7 +557,7 @@ function TransactionsContent() {
             {selectedAccountIds.map((accId) => {
               const acc = accounts.find((a) => a.id === accId);
               return (
-                <span key={accId} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-500/15 text-indigo-400 font-medium text-[11px]">
+                <span key={accId} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-500/15 text-indigo-500 dark:text-indigo-400 font-medium text-[11px]">
                   <span>{acc?.displayName || acc?.bankCompany || 'חשבון'}</span>
                   <button onClick={() => setSelectedAccountIds(selectedAccountIds.filter((id) => id !== accId))}>
                     <X className="w-3 h-3" />
@@ -567,7 +567,7 @@ function TransactionsContent() {
             })}
 
             {selectedCategories.map((catName) => (
-              <span key={catName} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-pink-500/15 text-pink-400 font-medium text-[11px]">
+              <span key={catName} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-pink-500/15 text-pink-500 dark:text-pink-400 font-medium text-[11px]">
                 <span>{catName}</span>
                 <button onClick={() => setSelectedCategories(selectedCategories.filter((c) => c !== catName))}>
                   <X className="w-3 h-3" />
@@ -576,7 +576,7 @@ function TransactionsContent() {
             ))}
 
             {(minAmount || maxAmount) && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-400 font-medium text-[11px]">
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-500 dark:text-amber-400 font-medium text-[11px]">
                 <span>סכום: {minAmount || '0'} ₪ עד {maxAmount || '∞'} ₪</span>
                 <button onClick={() => { setMinAmount(''); setMaxAmount(''); loadTransactions(null, null, true); }}>
                   <X className="w-3 h-3" />
@@ -585,7 +585,7 @@ function TransactionsContent() {
             )}
 
             {datePreset !== 'all' && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-sky-500/15 text-sky-400 font-medium text-[11px]">
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-sky-500/15 text-sky-500 dark:text-sky-400 font-medium text-[11px]">
                 <span>תקופה: {datePreset}</span>
                 <button onClick={() => setDatePreset('all')}>
                   <X className="w-3 h-3" />
@@ -803,7 +803,7 @@ function TransactionsContent() {
             </button>
             <button
               onClick={() => setSelectedIds(new Set())}
-              className="px-3 py-2 rounded-xl border border-dark-border light:border-light-border hover:bg-dark-surface-elevated text-xs font-medium transition-colors text-dark-text-muted hover:text-dark-text shrink-0"
+              className="px-3 py-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-xs font-medium transition-colors text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text shrink-0"
             >
               בטל
             </button>
@@ -816,13 +816,13 @@ function TransactionsContent() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
           <div className="w-full max-w-md bg-dark-surface light:bg-light-surface border border-dark-border light:border-light-border rounded-2xl p-6 shadow-2xl space-y-4">
             <div className="flex items-center justify-between">
-              <h3 className="text-base font-bold flex items-center gap-2">
+              <h3 className="text-base font-bold text-dark-text light:text-light-text flex items-center gap-2">
                 <Tag className="w-5 h-5 text-brand-primary" />
                 <span>שינוי קטגוריה במרוכז</span>
               </h3>
               <button
                 onClick={() => setBulkCategoryModalOpen(false)}
-                className="p-1 rounded-lg hover:bg-dark-surface-elevated text-dark-text-muted"
+                className="p-1 rounded-lg hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -833,7 +833,7 @@ function TransactionsContent() {
             </p>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-dark-text-muted">קטגוריה רצויה</label>
+              <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">קטגוריה רצויה</label>
               <CategoryPicker
                 value={bulkCategory}
                 onChange={setBulkCategory}
@@ -845,7 +845,7 @@ function TransactionsContent() {
               <button
                 type="button"
                 onClick={() => setBulkCategoryModalOpen(false)}
-                className="flex-1 py-2.5 rounded-xl border border-dark-border light:border-light-border text-xs font-medium"
+                className="flex-1 py-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-xs font-medium transition-colors"
               >
                 ביטול
               </button>
@@ -853,7 +853,7 @@ function TransactionsContent() {
                 type="button"
                 onClick={handleApplyBulkCategory}
                 disabled={!bulkCategory || savingBulk}
-                className="flex-1 py-2.5 rounded-xl bg-brand-primary text-white text-xs font-bold hover:bg-brand-primary-hover disabled:opacity-50 transition-colors"
+                className="flex-1 py-2.5 rounded-xl bg-brand-primary text-white text-xs font-bold hover:bg-brand-primary-hover disabled:opacity-50 transition-colors shadow-md shadow-brand-primary/20"
               >
                 {savingBulk ? 'מעדכן...' : `החל על ${selectedCount} תנועות`}
               </button>

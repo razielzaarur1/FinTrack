@@ -186,7 +186,7 @@ export default function DashboardPage() {
                   </div>
 
                   <div className="flex items-baseline justify-between pt-1">
-                    <span className="text-[11px] text-dark-text-muted">
+                    <span className="text-[11px] text-dark-text-muted light:text-light-text-muted">
                       {isCredit ? (isRefund ? 'זיכוי צפוי:' : 'חיוב צפוי:') : 'יתרה:'}
                     </span>
                     <span 
@@ -286,7 +286,7 @@ export default function DashboardPage() {
                   return (
                     <div
                       key={tx.id}
-                      className="flex items-center justify-between p-3 rounded-2xl border border-dark-border/50 light:border-light-border/50 bg-dark-surface-elevated/50 light:bg-light-surface-elevated/50 text-sm hover:bg-dark-surface-elevated transition-colors"
+                      className="flex items-center justify-between p-3 rounded-2xl border border-dark-border/50 light:border-light-border/50 bg-dark-surface-elevated/50 light:bg-light-surface-elevated/50 text-sm hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated transition-colors"
                     >
                       <div className="flex items-center gap-3 min-w-0 pr-1">
                         <CategoryBadge category={tx.category} size={18} />
@@ -319,7 +319,7 @@ export default function DashboardPage() {
 
           <Link
             href="/transactions"
-            className="w-full text-center py-2.5 rounded-xl border border-dark-border light:border-light-border hover:border-brand-primary text-xs font-semibold transition-all"
+            className="w-full text-center py-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated hover:border-brand-primary text-xs font-semibold transition-all"
           >
             {lang === 'he' ? 'כל התנועות עם חיפוש ופיצולים ←' : 'Browse All Transactions & Splits →'}
           </Link>
