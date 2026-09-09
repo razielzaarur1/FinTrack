@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { 
   Landmark, 
   Plus, 
@@ -8,13 +9,19 @@ import {
   Trash2, 
   Lock, 
   CheckCircle2, 
-  AlertTriangle,
-  X,
-  ShieldCheck
+  AlertTriangle, 
+  X, 
+  ShieldCheck, 
+  Edit2, 
+  Calendar, 
+  ArrowLeftRight,
+  ExternalLink,
+  CreditCard
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { formatILS, formatRelativeTime } from '@/lib/formatters';
 import { ISRAELI_INSTITUTIONS, getInstitutionById } from '@/lib/institutions';
+import InstitutionLogo from '@/components/common/InstitutionLogo';
 import { useApp } from '@/lib/app-context';
 
 export default function AccountsPage() {
@@ -29,8 +36,15 @@ export default function AccountsPage() {
   const [selectedInst, setSelectedInst] = useState(null);
   const [credentials, setCredentials] = useState({});
   const [displayName, setDisplayName] = useState('');
+  const [billingDay, setBillingDay] = useState(10);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState('');
+
+  // Edit Account Flow
+  const [editingAccount, setEditingAccount] = useState(null);
+  const [editName, setEditName] = useState('');
+  const [editBillingDay, setEditBillingDay] = useState(10);
+  const [savingEdit, setSavingEdit] = useState(false);
 
   const loadAccounts = async () => {
     setLoading(true);
@@ -58,11 +72,9 @@ export default function AccountsPage() {
         return;
       }
 
-      // Record current account state to detect when update completes
       const targetAccount = accounts.find((a) => a.id === id);
       const initialScrapedAt = targetAccount?.lastScrapedAt || null;
 
-      // Poll status every 3 seconds for up to 90 seconds (30 attempts)
       let attempts = 0;
       const interval = setInterval(async () => {
         attempts++;
@@ -100,6 +112,7 @@ export default function AccountsPage() {
     setSelectedInst(null);
     setCredentials({});
     setDisplayName('');
+    setBillingDay(10);
     setFormError('');
     setStep(1);
     setModalOpen(true);
@@ -123,6 +136,7 @@ export default function AccountsPage() {
       const res = await api.createAccount({
         bankCompany: selectedInst.id,
         displayName: displayName.trim() || undefined,
+        billingDay: parseInt(billingDay, 10) || 10,
         credentials,
       });
 
@@ -142,21 +156,46 @@ export default function AccountsPage() {
     }
   };
 
+  const handleOpenEdit = (acc) => {
+    setEditingAccount(acc);
+    setEditName(acc.displayName || '');
+    setEditBillingDay(acc.billingDay || 10);
+  };
+
+  const handleSaveEdit = async (e) => {
+    e.preventDefault();
+    if (!editingAccount) return;
+    setSavingEdit(true);
+    try {
+      await api.updateAccount(editingAccount.id, {
+        displayName: editName.trim() || undefined,
+        billingDay: parseInt(editBillingDay, 10) || 10,
+      });
+      setEditingAccount(null);
+      await loadAccounts();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl md:text-3xl font-bold tracking-tight mb-1">
             {t('accounts')}
           </h1>
           <p className="text-xs text-dark-text-muted light:text-light-text-muted">
-            {lang === 'he' ? 'כל המוסדות והכרטיסים שלך במקום אחד, מוצפנים ומאובטחים' : 'All your banking and credit accounts, encrypted and secured'}
+            {lang === 'he' ? 'כל המוסדות והכרטיסים שלך במקום אחד, מעודכנים בזמן אמת' : 'All your banking and credit accounts, tracked in real-time'}
           </p>
         </div>
 
         <button
           onClick={handleOpenModal}
-          className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-brand-primary text-white font-semibold text-xs shadow-md shadow-brand-primary/25 hover:bg-brand-primary-hover transition-all"
+          className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-brand-primary text-white font-semibold text-xs shadow-md shadow-brand-primary/25 hover:bg-brand-primary-hover transition-all shrink-0"
         >
           <Plus className="w-4 h-4" />
           <span>{t('addAccount')}</span>
@@ -180,64 +219,111 @@ export default function AccountsPage() {
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
           {accounts.map((acc) => {
             const inst = getInstitutionById(acc.bankCompany);
             const isSyncing = syncingId === acc.id;
+            const isCredit = acc.accountType === 'credit' || inst.type === 'credit';
+            const isRefund = isCredit && (acc.balance || 0) < 0;
 
             return (
               <div
                 key={acc.id}
-                className="p-5 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface space-y-4 hover:border-brand-primary/40 transition-all flex flex-col justify-between"
+                className="group relative rounded-2xl border border-dark-border/80 light:border-light-border/80 bg-dark-surface light:bg-light-surface p-5 shadow-sm hover:shadow-lg transition-all duration-300 flex flex-col justify-between overflow-hidden"
               >
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span
-                      className="px-2.5 py-1 rounded-lg text-xs font-bold"
-                      style={{ backgroundColor: inst.badgeBg, color: inst.color }}
-                    >
-                      {inst.name}
-                    </span>
+                {/* Background decorative glow on card hover */}
+                <div 
+                  className="absolute -top-12 -left-12 w-32 h-32 rounded-full blur-2xl opacity-15 transition-opacity group-hover:opacity-30 pointer-events-none"
+                  style={{ backgroundColor: inst.color || '#3b82f6' }}
+                />
 
-                    <div className="flex items-center gap-1.5 text-xs">
+                <div className="space-y-4 relative z-10">
+                  {/* Top Row: Institution Logo + Status + Edit Action */}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <InstitutionLogo bankCompany={acc.bankCompany} size={42} />
+                      <div>
+                        <div className="text-xs font-bold" style={{ color: inst.color }}>
+                          {inst.name}
+                        </div>
+                        <div className="text-[11px] text-dark-text-muted light:text-light-text-muted flex items-center gap-1 font-mono">
+                          <span>••••</span>
+                          <span>{acc.accountNumber || '0000'}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => handleOpenEdit(acc)}
+                        className="p-1.5 rounded-lg text-dark-text-muted hover:text-dark-text hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated transition-colors"
+                        title="ערוך שם ומועד חיוב"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+
                       {acc.lastScrapeError ? (
-                        <span className="flex items-center gap-1 text-brand-expense" title={acc.lastScrapeError}>
-                          <AlertTriangle className="w-3.5 h-3.5" />
+                        <span className="flex items-center gap-1 text-[11px] text-brand-expense bg-brand-expense/10 px-2 py-0.5 rounded-md font-medium" title={acc.lastScrapeError}>
+                          <AlertTriangle className="w-3 h-3" />
                           <span>{t('error')}</span>
                         </span>
                       ) : (
-                        <span className="flex items-center gap-1 text-brand-income">
-                          <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span className="flex items-center gap-1 text-[11px] text-brand-income bg-brand-income/10 px-2 py-0.5 rounded-md font-medium">
+                          <CheckCircle2 className="w-3 h-3" />
                           <span>{t('active')}</span>
                         </span>
                       )}
                     </div>
                   </div>
 
+                  {/* Card Display Name */}
                   <div>
-                    <h3 className="font-bold text-base truncate">
+                    <h3 className="font-bold text-lg text-dark-text light:text-light-text tracking-tight truncate">
                       {acc.displayName || inst.name}
                     </h3>
-                    <div className="text-xs text-dark-text-muted light:text-light-text-muted">
-                      ••••{acc.accountNumber || '0000'}
-                    </div>
+                    {isCredit && (
+                      <div className="flex items-center gap-1.5 mt-1">
+                        <span className="text-[11px] px-2 py-0.5 rounded-md bg-indigo-500/10 text-indigo-400 dark:text-indigo-300 font-medium flex items-center gap-1">
+                          <Calendar className="w-3 h-3" />
+                          <span>חיוב בכל {acc.billingDay || 10} לחודש</span>
+                        </span>
+                      </div>
+                    )}
                   </div>
 
-                  <div className="space-y-0.5">
-                    <div className="text-[11px] font-medium text-dark-text-muted light:text-light-text-muted">
-                      {inst.type === 'credit'
-                        ? (lang === 'he' ? 'חיוב חודשי צפוי' : 'Monthly Charge')
-                        : (lang === 'he' ? 'יתרה בעו״ש' : 'Current Balance')}
+                  {/* Amount / Balance Display */}
+                  <div className="p-3 rounded-xl bg-dark-surface-elevated/70 light:bg-light-surface-elevated/70 border border-dark-border/50 light:border-light-border/50 space-y-1">
+                    <div className="text-[11px] font-medium text-dark-text-muted light:text-light-text-muted flex items-center justify-between">
+                      <span>
+                        {isCredit 
+                          ? (isRefund ? 'זיכוי צפוי החודש' : 'חיוב חודשי צפוי')
+                          : (lang === 'he' ? 'יתרה בעו״ש' : 'Current Balance')}
+                      </span>
+                      {isRefund && (
+                        <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-500">
+                          זיכוי
+                        </span>
+                      )}
                     </div>
-                    <div className={`text-2xl font-bold tracking-tight ${inst.type === 'credit' ? 'text-brand-amber' : ''}`}>
-                      {formatILS(acc.balance)}
+
+                    <div 
+                      className={`text-2xl md:text-3xl font-bold tracking-tight ${
+                        isRefund 
+                          ? 'text-emerald-500 dark:text-emerald-400' 
+                          : isCredit 
+                          ? 'text-brand-amber' 
+                          : (acc.balance < 0 ? 'text-rose-500' : 'text-emerald-500')
+                      }`}
+                      dir="ltr"
+                    >
+                      {formatILS(acc.balance, { showSign: isRefund || (!isCredit && acc.balance < 0) })}
                     </div>
                   </div>
 
                   {isSyncing && (
                     <div className="p-2.5 rounded-xl bg-brand-primary/10 border border-brand-primary/20 text-[11px] text-brand-primary flex items-center gap-2 animate-pulse">
                       <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" />
-                      <span>{lang === 'he' ? 'מתחבר למוסד ומסנכרן כרטיסים ועסקאות...' : 'Connecting to institution and syncing cards & transactions...'}</span>
+                      <span>{lang === 'he' ? 'מסנכרן כרטיסים ועסקאות...' : 'Syncing cards & transactions...'}</span>
                     </div>
                   )}
 
@@ -245,30 +331,35 @@ export default function AccountsPage() {
                     <div className="p-2.5 rounded-xl bg-brand-expense/10 border border-brand-expense/20 text-[11px] text-brand-expense flex items-start gap-2">
                       <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
                       <div className="space-y-0.5 overflow-hidden">
-                        <div className="font-semibold">{lang === 'he' ? 'שגיאה בהתחברות לבנק:' : 'Bank Connection Error:'}</div>
+                        <div className="font-semibold">{lang === 'he' ? 'שגיאה בהתחברות:' : 'Connection Error:'}</div>
                         <div className="opacity-90 break-words line-clamp-2" title={acc.lastScrapeError}>{acc.lastScrapeError}</div>
                       </div>
                     </div>
                   )}
                 </div>
 
-                <div className="pt-3 border-t border-dark-border/60 light:border-light-border/60 flex items-center justify-between text-xs">
-                  <span className="text-dark-text-muted light:text-light-text-muted">
-                    {acc.lastScrapedAt ? formatRelativeTime(acc.lastScrapedAt, lang) : (lang === 'he' ? 'טרם סונכרן' : 'Never synced')}
-                  </span>
+                {/* Bottom Actions Bar */}
+                <div className="pt-4 mt-4 border-t border-dark-border/60 light:border-light-border/60 flex items-center justify-between text-xs relative z-10">
+                  <Link
+                    href={`/transactions?accountId=${acc.id}`}
+                    className="text-xs font-semibold text-brand-primary hover:underline flex items-center gap-1"
+                  >
+                    <span>תנועות הכרטיס</span>
+                    <ExternalLink className="w-3 h-3" />
+                  </Link>
 
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => handleSyncAccount(acc.id)}
                       disabled={isSyncing}
-                      className="p-2 rounded-lg hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-dark-text-muted hover:text-dark-text"
+                      className="p-2 rounded-lg hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-dark-text-muted hover:text-dark-text transition-colors"
                       title={t('syncNow')}
                     >
                       <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin text-brand-primary' : ''}`} />
                     </button>
                     <button
                       onClick={() => handleDeleteAccount(acc.id)}
-                      className="p-2 rounded-lg hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-brand-expense"
+                      className="p-2 rounded-lg hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-brand-expense transition-colors"
                       title={t('delete')}
                     >
                       <Trash2 className="w-3.5 h-3.5" />
@@ -278,6 +369,80 @@ export default function AccountsPage() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Edit Account / Card Modal */}
+      {editingAccount && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md bg-dark-surface light:bg-light-surface rounded-2xl border border-dark-border light:border-light-border p-6 shadow-2xl space-y-5">
+            <div className="flex items-center justify-between border-b border-dark-border light:border-light-border pb-3">
+              <div className="flex items-center gap-2 font-bold text-base">
+                <Edit2 className="w-4 h-4 text-brand-primary" />
+                <span>עריכת כרטיס / חשבון</span>
+              </div>
+              <button
+                onClick={() => setEditingAccount(null)}
+                className="p-1 rounded-lg hover:bg-dark-surface-elevated text-dark-text-muted"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEdit} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-dark-text-muted">
+                  שם / כינוי הכרטיס
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  placeholder="לדוגמה: מקס אישי, מקס הייטקזון"
+                  className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-sm focus:outline-none focus:border-brand-primary"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-dark-text-muted">
+                  מועד חיוב חודשי
+                </label>
+                <select
+                  value={editBillingDay}
+                  onChange={(e) => setEditBillingDay(e.target.value)}
+                  className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-sm focus:outline-none focus:border-brand-primary cursor-pointer"
+                >
+                  <option value="1">1 לחודש (תחילת חודש קלנדרי)</option>
+                  <option value="2">2 לחודש</option>
+                  <option value="10">10 לחודש (נפוץ באשראי)</option>
+                  <option value="15">15 לחודש</option>
+                  <option value="20">20 לחודש</option>
+                  <option value="25">25 לחודש</option>
+                </select>
+                <p className="text-[11px] text-dark-text-muted">
+                  החיוב החודשי יחושב עבור כל התנועות השייכות למחזור חיוב זה.
+                </p>
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingAccount(null)}
+                  className="px-4 py-2.5 rounded-xl border border-dark-border light:border-light-border text-xs font-semibold"
+                >
+                  ביטול
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingEdit}
+                  className="flex-1 py-2.5 rounded-xl bg-brand-primary text-white font-semibold text-xs hover:bg-brand-primary-hover shadow-md shadow-brand-primary/20"
+                >
+                  {savingEdit ? 'שומר שינויים...' : 'שמור עדכון'}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 
@@ -306,19 +471,14 @@ export default function AccountsPage() {
                   {lang === 'he' ? 'בחר בנק או חברת אשראי מרשימת המוסדות הנתמכים:' : 'Choose a bank or credit company from supported institutions:'}
                 </p>
 
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                   {ISRAELI_INSTITUTIONS.map((inst) => (
                     <button
                       key={inst.id}
                       onClick={() => handleSelectInstitution(inst)}
-                      className="p-3 rounded-xl border border-dark-border light:border-light-border hover:border-brand-primary bg-dark-surface-elevated light:bg-light-surface-elevated text-center space-y-1.5 transition-all group"
+                      className="p-3.5 rounded-2xl border border-dark-border light:border-light-border hover:border-brand-primary hover:shadow-md bg-dark-surface-elevated light:bg-light-surface-elevated text-center space-y-2 transition-all group flex flex-col items-center justify-center"
                     >
-                      <div
-                        className="w-10 h-10 rounded-lg mx-auto flex items-center justify-center font-bold text-xs shadow-sm"
-                        style={{ backgroundColor: inst.badgeBg, color: inst.color }}
-                      >
-                        {inst.logoText}
-                      </div>
+                      <InstitutionLogo bankCompany={inst.id} size={40} />
                       <div className="font-semibold text-xs group-hover:text-brand-primary truncate">
                         {lang === 'he' ? inst.name : inst.nameEn}
                       </div>
@@ -332,12 +492,7 @@ export default function AccountsPage() {
             {step === 2 && selectedInst && (
               <form onSubmit={handleSubmitAccount} className="space-y-4">
                 <div className="flex items-center gap-3 p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated">
-                  <div
-                    className="w-10 h-10 rounded-lg flex items-center justify-center font-bold text-xs"
-                    style={{ backgroundColor: selectedInst.badgeBg, color: selectedInst.color }}
-                  >
-                    {selectedInst.logoText}
-                  </div>
+                  <InstitutionLogo bankCompany={selectedInst.id} size={36} />
                   <div>
                     <div className="font-bold text-sm">{selectedInst.name}</div>
                     <button
@@ -351,7 +506,7 @@ export default function AccountsPage() {
                 </div>
 
                 {formError && (
-                  <div className="p-3 rounded-xl bg-brand-expense-bg border border-brand-expense/20 text-brand-expense text-xs">
+                  <div className="p-3 rounded-xl bg-brand-expense/10 border border-brand-expense/20 text-brand-expense text-xs">
                     {formError}
                   </div>
                 )}
@@ -368,6 +523,25 @@ export default function AccountsPage() {
                     className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated text-sm"
                   />
                 </div>
+
+                {selectedInst.type === 'credit' && (
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-dark-text-muted">
+                      מועד חיוב חודשי בכרטיס
+                    </label>
+                    <select
+                      value={billingDay}
+                      onChange={(e) => setBillingDay(e.target.value)}
+                      className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated text-sm cursor-pointer"
+                    >
+                      <option value="10">10 לחודש</option>
+                      <option value="1">1 לחודש</option>
+                      <option value="2">2 לחודש</option>
+                      <option value="15">15 לחודש</option>
+                      <option value="20">20 לחודש</option>
+                    </select>
+                  </div>
+                )}
 
                 {selectedInst.fields.map((fld) => (
                   <div key={fld} className="space-y-1.5">
@@ -388,8 +562,8 @@ export default function AccountsPage() {
                   <ShieldCheck className="w-4 h-4 text-brand-primary shrink-0" />
                   <span>
                     {lang === 'he' 
-                      ? 'הפרטים מוצפנים ישירות באמצעות HashiCorp Vault Transit ואינם נשמרים בטקסט פשוט.' 
-                      : 'Credentials are encrypted via HashiCorp Vault Transit and never stored in plaintext.'}
+                      ? 'הפרטים מוצפנים ישירות באמצעות מפתח AES-256-GCM מאובטח ואינם נשמרים בטקסט פשוט.' 
+                      : 'Credentials are encrypted via AES-256-GCM and never stored in plaintext.'}
                   </span>
                 </div>
 
@@ -423,8 +597,8 @@ export default function AccountsPage() {
                 </h3>
                 <p className="text-xs text-dark-text-muted max-w-sm mx-auto">
                   {lang === 'he' 
-                    ? 'הפרטים נשמרו בצורה מוצפנת ב-Vault. הסנכרון יתחיל ברקע.' 
-                    : 'Credentials securely stored in Vault. Scrape sync will start in background.'}
+                    ? 'הפרטים נשמרו בצורה מוצפנת ומאובטחת. הסנכרון התחיל ברקע.' 
+                    : 'Credentials securely stored. Scrape sync has started in background.'}
                 </p>
                 <button
                   onClick={() => setModalOpen(false)}

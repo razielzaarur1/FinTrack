@@ -72,27 +72,40 @@ export function isCreditInstitution(bankCompany) {
  * For credit cards with 0/null reported balance, sums the current month's transactions
  * to represent the expected monthly billing charge.
  */
-export function calculateEffectiveBalance(card, bankCompany) {
+export function calculateEffectiveBalance(card, bankCompany, billingDay = 10) {
   const isCredit = isCreditInstitution(bankCompany);
-
-  // If the scraper reported a non-zero balance:
-  if (typeof card?.balance === 'number' && card.balance !== 0) {
-    return isCredit ? Math.abs(card.balance) : card.balance;
+  if (!isCredit) {
+    return typeof card?.balance === 'number' ? card.balance : 0.0;
   }
 
-  // If balance is 0 or null for credit cards, compute monthly billing amount
+  // Credit card: compute net upcoming monthly billing amount
   const txns = Array.isArray(card?.txns) ? card.txns : [];
-  if (txns.length > 0 && isCredit) {
+  if (txns.length > 0) {
     const now = new Date();
-    const curYear = now.getFullYear();
+    const curDay = now.getDate();
     const curMonth = now.getMonth();
+    const curYear = now.getFullYear();
 
-    let monthlyCharges = 0;
+    const day = Math.min(Math.max(parseInt(billingDay, 10) || 10, 1), 28);
+    let cycleStart, cycleEnd;
+    if (curDay <= day) {
+      cycleEnd = new Date(curYear, curMonth, day, 23, 59, 59, 999);
+      cycleStart = new Date(curYear, curMonth - 1, day, 0, 0, 0, 0);
+    } else {
+      cycleEnd = new Date(curYear, curMonth + 1, day, 23, 59, 59, 999);
+      cycleStart = new Date(curYear, curMonth, day, 0, 0, 0, 0);
+    }
+
+    let netCharges = 0;
+    let cycleTxCount = 0;
+
     for (const tx of txns) {
       const txDate = tx.date ? new Date(tx.date) : null;
-      // Include transactions from current calendar month or pending status
+      const processedDate = tx.processedDate ? new Date(tx.processedDate) : null;
+      const relevantDate = processedDate || txDate;
+
       if (
-        (txDate && txDate.getFullYear() === curYear && txDate.getMonth() === curMonth) ||
+        (relevantDate && relevantDate >= cycleStart && relevantDate <= cycleEnd) ||
         tx.status === 'pending'
       ) {
         const amt =
@@ -101,12 +114,18 @@ export function calculateEffectiveBalance(card, bankCompany) {
             : typeof tx.originalAmount === 'number'
             ? tx.originalAmount
             : parseFloat(tx.chargedAmount || tx.originalAmount) || 0;
-        monthlyCharges += Math.abs(amt);
+
+        // In israeli-bank-scrapers:
+        // expenses are negative (e.g. -2500), credits/refunds are positive (e.g. +500)
+        // A monthly bill is net charges minus refunds:
+        // net charge = -1 * amt (so -2500 becomes +2500 charge, +500 becomes -500 credit)
+        netCharges += -amt;
+        cycleTxCount++;
       }
     }
 
-    if (monthlyCharges > 0) {
-      return Math.round(monthlyCharges * 100) / 100;
+    if (cycleTxCount > 0) {
+      return Math.round(netCharges * 100) / 100;
     }
   }
 
@@ -130,8 +149,12 @@ async function saveTransactionsList(client, accountId, transactions) {
         : typeof tx.originalAmount === 'number'
         ? tx.originalAmount
         : parseFloat(tx.chargedAmount || tx.originalAmount) || 0;
-    const description = tx.description || '';
-    const merchantName = tx.memo || tx.description || null;
+    
+    // In israeli-bank-scrapers:
+    // tx.description is the merchant/store name (e.g. "סופר פארם", "שופרסל")
+    // tx.memo is the comments / transaction details (e.g. "עסקה רגילה בארץ")
+    const merchantName = (tx.description || tx.memo || '').trim() || 'בית עסק';
+    const description = (tx.memo && tx.memo !== tx.description ? tx.memo : tx.description) || '';
     const category = tx.category || null;
     const status = tx.status || 'completed';
     const rawData = JSON.stringify(tx);
@@ -175,7 +198,7 @@ async function persistScrapedAccounts(pool, primaryAccountId, scrapedAccounts, t
   const client = await pool.connect();
   try {
     const accRes = await client.query(
-      `SELECT user_id, bank_company, encrypted_credentials, display_name
+      `SELECT user_id, bank_company, encrypted_credentials, display_name, COALESCE(billing_day, 10)::INT AS billing_day
        FROM bank_accounts
        WHERE id = $1`,
       [primaryAccountId]
@@ -185,7 +208,7 @@ async function persistScrapedAccounts(pool, primaryAccountId, scrapedAccounts, t
       throw new Error(`Primary account ${primaryAccountId} not found in database`);
     }
 
-    const { user_id, bank_company, encrypted_credentials, display_name } = accRes.rows[0];
+    const { user_id, bank_company, encrypted_credentials, display_name, billing_day } = accRes.rows[0];
     const results = [];
     const accountsToProcess = scrapedAccounts.length > 0 ? scrapedAccounts : [{ txns: [], balance: null }];
 
@@ -195,7 +218,7 @@ async function persistScrapedAccounts(pool, primaryAccountId, scrapedAccounts, t
       const card = accountsToProcess[i];
       const rawCardNum = card.accountNumber ? String(card.accountNumber).trim() : '';
       const cardLast4 = rawCardNum ? rawCardNum.slice(-4) : (i === 0 ? null : `000${i}`);
-      const effectiveBalance = calculateEffectiveBalance(card, targetBank || bank_company);
+      const effectiveBalance = calculateEffectiveBalance(card, targetBank || bank_company, billing_day || 10);
       const cardTxns = Array.isArray(card.txns) ? card.txns : [];
 
       let targetDbAccountId;
@@ -236,11 +259,11 @@ async function persistScrapedAccounts(pool, primaryAccountId, scrapedAccounts, t
           const secondaryDisplayName = cardLast4 ? `${baseName} (כרטיס ${cardLast4})` : `${baseName} (כרטיס נוסף)`;
           const insertRes = await client.query(
             `INSERT INTO bank_accounts (
-               user_id, bank_company, encrypted_credentials, display_name, account_number, balance, is_active, last_scraped_at
+               user_id, bank_company, encrypted_credentials, display_name, account_number, balance, billing_day, is_active, last_scraped_at
              ) VALUES (
-               $1, $2, $3, $4, $5, $6, true, NOW()
+               $1, $2, $3, $4, $5, $6, $7, true, NOW()
              ) RETURNING id`,
-            [user_id, bank_company, encrypted_credentials, secondaryDisplayName, cardLast4, effectiveBalance]
+            [user_id, bank_company, encrypted_credentials, secondaryDisplayName, cardLast4, effectiveBalance, billing_day || 10]
           );
           targetDbAccountId = insertRes.rows[0].id;
           logger.info({ targetDbAccountId, cardLast4, secondaryDisplayName }, 'Created separate account row for secondary card');

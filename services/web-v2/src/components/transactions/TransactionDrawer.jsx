@@ -16,6 +16,8 @@ import {
 import { api } from '@/lib/api';
 import { formatILS, formatDate } from '@/lib/formatters';
 import { useApp } from '@/lib/app-context';
+import CategoryBadge from '@/components/common/CategoryBadge';
+import { CATEGORIES_DATA } from '@/lib/categories';
 
 export default function TransactionDrawer({ tx, onClose, onUpdate }) {
   const { lang, t } = useApp();
@@ -161,15 +163,25 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
       <div className="w-full max-w-lg bg-dark-surface light:bg-light-surface h-full border-l border-dark-border light:border-light-border shadow-2xl flex flex-col justify-between overflow-hidden">
         {/* Header */}
         <div className="p-5 border-b border-dark-border light:border-light-border flex items-center justify-between">
-          <div>
-            <span className="text-xs font-semibold px-2 py-0.5 rounded bg-brand-primary/15 text-brand-primary">
-              {tx.bankCompany?.toUpperCase()}
-            </span>
-            <div className="text-lg font-bold mt-1 truncate max-w-sm">
-              {userDesc || tx.merchantName || tx.description}
-            </div>
-            <div className="text-xs text-dark-text-muted light:text-light-text-muted">
-              {formatDate(tx.date, lang)} • {formatILS(tx.amount, { showSign: true })}
+          <div className="flex items-center gap-3 min-w-0">
+            <CategoryBadge category={category || tx.category} size={22} />
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold px-2 py-0.5 rounded bg-brand-primary/15 text-brand-primary">
+                  {tx.accountDisplayName || tx.bankCompany?.toUpperCase()}
+                </span>
+                {tx.status === 'pending' && (
+                  <span className="text-[11px] px-2 py-0.5 rounded bg-amber-500/15 text-amber-400 font-medium">
+                    ממתין
+                  </span>
+                )}
+              </div>
+              <div className="text-lg font-bold mt-0.5 truncate max-w-sm text-dark-text light:text-light-text">
+                {userDesc || tx.merchantName || tx.description}
+              </div>
+              <div className="text-xs text-dark-text-muted light:text-light-text-muted">
+                {formatDate(tx.date, lang)} • {formatILS(tx.amount, { showSign: true })}
+              </div>
             </div>
           </div>
           <button
@@ -236,29 +248,32 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
           {/* 1. Details Tab */}
           {activeTab === 'details' && (
             <div className="space-y-4">
-              {/* Category Picker */}
+              {/* Merchant Name Display */}
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">
-                  {t('category')}
+                  שם בית העסק
                 </label>
-                <select
-                  value={category}
-                  onChange={(e) => setCategory(e.target.value)}
-                  className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-sm focus:outline-none focus:border-brand-primary"
-                >
-                  <option value="">{lang === 'he' ? 'בחר קטגוריה...' : 'Select category...'}</option>
-                  {categories.map((c) => (
-                    <option key={c.id} value={c.name}>
-                      {c.name} {c.nameEn ? `(${c.nameEn})` : ''}
-                    </option>
-                  ))}
-                </select>
+                <div className="p-2.5 rounded-xl border border-dark-border/60 bg-dark-surface-elevated font-semibold text-sm">
+                  {tx.merchantName || tx.description || 'ללא שם'}
+                </div>
               </div>
+
+              {/* Transaction Description / Memo */}
+              {tx.description && (
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">
+                    פירוט עסקה (מתוך חברת האשראי/הבנק)
+                  </label>
+                  <div className="p-2.5 rounded-xl border border-dark-border/60 bg-dark-surface-elevated text-xs opacity-90 font-mono">
+                    {tx.description}
+                  </div>
+                </div>
+              )}
 
               {/* User Description */}
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">
-                  {t('userDescription')}
+                  כינוי מותאם אישית (יוצג ככותרת)
                 </label>
                 <input
                   type="text"
@@ -267,6 +282,34 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
                   placeholder={tx.merchantName || tx.description}
                   className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-sm focus:outline-none focus:border-brand-primary"
                 />
+              </div>
+
+              {/* Category Picker */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">
+                  {t('category')}
+                </label>
+                <select
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                  className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-sm focus:outline-none focus:border-brand-primary cursor-pointer"
+                >
+                  <option value="">{lang === 'he' ? 'בחר קטגוריה...' : 'Select category...'}</option>
+                  <optgroup label="הוצאות">
+                    {CATEGORIES_DATA.expenses.map((c) => (
+                      <option key={c.id} value={c.name}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                  <optgroup label="הכנסות">
+                    {CATEGORIES_DATA.incomes.map((c) => (
+                      <option key={c.id} value={c.name}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                </select>
               </div>
 
               {/* Ignore Checkbox */}

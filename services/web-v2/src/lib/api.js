@@ -34,6 +34,7 @@ export const api = {
   // Accounts
   getAccounts: () => request('/api/accounts'),
   createAccount: (data) => request('/api/accounts', { method: 'POST', body: JSON.stringify(data) }),
+  updateAccount: (id, data) => request(`/api/accounts/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteAccount: (id) => request(`/api/accounts/${id}`, { method: 'DELETE' }),
 
   // Transactions (v2 with cursor pagination)

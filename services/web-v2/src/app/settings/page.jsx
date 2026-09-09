@@ -25,6 +25,10 @@ export default function SettingsPage() {
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsSaved, setSettingsSaved] = useState(false);
 
+  // Monthly Billing Cycle Start Day
+  const [monthStartDay, setMonthStartDay] = useState(10);
+  const [monthSaved, setMonthSaved] = useState(false);
+
   // New Category form
   const [name, setName] = useState('');
   const [nameEn, setNameEn] = useState('');
@@ -37,6 +41,9 @@ export default function SettingsPage() {
       const res = await api.getSystemSettings();
       if (res.data?.settings?.scrapeDaysBack) {
         setScrapeDaysBack(parseInt(res.data.settings.scrapeDaysBack, 10) || 30);
+      }
+      if (res.data?.settings?.monthStartDay) {
+        setMonthStartDay(parseInt(res.data.settings.monthStartDay, 10) || 10);
       }
     } catch (_) {}
   };
@@ -71,6 +78,21 @@ export default function SettingsPage() {
       console.error('Failed to save scraping settings:', err);
     } finally {
       setSavingSettings(false);
+    }
+  };
+
+  const handleSaveMonthStartDay = async (day) => {
+    const val = parseInt(day, 10) || 10;
+    setMonthStartDay(val);
+    setMonthSaved(false);
+    try {
+      const res = await api.getSystemSettings();
+      const current = res.data?.settings || {};
+      await api.updateSystemSettings({ ...current, monthStartDay: val });
+      setMonthSaved(true);
+      setTimeout(() => setMonthSaved(false), 3000);
+    } catch (err) {
+      console.error('Failed to save month start day:', err);
     }
   };
 
@@ -192,6 +214,44 @@ export default function SettingsPage() {
               </select>
 
               {settingsSaved && (
+                <span className="flex items-center gap-1 text-brand-income font-medium text-xs">
+                  <Check className="w-4 h-4" />
+                  <span>{lang === 'he' ? 'נשמר' : 'Saved'}</span>
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Monthly Billing Cycle Definition */}
+        <div className="p-4 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+            <div>
+              <div className="font-semibold text-sm">
+                {lang === 'he' ? 'יום תחילת חודש / מחזור תקציבי (ברירת מחדל)' : 'Default Monthly Cycle Start Day'}
+              </div>
+              <div className="text-dark-text-muted text-[11px] mt-0.5">
+                {lang === 'he'
+                  ? 'הגדר לפי איזה יום לסנן את החודש (ה-1 לחודש קלנדרי, או ה-10/15 לחודש לפי חיוב כרטיסי אשראי)'
+                  : 'Define billing cycle start day for monthly budgeting and credit card calculations'}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <select
+                value={monthStartDay}
+                onChange={(e) => handleSaveMonthStartDay(e.target.value)}
+                className="p-2.5 rounded-xl border border-dark-border bg-dark-surface light:bg-light-surface font-semibold text-xs focus:ring-2 focus:ring-brand-primary/50 cursor-pointer"
+              >
+                <option value="1">1 לחודש (חודש קלנדרי רגיל)</option>
+                <option value="2">2 לחודש</option>
+                <option value="10">10 לחודש (מועד חיוב אשראי נפוץ)</option>
+                <option value="15">15 לחודש</option>
+                <option value="20">20 לחודש</option>
+                <option value="25">25 לחודש</option>
+              </select>
+
+              {monthSaved && (
                 <span className="flex items-center gap-1 text-brand-income font-medium text-xs">
                   <Check className="w-4 h-4" />
                   <span>{lang === 'he' ? 'נשמר' : 'Saved'}</span>

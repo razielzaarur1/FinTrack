@@ -214,6 +214,22 @@ async function ensureSchema() {
               updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
               CONSTRAINT uq_system_settings_user UNIQUE (user_id)
           );
+
+          -- 11. Alterations & Migrations
+          ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS billing_day INT DEFAULT 10;
+
+          -- Correct past transactions where merchant_name was set to memo instead of actual store description
+          UPDATE transactions 
+          SET merchant_name = description,
+              description = COALESCE(NULLIF(raw_data->>'memo', ''), description)
+          WHERE raw_data->>'memo' IS NOT NULL 
+            AND merchant_name = (raw_data->>'memo')
+            AND description IS NOT NULL
+            AND description <> (raw_data->>'memo');
+
+          UPDATE transactions
+          SET merchant_name = description
+          WHERE (merchant_name IS NULL OR merchant_name = '') AND description IS NOT NULL;
         `);
 
         await client.query('COMMIT');

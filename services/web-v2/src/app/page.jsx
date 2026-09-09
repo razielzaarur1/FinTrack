@@ -19,6 +19,8 @@ import { useApp } from '@/lib/app-context';
 import { api } from '@/lib/api';
 import { formatILS, formatDate } from '@/lib/formatters';
 import { getInstitutionById } from '@/lib/institutions';
+import InstitutionLogo from '@/components/common/InstitutionLogo';
+import CategoryBadge from '@/components/common/CategoryBadge';
 
 export default function DashboardPage() {
   const { t, lang } = useApp();
@@ -54,7 +56,10 @@ export default function DashboardPage() {
   }, []);
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-8 relative">
+      {/* Ambient background glows for depth and vibrant atmosphere */}
+      <div className="fixed top-0 right-0 w-[500px] h-[500px] bg-indigo-500/10 rounded-full blur-[120px] pointer-events-none -z-10" />
+      <div className="fixed bottom-0 left-0 w-[450px] h-[450px] bg-emerald-500/5 rounded-full blur-[120px] pointer-events-none -z-10" />
       {/* Top Welcome & KPI Cards */}
       <div>
         <h1 className="text-2xl md:text-3xl font-bold tracking-tight mb-2">
@@ -156,27 +161,46 @@ export default function DashboardPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
             {accounts.map((acc) => {
               const inst = getInstitutionById(acc.bankCompany);
+              const isCredit = acc.accountType === 'credit' || inst.type === 'credit';
+              const isRefund = isCredit && (acc.balance || 0) < 0;
+
               return (
                 <div
                   key={acc.id}
-                  className="p-4 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface space-y-2 hover:border-brand-primary/50 transition-colors"
+                  className="p-4 rounded-2xl border border-dark-border/80 light:border-light-border/80 bg-dark-surface light:bg-light-surface space-y-2 hover:border-brand-primary/50 transition-all shadow-sm"
                 >
                   <div className="flex items-center justify-between">
-                    <span
-                      className="px-2 py-0.5 rounded text-xs font-bold"
-                      style={{ backgroundColor: inst.badgeBg, color: inst.color }}
-                    >
-                      {inst.name}
-                    </span>
-                    <span className="text-xs text-dark-text-muted light:text-light-text-muted">
+                    <div className="flex items-center gap-2">
+                      <InstitutionLogo bankCompany={acc.bankCompany} size={28} />
+                      <span className="text-xs font-bold" style={{ color: inst.color }}>
+                        {inst.name}
+                      </span>
+                    </div>
+                    <span className="text-[11px] font-mono text-dark-text-muted light:text-light-text-muted">
                       ••••{acc.accountNumber || '0000'}
                     </span>
                   </div>
-                  <div className="font-semibold text-sm truncate">
+
+                  <div className="font-bold text-sm truncate text-dark-text light:text-light-text">
                     {acc.displayName || inst.name}
                   </div>
-                  <div className={`text-lg font-bold ${parseFloat(acc.balance) < 0 ? 'text-brand-expense' : ''}`}>
-                    {formatILS(acc.balance)}
+
+                  <div className="flex items-baseline justify-between pt-1">
+                    <span className="text-[11px] text-dark-text-muted">
+                      {isCredit ? (isRefund ? 'זיכוי צפוי:' : 'חיוב צפוי:') : 'יתרה:'}
+                    </span>
+                    <span 
+                      className={`text-base font-bold ${
+                        isRefund 
+                          ? 'text-emerald-500' 
+                          : isCredit 
+                          ? 'text-brand-amber' 
+                          : (acc.balance < 0 ? 'text-rose-500' : 'text-emerald-500')
+                      }`} 
+                      dir="ltr"
+                    >
+                      {formatILS(acc.balance, { showSign: isRefund || (!isCredit && acc.balance < 0) })}
+                    </span>
                   </div>
                 </div>
               );
@@ -251,22 +275,34 @@ export default function DashboardPage() {
               <div className="space-y-3">
                 {recentTx.map((tx) => {
                   const isPositive = parseFloat(tx.amount) > 0;
+                  const merchantTitle = tx.userDescription || tx.merchantName || tx.description;
+                  const subDescription = tx.description && tx.description !== merchantTitle ? tx.description : null;
+
                   return (
                     <div
                       key={tx.id}
-                      className="flex items-center justify-between p-2.5 rounded-xl border border-dark-border/50 light:border-light-border/50 bg-dark-surface-elevated/50 light:bg-light-surface-elevated/50 text-sm"
+                      className="flex items-center justify-between p-3 rounded-2xl border border-dark-border/50 light:border-light-border/50 bg-dark-surface-elevated/50 light:bg-light-surface-elevated/50 text-sm hover:bg-dark-surface-elevated transition-colors"
                     >
-                      <div className="min-w-0 pr-2">
-                        <div className="font-medium truncate text-xs sm:text-sm">
-                          {tx.userDescription || tx.merchantName || tx.description}
-                        </div>
-                        <div className="text-[11px] text-dark-text-muted light:text-light-text-muted flex items-center gap-2">
-                          <span>{formatDate(tx.date, lang)}</span>
-                          <span>•</span>
-                          <span>{tx.category || (lang === 'he' ? 'ללא קטגוריה' : 'Uncategorized')}</span>
+                      <div className="flex items-center gap-3 min-w-0 pr-1">
+                        <CategoryBadge category={tx.category} size={18} />
+                        <div className="min-w-0">
+                          <div className="font-bold truncate text-xs sm:text-sm text-dark-text light:text-light-text">
+                            {merchantTitle}
+                          </div>
+                          <div className="text-[11px] text-dark-text-muted light:text-light-text-muted flex items-center gap-2 mt-0.5">
+                            {subDescription && (
+                              <>
+                                <span className="truncate max-w-[140px] opacity-80">{subDescription}</span>
+                                <span>•</span>
+                              </>
+                            )}
+                            <span>{formatDate(tx.date, lang)}</span>
+                            <span>•</span>
+                            <span>{tx.category || (lang === 'he' ? 'ללא קטגוריה' : 'Uncategorized')}</span>
+                          </div>
                         </div>
                       </div>
-                      <div className={`font-semibold shrink-0 ${isPositive ? 'text-brand-income' : 'text-dark-text light:text-light-text'}`}>
+                      <div className={`font-bold shrink-0 text-sm sm:text-base ${isPositive ? 'text-emerald-500 dark:text-emerald-400' : 'text-dark-text light:text-light-text'}`} dir="ltr">
                         {formatILS(tx.amount, { showSign: true })}
                       </div>
                     </div>
