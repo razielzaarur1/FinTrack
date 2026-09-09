@@ -57,7 +57,9 @@ export function AppProvider({ children }) {
 
     if (savedTheme === 'light') {
       document.documentElement.classList.add('light');
+      document.documentElement.classList.remove('dark');
     } else {
+      document.documentElement.classList.add('dark');
       document.documentElement.classList.remove('light');
     }
 
@@ -112,7 +114,9 @@ export function AppProvider({ children }) {
     localStorage.setItem('fintrack_theme', nextTheme);
     if (nextTheme === 'light') {
       document.documentElement.classList.add('light');
+      document.documentElement.classList.remove('dark');
     } else {
+      document.documentElement.classList.add('dark');
       document.documentElement.classList.remove('light');
     }
   };

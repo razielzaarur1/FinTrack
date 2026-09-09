@@ -307,7 +307,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
                 <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">
                   שם בית העסק
                 </label>
-                <div className="p-2.5 rounded-xl border border-dark-border/60 bg-dark-surface-elevated font-semibold text-sm">
+                <div className="p-2.5 rounded-xl border border-dark-border/60 light:border-light-border/60 bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text font-semibold text-sm">
                   {tx.merchantName || tx.description || 'ללא שם'}
                 </div>
               </div>
@@ -318,7 +318,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
                   <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">
                     פירוט עסקה (מתוך חברת האשראי/הבנק)
                   </label>
-                  <div className="p-2.5 rounded-xl border border-dark-border/60 bg-dark-surface-elevated text-xs opacity-90 font-mono">
+                  <div className="p-2.5 rounded-xl border border-dark-border/60 light:border-light-border/60 bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs opacity-90 font-mono">
                     {tx.description}
                   </div>
                 </div>
@@ -518,7 +518,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
                   placeholder="UUID תנועה לקישור (זיכוי/חיוב מקביל)"
                   value={linkCandidateId}
                   onChange={(e) => setLinkCandidateId(e.target.value)}
-                  className="flex-1 p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated text-xs focus:outline-none focus:border-brand-primary"
+                  className="flex-1 p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs focus:outline-none focus:border-brand-primary"
                 />
                 <button
                   type="submit"
@@ -535,10 +535,10 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
                   </div>
                 ) : (
                   links.map((lnk) => (
-                    <div key={lnk.linkId} className="p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated flex items-center justify-between text-xs">
+                    <div key={lnk.linkId} className="p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated flex items-center justify-between text-xs">
                       <div>
-                        <div className="font-semibold">{lnk.description}</div>
-                        <div className="text-dark-text-muted">{formatDate(lnk.date, lang)} • {formatILS(lnk.amount)}</div>
+                        <div className="font-semibold text-dark-text light:text-light-text">{lnk.description}</div>
+                        <div className="text-dark-text-muted light:text-light-text-muted">{formatDate(lnk.date, lang)} • {formatILS(lnk.amount)}</div>
                       </div>
                       <span className="px-2 py-0.5 rounded bg-brand-cyan/20 text-brand-cyan text-[10px]">
                         {lnk.linkType}
@@ -559,7 +559,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
                   placeholder="הוסף הערה..."
                   value={newNote}
                   onChange={(e) => setNewNote(e.target.value)}
-                  className="flex-1 p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated text-xs focus:outline-none focus:border-brand-primary"
+                  className="flex-1 p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs focus:outline-none focus:border-brand-primary"
                 />
                 <button
                   type="submit"
@@ -576,11 +576,11 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
                   </div>
                 ) : (
                   notes.map((n) => (
-                    <div key={n.id} className="p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated flex items-center justify-between text-xs">
+                    <div key={n.id} className="p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text flex items-center justify-between text-xs">
                       <span>{n.note}</span>
                       <button
                         onClick={() => handleDeleteNote(n.id)}
-                        className="text-brand-expense p-1 hover:bg-dark-surface rounded"
+                        className="text-brand-expense p-1 hover:bg-dark-surface light:hover:bg-light-surface rounded"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -622,7 +622,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
 
             const scraperFields = [
               { label: 'מזהה תנועה (Identifier)', value: tx.identifier || rawObj.identifier || tx.id, icon: <Hash className="w-3.5 h-3.5 text-brand-primary" /> },
-              { label: 'סטטוס תנועה (Status)', value: tx.status || rawObj.status || 'completed', badge: tx.status === 'pending' ? 'bg-amber-500/20 text-amber-400' : 'bg-emerald-500/20 text-emerald-400' },
+              { label: 'סטטוס תנועה (Status)', value: tx.status || rawObj.status || 'completed', badge: tx.status === 'pending' ? 'bg-amber-500/20 text-amber-500' : 'bg-emerald-500/20 text-emerald-500' },
               { label: 'סוג תנועה (Type)', value: tx.type || rawObj.type || (parseFloat(tx.amount) < 0 ? 'expense' : 'income') },
               { label: 'סכום מקורי (Original Amount)', value: rawObj.originalAmount != null ? `${rawObj.originalAmount} ${rawObj.originalCurrency || tx.originalCurrency || 'ILS'}` : (tx.originalAmount ? `${tx.originalAmount} ${tx.originalCurrency || 'ILS'}` : 'לא צוין') },
               { label: 'סכום חיוב (Charged Amount)', value: rawObj.chargedAmount != null ? `${rawObj.chargedAmount} ILS` : (tx.chargedAmount ? `${tx.chargedAmount} ILS` : formatILS(tx.amount)) },
@@ -652,7 +652,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
                     onClick={handleCopyJson}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-xs font-medium hover:border-brand-primary transition-colors text-dark-text light:text-light-text"
                   >
-                    {copiedRaw ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-dark-text-muted" />}
+                    {copiedRaw ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5 text-dark-text-muted" />}
                     <span>{copiedRaw ? 'הועתק!' : 'העתק JSON'}</span>
                   </button>
                 </div>
@@ -660,12 +660,12 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
                 {/* Structured Fields Grid */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {scraperFields.map((field, idx) => (
-                    <div key={idx} className="p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated/40 space-y-1">
+                    <div key={idx} className="p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40 space-y-1">
                       <div className="text-[11px] font-medium text-dark-text-muted light:text-light-text-muted flex items-center gap-1">
                         {field.icon}
                         <span>{field.label}</span>
                       </div>
-                      <div className="text-xs font-semibold break-all text-dark-text-primary light:text-light-text-primary">
+                      <div className="text-xs font-semibold break-all text-dark-text light:text-light-text">
                         {field.badge ? (
                           <span className={`px-2 py-0.5 rounded text-[11px] ${field.badge}`}>{field.value}</span>
                         ) : (
@@ -681,7 +681,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
                   <div className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">
                     JSON גולמי מלא (Full Raw Scraper Object):
                   </div>
-                  <pre className="p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated/90 text-[11px] font-mono text-emerald-400 overflow-x-auto max-h-60 leading-relaxed text-left" dir="ltr">
+                  <pre className="p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated/90 light:bg-light-surface-elevated/90 text-[11px] font-mono text-emerald-500 dark:text-emerald-400 overflow-x-auto max-h-60 leading-relaxed text-left" dir="ltr">
                     {rawJsonString}
                   </pre>
                 </div>

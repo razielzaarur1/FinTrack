@@ -315,10 +315,15 @@ export default function AnalyticsPage() {
                 <YAxis stroke="#64748b" fontSize={11} tickLine={false} tickFormatter={(val) => `₪${val}`} />
                 <Tooltip
                   contentStyle={{
-                    backgroundColor: '#111726',
-                    borderColor: '#1e293b',
+                    backgroundColor: theme === 'light' ? '#ffffff' : '#111726',
+                    borderColor: theme === 'light' ? '#e2e8f0' : '#1e293b',
                     borderRadius: '0.75rem',
                     fontSize: '12px',
+                    color: theme === 'light' ? '#0f172a' : '#f1f5f9',
+                    boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)',
+                  }}
+                  itemStyle={{
+                    color: theme === 'light' ? '#0f172a' : '#f1f5f9',
                   }}
                   formatter={(val) => formatILS(val)}
                 />
@@ -382,7 +387,20 @@ export default function AnalyticsPage() {
                         <Cell key={`cell-${index}`} fill={entry.color || COLORS[index % COLORS.length]} />
                       ))}
                     </Pie>
-                    <Tooltip formatter={(val) => formatILS(val)} />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: theme === 'light' ? '#ffffff' : '#111726',
+                        borderColor: theme === 'light' ? '#e2e8f0' : '#1e293b',
+                        borderRadius: '0.75rem',
+                        fontSize: '12px',
+                        color: theme === 'light' ? '#0f172a' : '#f1f5f9',
+                        boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)',
+                      }}
+                      itemStyle={{
+                        color: theme === 'light' ? '#0f172a' : '#f1f5f9',
+                      }}
+                      formatter={(val) => formatILS(val)}
+                    />
                   </PieChart>
                 </ResponsiveContainer>
               </div>

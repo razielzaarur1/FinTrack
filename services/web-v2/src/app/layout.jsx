@@ -23,6 +23,25 @@ export default function RootLayout({ children }) {
   return (
     <html lang="he" dir="rtl">
       <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){
+              try {
+                var theme = localStorage.getItem('fintrack_theme') || 'dark';
+                var lang = localStorage.getItem('fintrack_lang') || 'he';
+                if (theme === 'light') {
+                  document.documentElement.classList.add('light');
+                  document.documentElement.classList.remove('dark');
+                } else {
+                  document.documentElement.classList.add('dark');
+                  document.documentElement.classList.remove('light');
+                }
+                document.documentElement.setAttribute('dir', lang === 'he' ? 'rtl' : 'ltr');
+                document.documentElement.setAttribute('lang', lang);
+              } catch (e) {}
+            })()`,
+          }}
+        />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
@@ -30,7 +49,7 @@ export default function RootLayout({ children }) {
           rel="stylesheet"
         />
       </head>
-      <body>
+      <body className="bg-dark-bg text-dark-text light:bg-light-bg light:text-light-text antialiased">
         <AppProvider>
           <Shell>{children}</Shell>
         </AppProvider>

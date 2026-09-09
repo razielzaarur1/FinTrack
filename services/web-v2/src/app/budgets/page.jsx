@@ -186,14 +186,14 @@ export default function BudgetsPage() {
       {budgetModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <form onSubmit={handleSaveBudget} className="w-full max-w-md bg-dark-surface light:bg-light-surface rounded-2xl border border-dark-border light:border-light-border p-6 space-y-4">
-            <h3 className="font-bold text-lg">{lang === 'he' ? 'הוספת תקציב חודשי' : 'Add Monthly Budget'}</h3>
+            <h3 className="font-bold text-lg text-dark-text light:text-light-text">{lang === 'he' ? 'הוספת תקציב חודשי' : 'Add Monthly Budget'}</h3>
             <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-dark-text-muted">{t('category')}</label>
+              <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">{t('category')}</label>
               <select
                 required
                 value={newBudget.category}
                 onChange={(e) => setNewBudget({ ...newBudget, category: e.target.value })}
-                className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated text-sm"
+                className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-sm focus:outline-none focus:border-brand-primary"
               >
                 <option value="">{lang === 'he' ? 'בחר קטגוריה...' : 'Select category...'}</option>
                 {categories.map((c) => (
@@ -202,7 +202,7 @@ export default function BudgetsPage() {
               </select>
             </div>
             <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-dark-text-muted">{lang === 'he' ? 'מגבלה חודשית (₪)' : 'Monthly Limit (₪)'}</label>
+              <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">{lang === 'he' ? 'מגבלה חודשית (₪)' : 'Monthly Limit (₪)'}</label>
               <input
                 type="number"
                 required
@@ -210,14 +210,14 @@ export default function BudgetsPage() {
                 value={newBudget.monthlyLimit}
                 onChange={(e) => setNewBudget({ ...newBudget, monthlyLimit: e.target.value })}
                 placeholder="2500"
-                className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated text-sm"
+                className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-sm focus:outline-none focus:border-brand-primary"
               />
             </div>
             <div className="flex gap-2 pt-2">
-              <button type="button" onClick={() => setBudgetModal(false)} className="px-4 py-2.5 rounded-xl border border-dark-border text-xs font-semibold">
+              <button type="button" onClick={() => setBudgetModal(false)} className="px-4 py-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text text-xs font-semibold hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated transition-colors">
                 {t('cancel')}
               </button>
-              <button type="submit" className="flex-1 py-2.5 rounded-xl bg-brand-primary text-white text-xs font-semibold">
+              <button type="submit" className="flex-1 py-2.5 rounded-xl bg-brand-primary text-white text-xs font-semibold hover:bg-brand-primary-hover shadow-md shadow-brand-primary/20 transition-colors">
                 {t('save')}
               </button>
             </div>
@@ -229,44 +229,44 @@ export default function BudgetsPage() {
       {goalModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <form onSubmit={handleSaveGoal} className="w-full max-w-md bg-dark-surface light:bg-light-surface rounded-2xl border border-dark-border light:border-light-border p-6 space-y-4">
-            <h3 className="font-bold text-lg">{lang === 'he' ? 'הוספת יעד חיסכון' : 'Add Savings Goal'}</h3>
+            <h3 className="font-bold text-lg text-dark-text light:text-light-text">{lang === 'he' ? 'הוספת יעד חיסכון' : 'Add Savings Goal'}</h3>
             <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-dark-text-muted">{lang === 'he' ? 'שם היעד' : 'Goal Title'}</label>
+              <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">{lang === 'he' ? 'שם היעד' : 'Goal Title'}</label>
               <input
                 type="text"
                 required
                 value={newGoal.title}
                 onChange={(e) => setNewGoal({ ...newGoal, title: e.target.value })}
                 placeholder="קרן חירום / חופשה"
-                className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated text-sm"
+                className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-sm focus:outline-none focus:border-brand-primary"
               />
             </div>
             <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-dark-text-muted">{lang === 'he' ? 'סכום יעד (₪)' : 'Target Amount (₪)'}</label>
+              <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">{lang === 'he' ? 'סכום יעד (₪)' : 'Target Amount (₪)'}</label>
               <input
                 type="number"
                 required
                 value={newGoal.targetAmount}
                 onChange={(e) => setNewGoal({ ...newGoal, targetAmount: e.target.value })}
                 placeholder="50000"
-                className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated text-sm"
+                className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-sm focus:outline-none focus:border-brand-primary"
               />
             </div>
             <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-dark-text-muted">{lang === 'he' ? 'סכום קיים כעת (₪)' : 'Initial Amount (₪)'}</label>
+              <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">{lang === 'he' ? 'סכום קיים כעת (₪)' : 'Initial Amount (₪)'}</label>
               <input
                 type="number"
                 value={newGoal.currentAmount}
                 onChange={(e) => setNewGoal({ ...newGoal, currentAmount: e.target.value })}
                 placeholder="5000"
-                className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated text-sm"
+                className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-sm focus:outline-none focus:border-brand-primary"
               />
             </div>
             <div className="flex gap-2 pt-2">
-              <button type="button" onClick={() => setGoalModal(false)} className="px-4 py-2.5 rounded-xl border border-dark-border text-xs font-semibold">
+              <button type="button" onClick={() => setGoalModal(false)} className="px-4 py-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text text-xs font-semibold hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated transition-colors">
                 {t('cancel')}
               </button>
-              <button type="submit" className="flex-1 py-2.5 rounded-xl bg-brand-primary text-white text-xs font-semibold">
+              <button type="submit" className="flex-1 py-2.5 rounded-xl bg-brand-primary text-white text-xs font-semibold hover:bg-brand-primary-hover shadow-md shadow-brand-primary/20 transition-colors">
                 {t('save')}
               </button>
             </div>

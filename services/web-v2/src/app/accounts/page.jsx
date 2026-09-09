@@ -887,7 +887,7 @@ export default function AccountsPage() {
                 )}
 
                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-dark-text-muted">
+                  <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">
                     {lang === 'he' ? 'כינוי לחשבון (אופציונלי)' : 'Account Nickname (Optional)'}
                   </label>
                   <input
@@ -895,19 +895,19 @@ export default function AccountsPage() {
                     value={displayName}
                     onChange={(e) => setDisplayName(e.target.value)}
                     placeholder={selectedInst.name}
-                    className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated text-sm"
+                    className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-sm focus:outline-none focus:border-brand-primary"
                   />
                 </div>
 
                 {selectedInst.type === 'credit' && (
                   <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-dark-text-muted">
+                    <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">
                       מועד חיוב חודשי בכרטיס
                     </label>
                     <select
                       value={billingDay}
                       onChange={(e) => setBillingDay(e.target.value)}
-                      className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated text-sm cursor-pointer"
+                      className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-sm cursor-pointer focus:outline-none focus:border-brand-primary"
                     >
                       <option value="10">10 לחודש</option>
                       <option value="1">1 לחודש</option>
@@ -920,7 +920,7 @@ export default function AccountsPage() {
 
                 {selectedInst.fields.map((fld) => (
                   <div key={fld} className="space-y-1.5">
-                    <label className="text-xs font-semibold text-dark-text-muted">
+                    <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">
                       {selectedInst.labels[fld] || fld}
                     </label>
                     <input
@@ -928,12 +928,12 @@ export default function AccountsPage() {
                       required
                       value={credentials[fld] || ''}
                       onChange={(e) => handleCredentialChange(fld, e.target.value)}
-                      className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated text-sm"
+                      className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-sm focus:outline-none focus:border-brand-primary"
                     />
                   </div>
                 ))}
 
-                <div className="p-3 rounded-xl bg-brand-primary/10 border border-brand-primary/20 text-[11px] text-dark-text-muted flex items-center gap-2">
+                <div className="p-3 rounded-xl bg-brand-primary/10 border border-brand-primary/20 text-[11px] text-dark-text-muted light:text-light-text-muted flex items-center gap-2">
                   <ShieldCheck className="w-4 h-4 text-brand-primary shrink-0" />
                   <span>
                     {lang === 'he' 
@@ -946,14 +946,14 @@ export default function AccountsPage() {
                   <button
                     type="button"
                     onClick={() => setStep(1)}
-                    className="px-4 py-2.5 rounded-xl border border-dark-border light:border-light-border text-xs font-semibold"
+                    className="px-4 py-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text text-xs font-semibold hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated transition-colors"
                   >
                     {t('cancel')}
                   </button>
                   <button
                     type="submit"
                     disabled={submitting}
-                    className="flex-1 py-2.5 rounded-xl bg-brand-primary text-white font-semibold text-xs hover:bg-brand-primary-hover shadow-md shadow-brand-primary/20"
+                    className="flex-1 py-2.5 rounded-xl bg-brand-primary text-white font-semibold text-xs hover:bg-brand-primary-hover shadow-md shadow-brand-primary/20 transition-colors"
                   >
                     {submitting ? (lang === 'he' ? 'מצפין ומחבר...' : 'Encrypting & Connecting...') : (lang === 'he' ? 'חבר חשבון מאובטח' : 'Connect Secure Account')}
                   </button>

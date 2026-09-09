@@ -316,14 +316,14 @@ export default function SettingsPage() {
             </button>
           </div>
 
-          <div className="p-4 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated flex items-center justify-between">
+          <div className="p-4 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated flex items-center justify-between">
             <div>
-              <div className="font-semibold">{lang === 'he' ? 'ערכת נושא' : 'Theme Mode'}</div>
-              <div className="text-dark-text-muted">{theme === 'dark' ? t('darkMode') : t('lightMode')}</div>
+              <div className="font-semibold text-dark-text light:text-light-text">{lang === 'he' ? 'ערכת נושא' : 'Theme Mode'}</div>
+              <div className="text-dark-text-muted light:text-light-text-muted">{theme === 'dark' ? t('darkMode') : t('lightMode')}</div>
             </div>
             <button
               onClick={toggleTheme}
-              className="px-3 py-1.5 rounded-lg border border-dark-border bg-dark-surface font-semibold"
+              className="px-3 py-1.5 rounded-lg border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text font-semibold hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated transition-colors"
             >
               {theme === 'dark' ? '☀️ ' + t('lightMode') : '🌙 ' + t('darkMode')}
             </button>
@@ -338,20 +338,20 @@ export default function SettingsPage() {
             <RefreshCw className="w-5 h-5 text-brand-primary" />
             <span>{lang === 'he' ? 'הגדרות סנכרון וסריקה בנקאית' : 'Scraping & Sync Settings'}</span>
           </h3>
-          <p className="text-xs text-dark-text-muted mt-0.5">
+          <p className="text-xs text-dark-text-muted light:text-light-text-muted mt-0.5">
             {lang === 'he'
               ? 'בחר כמה זמן היסטוריה למשוך בכל סריקה של חשבונות הבנק וכרטיסי האשראי'
               : 'Configure transaction history range fetched during scraping'}
           </p>
         </div>
 
-        <div className="p-4 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated space-y-3">
+        <div className="p-4 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
             <div>
-              <div className="font-semibold text-sm">
+              <div className="font-semibold text-sm text-dark-text light:text-light-text">
                 {lang === 'he' ? 'טווח משיכת עסקאות אחורה' : 'Transaction History Range'}
               </div>
-              <div className="text-dark-text-muted text-[11px] mt-0.5">
+              <div className="text-dark-text-muted light:text-light-text-muted text-[11px] mt-0.5">
                 {lang === 'he'
                   ? 'הספריות של Max, כאל ובנקים תומכות במשיכה של עד שנה (365 יום) או שנתיים אחורה'
                   : 'Israeli bank scrapers support fetching up to 1 year (365 days) or 2 years back'}
@@ -363,7 +363,7 @@ export default function SettingsPage() {
                 value={scrapeDaysBack}
                 onChange={(e) => handleSaveSyncSettings(e.target.value)}
                 disabled={savingSettings}
-                className="p-2.5 rounded-xl border border-dark-border bg-dark-surface light:bg-light-surface font-semibold text-xs focus:ring-2 focus:ring-brand-primary/50"
+                className="p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text font-semibold text-xs focus:ring-2 focus:ring-brand-primary/50 cursor-pointer"
               >
                 <option value="30">{lang === 'he' ? 'חודש אחד אחורה (30 יום) - ברירת מחדל' : '1 Month (30 days) - Default'}</option>
                 <option value="60">{lang === 'he' ? 'חודשיים אחורה (60 יום)' : '2 Months (60 days)'}</option>
@@ -384,13 +384,13 @@ export default function SettingsPage() {
         </div>
 
         {/* Monthly Billing Cycle Definition */}
-        <div className="p-4 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated space-y-3">
+        <div className="p-4 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
             <div>
-              <div className="font-semibold text-sm">
+              <div className="font-semibold text-sm text-dark-text light:text-light-text">
                 {lang === 'he' ? 'יום תחילת חודש / מחזור תקציבי (ברירת מחדל)' : 'Default Monthly Cycle Start Day'}
               </div>
-              <div className="text-dark-text-muted text-[11px] mt-0.5">
+              <div className="text-dark-text-muted light:text-light-text-muted text-[11px] mt-0.5">
                 {lang === 'he'
                   ? 'הגדר לפי איזה יום לסנן את החודש (ה-1 לחודש קלנדרי, או ה-10/15 לחודש לפי חיוב כרטיסי אשראי)'
                   : 'Define billing cycle start day for monthly budgeting and credit card calculations'}
@@ -401,7 +401,7 @@ export default function SettingsPage() {
               <select
                 value={monthStartDay}
                 onChange={(e) => handleSaveMonthStartDay(e.target.value)}
-                className="p-2.5 rounded-xl border border-dark-border bg-dark-surface light:bg-light-surface font-semibold text-xs focus:ring-2 focus:ring-brand-primary/50 cursor-pointer"
+                className="p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text font-semibold text-xs focus:ring-2 focus:ring-brand-primary/50 cursor-pointer"
               >
                 <option value="1">1 לחודש (חודש קלנדרי רגיל)</option>
                 <option value="2">2 לחודש</option>
@@ -665,36 +665,36 @@ export default function SettingsPage() {
             <form onSubmit={handleSubmitCategory} className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <label className="text-xs font-semibold text-dark-text-muted">שם הקטגוריה (בעברית) *</label>
+                  <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">שם הקטגוריה (בעברית) *</label>
                   <input
                     type="text"
                     required
                     value={formName}
                     onChange={(e) => setFormName(e.target.value)}
                     placeholder="למשל: ספורט וכושר"
-                    className="w-full p-2.5 rounded-xl border border-dark-border bg-dark-surface-elevated text-xs focus:border-brand-primary focus:outline-none"
+                    className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs focus:border-brand-primary focus:outline-none"
                   />
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-xs font-semibold text-dark-text-muted">שם באנגלית (אופציונלי)</label>
+                  <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">שם באנגלית (אופציונלי)</label>
                   <input
                     type="text"
                     value={formNameEn}
                     onChange={(e) => setFormNameEn(e.target.value)}
                     placeholder="e.g. Fitness"
-                    className="w-full p-2.5 rounded-xl border border-dark-border bg-dark-surface-elevated text-xs focus:border-brand-primary focus:outline-none"
+                    className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs focus:border-brand-primary focus:outline-none"
                   />
                 </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <label className="text-xs font-semibold text-dark-text-muted">סוג תנועה</label>
+                  <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">סוג תנועה</label>
                   <select
                     value={formType}
                     onChange={(e) => setFormType(e.target.value)}
-                    className="w-full p-2.5 rounded-xl border border-dark-border bg-dark-surface-elevated text-xs focus:border-brand-primary focus:outline-none"
+                    className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs focus:border-brand-primary focus:outline-none cursor-pointer"
                   >
                     <option value="expense">הוצאה (Expense)</option>
                     <option value="income">הכנסה (Income)</option>
@@ -703,28 +703,28 @@ export default function SettingsPage() {
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-xs font-semibold text-dark-text-muted">צבע נושא</label>
+                  <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">צבע נושא</label>
                   <div className="flex items-center gap-2">
                     <input
                       type="color"
                       value={formColor}
                       onChange={(e) => setFormColor(e.target.value)}
-                      className="w-10 h-10 p-0.5 rounded-xl border border-dark-border bg-dark-surface-elevated cursor-pointer shrink-0"
+                      className="w-10 h-10 p-0.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated cursor-pointer shrink-0"
                     />
                     <input
                       type="text"
                       value={formColor}
                       onChange={(e) => setFormColor(e.target.value)}
-                      className="flex-1 p-2 rounded-xl border border-dark-border bg-dark-surface-elevated text-xs font-mono"
+                      className="flex-1 p-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs font-mono"
                     />
                   </div>
                 </div>
               </div>
 
               {/* Custom SVG Section */}
-              <div className="p-3.5 rounded-xl border border-dark-border/80 bg-dark-surface-elevated/60 space-y-3">
+              <div className="p-3.5 rounded-xl border border-dark-border/80 light:border-light-border/80 bg-dark-surface-elevated/60 light:bg-light-surface-elevated/60 space-y-3">
                 <div className="flex items-center justify-between">
-                  <div className="text-xs font-bold flex items-center gap-1.5">
+                  <div className="text-xs font-bold flex items-center gap-1.5 text-dark-text light:text-light-text">
                     <FileCode className="w-4 h-4 text-brand-cyan" />
                     <span>עיצוב SVG מותאם אישית (אופציונלי)</span>
                   </div>
@@ -741,7 +741,7 @@ export default function SettingsPage() {
                   </label>
                 </div>
 
-                <p className="text-[11px] text-dark-text-muted">
+                <p className="text-[11px] text-dark-text-muted light:text-light-text-muted">
                   הדבק קוד SVG (תקני עם viewBox 0 0 24 24) או העלה קובץ. לחץ על "הורד מפרט ופרומפט SVG" לקבלת הנחיות מדויקות ליצירה עם AI.
                 </p>
 
@@ -750,14 +750,14 @@ export default function SettingsPage() {
                   value={formSvg}
                   onChange={(e) => setFormSvg(e.target.value)}
                   placeholder="<svg viewBox='0 0 24 24' stroke='currentColor' fill='none' stroke-width='2'>...</svg>"
-                  className="w-full p-2.5 rounded-xl border border-dark-border bg-dark-surface font-mono text-[11px] focus:border-brand-primary focus:outline-none"
+                  className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text font-mono text-[11px] focus:border-brand-primary focus:outline-none"
                   dir="ltr"
                 />
 
                 {/* Live Preview */}
                 {formSvg && (
                   <div className="flex items-center gap-3 pt-1">
-                    <span className="text-[11px] text-dark-text-muted">תצוגה מקדימה:</span>
+                    <span className="text-[11px] text-dark-text-muted light:text-light-text-muted">תצוגה מקדימה:</span>
                     <div
                       className="w-10 h-10 rounded-xl bg-brand-primary/10 text-brand-primary flex items-center justify-center p-2 border border-brand-primary/30 [&>svg]:w-full [&>svg]:h-full [&>svg]:stroke-current"
                       dangerouslySetInnerHTML={{ __html: formSvg }}
@@ -770,14 +770,14 @@ export default function SettingsPage() {
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}
-                  className="flex-1 py-2.5 rounded-xl border border-dark-border text-xs font-medium"
+                  className="flex-1 py-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text text-xs font-medium hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated transition-colors"
                 >
                   ביטול
                 </button>
                 <button
                   type="submit"
                   disabled={submittingCat || !formName.trim()}
-                  className="flex-1 py-2.5 rounded-xl bg-brand-primary text-white text-xs font-bold hover:bg-brand-primary-hover disabled:opacity-50 transition-colors"
+                  className="flex-1 py-2.5 rounded-xl bg-brand-primary text-white text-xs font-bold hover:bg-brand-primary-hover disabled:opacity-50 transition-colors shadow-sm"
                 >
                   {submittingCat ? 'שומר...' : editingCat ? 'עדכן קטגוריה' : 'שמור קטגוריה'}
                 </button>

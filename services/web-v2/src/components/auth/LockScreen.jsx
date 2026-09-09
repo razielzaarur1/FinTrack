@@ -176,7 +176,7 @@ export default function LockScreen({
                   className={`w-3.5 h-3.5 rounded-full transition-all duration-200 ${
                     isFilled
                       ? 'bg-brand-primary scale-110 shadow-sm shadow-brand-primary'
-                      : 'border-2 border-dark-border light:border-light-border bg-dark-surface/50'
+                      : 'border-2 border-dark-border light:border-light-border bg-dark-surface/50 light:bg-light-surface-elevated'
                   }`}
                 />
               );
@@ -191,13 +191,13 @@ export default function LockScreen({
                 value={passcode}
                 onChange={(e) => { setError(''); setPasscode(e.target.value); }}
                 placeholder={isSetup ? 'הזן סיסמה מאסטר...' : 'הזן סיסמה...'}
-                className="w-full p-3.5 text-center text-base rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text focus:outline-none focus:border-brand-primary"
+                className="w-full p-3.5 text-center text-base rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text focus:outline-none focus:border-brand-primary shadow-xs"
                 autoFocus
               />
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute left-3 rtl:left-3 ltr:right-3 top-1/2 -translate-y-1/2 text-dark-text-muted hover:text-dark-text p-1"
+                className="absolute left-3 rtl:left-3 ltr:right-3 top-1/2 -translate-y-1/2 text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text p-1"
               >
                 {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
@@ -213,7 +213,7 @@ export default function LockScreen({
                 key={num}
                 type="button"
                 onClick={() => handleKeyPress(num.toString())}
-                className="h-14 rounded-2xl border border-dark-border/80 light:border-light-border/80 bg-dark-surface/80 light:bg-light-surface/80 text-dark-text light:text-light-text text-xl font-bold active:scale-95 active:bg-brand-primary active:text-white transition-all shadow-xs flex items-center justify-center"
+                className="h-14 rounded-2xl border border-dark-border/80 light:border-light-border/80 bg-dark-surface/80 light:bg-light-surface text-dark-text light:text-light-text text-xl font-bold active:scale-95 active:bg-brand-primary active:text-white transition-all shadow-xs flex items-center justify-center hover:border-brand-primary/40"
               >
                 {num}
               </button>
@@ -223,7 +223,7 @@ export default function LockScreen({
             <button
               type="button"
               onClick={handleClear}
-              className="h-14 rounded-2xl border border-dark-border/40 light:border-light-border/40 text-dark-text-muted text-xs font-semibold active:scale-95 transition-all flex items-center justify-center"
+              className="h-14 rounded-2xl border border-dark-border/40 light:border-light-border/40 bg-dark-surface/40 light:bg-light-surface/40 text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text text-xs font-semibold active:scale-95 transition-all flex items-center justify-center"
             >
               נקה
             </button>
@@ -231,7 +231,7 @@ export default function LockScreen({
             <button
               type="button"
               onClick={() => handleKeyPress('0')}
-              className="h-14 rounded-2xl border border-dark-border/80 light:border-light-border/80 bg-dark-surface/80 light:bg-light-surface/80 text-dark-text light:text-light-text text-xl font-bold active:scale-95 active:bg-brand-primary active:text-white transition-all shadow-xs flex items-center justify-center"
+              className="h-14 rounded-2xl border border-dark-border/80 light:border-light-border/80 bg-dark-surface/80 light:bg-light-surface text-dark-text light:text-light-text text-xl font-bold active:scale-95 active:bg-brand-primary active:text-white transition-all shadow-xs flex items-center justify-center hover:border-brand-primary/40"
             >
               0
             </button>
@@ -239,7 +239,7 @@ export default function LockScreen({
             <button
               type="button"
               onClick={handleBackspace}
-              className="h-14 rounded-2xl border border-dark-border/40 light:border-light-border/40 text-dark-text-muted active:scale-95 transition-all flex items-center justify-center"
+              className="h-14 rounded-2xl border border-dark-border/40 light:border-light-border/40 bg-dark-surface/40 light:bg-light-surface/40 text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text active:scale-95 transition-all flex items-center justify-center"
               title="מחק תו אחרון"
             >
               <Delete className="w-5 h-5 rtl:rotate-180" />
