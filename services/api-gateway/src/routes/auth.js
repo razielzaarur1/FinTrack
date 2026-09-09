@@ -34,7 +34,9 @@ const changeSchema = z.object({
   newPasscode: z.string().min(4, 'New passcode must be at least 4 characters long').max(64),
 });
 
+let authColumnsEnsured = false;
 async function ensureAuthColumns() {
+  if (authColumnsEnsured) return;
   try {
     await pool.query(`
       ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;
@@ -43,6 +45,7 @@ async function ensureAuthColumns() {
       VALUES ('00000000-0000-0000-0000-000000000001', true)
       ON CONFLICT (id) DO NOTHING;
     `);
+    authColumnsEnsured = true;
   } catch (e) {
     // Non-fatal, just log
     console.warn('[Auth] ensureAuthColumns notice:', e.message);
@@ -53,7 +56,9 @@ export default async function authRoutes(fastify, options) {
   // GET /api/auth/status - Check if passcode is set up and if client has valid JWT
   fastify.get('/status', async (request, reply) => {
     try {
-      await ensureAuthColumns();
+      if (!authColumnsEnsured) {
+        await ensureAuthColumns();
+      }
 
       const res = await pool.query(
         'SELECT password_hash FROM users WHERE id = $1',
