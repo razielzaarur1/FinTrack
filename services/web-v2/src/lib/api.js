@@ -26,16 +26,20 @@ async function request(endpoint, options = {}) {
     const data = isJson ? await res.json() : await res.text();
 
     if (!res.ok) {
+      let errMsg = data?.message || data?.error;
+      if (!errMsg && typeof data === 'string' && data.trim().length > 0 && data.length < 200) {
+        errMsg = data.trim();
+      }
       return {
         data: null,
-        error: data?.message || data?.error || `HTTP error ${res.status}`,
+        error: errMsg || `שגיאת שרת (HTTP ${res.status})`,
         status: res.status,
       };
     }
 
     return { data, error: null, status: res.status };
   } catch (err) {
-    return { data: null, error: err.message || 'Network error', status: 500 };
+    return { data: null, error: 'שגיאת רשת: ' + (err.message || 'לא ניתן להתחבר לשרת'), status: 500 };
   }
 }
 

@@ -14,7 +14,7 @@ export function AppProvider({ children }) {
 
   // Security & Authentication State
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [hasPasscode, setHasPasscode] = useState(true);
+  const [hasPasscode, setHasPasscode] = useState(false);
   const [authChecking, setAuthChecking] = useState(true);
 
   // Inactivity Auto-lock Timer (15 minutes of inactivity)
@@ -67,22 +67,32 @@ export function AppProvider({ children }) {
     // Check Master Auth Status from Backend
     api.getAuthStatus().then((res) => {
       if (res.data) {
-        setHasPasscode(res.data.hasPasscode);
-        if (!res.data.hasPasscode) {
-          // If no passcode exists in DB yet, show setup screen
-          setIsAuthenticated(false);
+        const configured = Boolean(res.data.hasPasscode);
+        setHasPasscode(configured);
+
+        if (!configured) {
+          // If no master passcode has been set up, enter directly!
+          setIsAuthenticated(true);
         } else if (res.data.authenticated) {
-          // Client already had a valid JWT in localStorage
+          // Client has valid verified JWT
           setIsAuthenticated(true);
           resetActivityTimer();
         } else {
-          // Passcode exists, but client is not authenticated
+          // Passcode exists, prompt lock screen
           setIsAuthenticated(false);
         }
+      } else {
+        // Fallback: server offline, upgrading, or error - DO NOT lock out the user!
+        console.warn('[Auth] Status check fallback:', res?.error);
+        setHasPasscode(false);
+        setIsAuthenticated(true);
       }
       setAuthChecking(false);
       setMounted(true);
-    }).catch(() => {
+    }).catch((err) => {
+      console.warn('[Auth] Status check exception:', err);
+      setHasPasscode(false);
+      setIsAuthenticated(true);
       setAuthChecking(false);
       setMounted(true);
     });
@@ -142,6 +152,11 @@ export function AppProvider({ children }) {
     setIsAuthenticated(false);
   };
 
+  // Emergency Bypass Lock (prevents lockout on server failure)
+  const bypassLock = () => {
+    setIsAuthenticated(true);
+  };
+
   return (
     <AppContext.Provider
       value={{
@@ -157,6 +172,7 @@ export function AppProvider({ children }) {
         unlock,
         setupPasscode,
         lock,
+        bypassLock,
       }}
     >
       {/* If mounted and not authenticated, render secure LockScreen */}
@@ -165,6 +181,7 @@ export function AppProvider({ children }) {
           isSetup={!hasPasscode}
           onUnlock={unlock}
           onSetup={setupPasscode}
+          onBypass={bypassLock}
         />
       )}
 

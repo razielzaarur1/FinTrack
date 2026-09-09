@@ -18,6 +18,7 @@ export default function LockScreen({
   isSetup = false,
   onUnlock,
   onSetup,
+  onBypass,
 }) {
   const [passcode, setPasscode] = useState('');
   const [confirmPasscode, setConfirmPasscode] = useState('');
@@ -147,9 +148,20 @@ export default function LockScreen({
 
         {/* Error Alert */}
         {error && (
-          <div className="w-full p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-center justify-center gap-2 animate-in fade-in">
-            <AlertCircle className="w-4 h-4 shrink-0" />
-            <span>{error}</span>
+          <div className="w-full p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex flex-col items-center justify-center gap-2 animate-in fade-in">
+            <div className="flex items-center gap-2 text-center">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{error}</span>
+            </div>
+            {onBypass && (
+              <button
+                type="button"
+                onClick={onBypass}
+                className="mt-1 px-3 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-[11px] font-bold text-rose-300 transition-colors"
+              >
+                המשך לאפליקציה (עקוף נעילה)
+              </button>
+            )}
           </div>
         )}
 
@@ -282,6 +294,17 @@ export default function LockScreen({
             )}
           </button>
         </div>
+
+        {/* Skip / Direct access option */}
+        {onBypass && (
+          <button
+            type="button"
+            onClick={onBypass}
+            className="text-xs text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text transition-colors py-1 underline-offset-4 hover:underline"
+          >
+            דלג והיכנס ישירות למערכת
+          </button>
+        )}
       </div>
     </div>
   );

@@ -60,12 +60,11 @@ async function ensureSchema() {
       const client = await pool.connect();
 
       try {
-        await client.query('BEGIN');
+        // Run core DDL and extensions
+        await client.query(`CREATE EXTENSION IF NOT EXISTS "pgcrypto";`);
 
+        // 1. Users table & Passcode columns
         await client.query(`
-          CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-
-          -- 1. Users table
           CREATE TABLE IF NOT EXISTS users (
               id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
               created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -73,7 +72,6 @@ async function ensureSchema() {
               password_hash TEXT,
               passcode_salt TEXT
           );
-
           ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;
           ALTER TABLE users ADD COLUMN IF NOT EXISTS passcode_salt TEXT;
 
@@ -511,12 +509,10 @@ async function ensureSchema() {
             }
           }
 
-        await client.query('COMMIT');
         console.log('[PostgreSQL] Database schema verified and ready.');
         client.release();
         return;
       } catch (queryErr) {
-        await client.query('ROLLBACK');
         client.release();
         throw queryErr;
       }
