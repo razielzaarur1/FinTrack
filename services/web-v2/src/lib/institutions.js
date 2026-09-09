@@ -197,6 +197,28 @@ export const ISRAELI_INSTITUTIONS = [
     fields: ['idNumber', 'password'],
     labels: { idNumber: 'תעודת זהות', password: 'סיסמה' },
   },
+  {
+    id: 'cibus',
+    name: 'סיבוס (Cibus / Pluxee)',
+    nameEn: 'Cibus Pluxee',
+    type: 'wallet',
+    color: '#0284c7',
+    badgeBg: 'rgba(2, 132, 199, 0.15)',
+    logoText: 'סיבוס',
+    fields: ['username', 'password'],
+    labels: { username: 'שם משתמש / אימייל', password: 'סיסמה' },
+  },
+  {
+    id: 'gemel',
+    name: 'קופת גמל / קרן השתלמות',
+    nameEn: 'Provident & Pension Fund',
+    type: 'savings',
+    color: '#10b981',
+    badgeBg: 'rgba(16, 185, 129, 0.15)',
+    logoText: 'גמל',
+    fields: ['idNumber', 'password'],
+    labels: { idNumber: 'תעודת זהות', password: 'סיסמה' },
+  },
 ];
 
 export const getInstitutionById = (id) => {

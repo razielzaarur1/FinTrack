@@ -234,6 +234,7 @@ export default async function accountsRoutes(fastify, options) {
   // ──────────────────────────────────────────────────────────────────────────
   fastify.get('/', async (request, reply) => {
     try {
+      await cleanDuplicateAccountsAndNames();
       const result = await pool.query(
         `SELECT
            id,

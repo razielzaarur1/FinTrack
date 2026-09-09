@@ -263,13 +263,21 @@ async function persistScrapedAccounts(pool, primaryAccountId, scrapedAccounts, t
       } else {
         // Secondary card under the same login credentials
         const existingRes = await client.query(
-          `SELECT id FROM bank_accounts
-           WHERE user_id = $1 AND bank_company = $2 AND account_number = $3 AND is_active = true`,
+          `SELECT id, is_active FROM bank_accounts
+           WHERE user_id = $1 AND bank_company = $2 AND account_number = $3
+           ORDER BY created_at ASC`,
           [user_id, bank_company, cardLast4]
         );
 
         if (existingRes.rows.length > 0) {
-          targetDbAccountId = existingRes.rows[0].id;
+          const matchedCard = existingRes.rows[0];
+          // If user previously deactivated/deleted this card, respect their decision and skip it!
+          if (matchedCard.is_active === false) {
+            logger.info({ cardLast4, bank_company }, 'Card was previously deactivated by user, skipping re-insertion');
+            continue;
+          }
+
+          targetDbAccountId = matchedCard.id;
           await client.query(
             `UPDATE bank_accounts
              SET balance = $2,
@@ -560,14 +568,15 @@ export async function scrapeAllAccounts({ daysBack = 30, startDate = null } = {}
   const dbPool = createDbPool();
   try {
     const res = await dbPool.query(
-      `SELECT id, bank_company AS "bankCompany"
+      `SELECT DISTINCT ON (user_id, bank_company, encrypted_credentials)
+         id, bank_company AS "bankCompany"
        FROM bank_accounts
        WHERE is_active = true
-       ORDER BY created_at ASC`
+       ORDER BY user_id, bank_company, encrypted_credentials, created_at ASC`
     );
 
     const accounts = res.rows;
-    logger.info({ count: accounts.length, daysBack }, 'Starting scrapeAllAccounts job');
+    logger.info({ count: accounts.length, daysBack }, 'Starting scrapeAllAccounts job with deduplicated logins');
 
     const results = [];
     for (const acc of accounts) {

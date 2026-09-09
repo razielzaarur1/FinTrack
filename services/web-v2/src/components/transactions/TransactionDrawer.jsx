@@ -123,6 +123,9 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
       });
       if (res.data) {
         onUpdate?.({ ...tx, category, userDescription: userDesc, isIgnored });
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new Event('fintrack_tx_updated'));
+        }
         onClose?.(); // Automatically close drawer on save
       }
     } finally {
@@ -164,6 +167,9 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
         setSplitError(res.error);
       } else {
         onUpdate?.({ ...tx, isSplit: true });
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new Event('fintrack_tx_updated'));
+        }
         onClose?.(); // Automatically close drawer on save
       }
     } finally {

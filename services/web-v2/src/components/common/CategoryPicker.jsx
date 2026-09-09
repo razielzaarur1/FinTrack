@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { ChevronDown, ChevronLeft, ChevronRight, Search, Check, Sparkles } from 'lucide-react';
 import { CATEGORIES_DATA, getCategoryDetails } from '@/lib/categories';
 import CategoryBadge from './CategoryBadge';
@@ -16,6 +16,22 @@ export default function CategoryPicker({
   const [activeTab, setActiveTab] = useState('expense'); // 'expense' | 'income'
   const [search, setSearch] = useState('');
   const [expandedCatId, setExpandedCatId] = useState(null);
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handlePointerDown = (event) => {
+      if (containerRef.current && !containerRef.current.contains(event.target)) {
+        setIsOpen(false);
+      }
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+    };
+  }, [isOpen]);
 
   const selectedDetails = useMemo(() => {
     if (!value) return null;
@@ -53,7 +69,7 @@ export default function CategoryPicker({
   };
 
   return (
-    <div className={`relative ${className}`}>
+    <div ref={containerRef} className={`relative ${className}`}>
       {/* Trigger Button */}
       <button
         type="button"
@@ -91,11 +107,7 @@ export default function CategoryPicker({
 
       {/* Dropdown Modal / Popover */}
       {isOpen && (
-        <>
-          {/* Backdrop */}
-          <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
-
-          <div className="absolute top-full mt-2 left-0 right-0 z-50 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface shadow-2xl overflow-hidden flex flex-col max-h-[70vh] sm:max-h-[440px] animate-in fade-in zoom-in-95 duration-150">
+        <div className="absolute top-full mt-2 left-0 right-0 z-50 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface shadow-2xl overflow-hidden flex flex-col max-h-[70vh] sm:max-h-[440px] animate-in fade-in zoom-in-95 duration-150">
             {/* Header: Tabs & Search */}
             <div className="p-3 border-b border-dark-border light:border-light-border space-y-2 bg-dark-surface-elevated/50 light:bg-light-surface-elevated/50">
               {/* Type Switcher */}
@@ -243,7 +255,6 @@ export default function CategoryPicker({
               )}
             </div>
           </div>
-        </>
       )}
     </div>
   );

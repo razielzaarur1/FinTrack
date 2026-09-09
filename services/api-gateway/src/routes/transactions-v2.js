@@ -56,7 +56,7 @@ async function repair0AmountTransactions() {
 }
 
 const cursorPaginationQuerySchema = z.object({
-  limit: z.coerce.number().int().min(1).max(100).default(50),
+  limit: z.coerce.number().int().min(1).max(500).default(50),
   cursor: z.string().optional(), // ISO date or compound cursor
   cursorId: z.string().uuid().optional(),
   accountId: z.string().uuid().optional(),

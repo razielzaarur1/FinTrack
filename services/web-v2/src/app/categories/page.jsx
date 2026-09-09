@@ -46,22 +46,30 @@ function CategoryTransactionsDrawer({ categoryName, year, month, accountIds, onC
   useEffect(() => {
     if (!categoryName) return;
     setLoading(true);
-    const startDate = new Date(year, month - 1, 1).toISOString().slice(0, 10);
-    const endDate = new Date(year, month, 0).toISOString().slice(0, 10);
+    const mStr = String(month).padStart(2, '0');
+    const startDate = `${year}-${mStr}-01`;
+    const lastDay = new Date(year, month, 0).getDate();
+    const endDate = `${year}-${mStr}-${String(lastDay).padStart(2, '0')}`;
 
     // If categoryName is a main category, gather all its subcategories too
     const allMain = [...CATEGORIES_DATA.expenses, ...CATEGORIES_DATA.incomes];
     const foundMain = allMain.find((c) => c.name === categoryName);
-    const categoryList = foundMain && foundMain.subs?.length > 0
-      ? [categoryName, ...foundMain.subs.map((s) => s.name)]
-      : [categoryName];
+    
+    let categoryList;
+    if (categoryName === 'אחר / שונות' || categoryName === 'אחר' || categoryName === 'שונות') {
+      categoryList = ['אחר', 'שונות', 'אחר / שונות', 'ללא סיווג', ''];
+    } else if (foundMain && foundMain.subs?.length > 0) {
+      categoryList = [categoryName, ...foundMain.subs.map((s) => s.name)];
+    } else {
+      categoryList = [categoryName];
+    }
 
     api.getTransactionsV2({
       categories: categoryList,
       startDate,
       endDate,
       accountIds: accountIds.length > 0 ? accountIds : undefined,
-      limit: 300,
+      limit: 200,
     }).then((res) => {
       if (res.data) {
         setTxs(res.data.data || []);

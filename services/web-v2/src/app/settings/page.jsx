@@ -39,7 +39,7 @@ export default function SettingsPage() {
 
   // Category Tree UI State
   const [activeTab, setActiveTab] = useState('expense'); // 'expense' | 'income'
-  const [expandedCats, setExpandedCats] = useState(new Set(['exp_household', 'exp_shopping', 'משק בית', 'עושים קניות']));
+  const [expandedCats, setExpandedCats] = useState(new Set(['exp_household', 'exp_shopping']));
 
   // Add/Edit Category Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -148,10 +148,12 @@ export default function SettingsPage() {
 
   // Toggle Category Accordion
   const toggleExpand = (catId) => {
-    const next = new Set(expandedCats);
-    if (next.has(catId)) next.delete(catId);
-    else next.add(catId);
-    setExpandedCats(next);
+    setExpandedCats((prev) => {
+      const next = new Set(prev);
+      if (next.has(catId)) next.delete(catId);
+      else next.add(catId);
+      return next;
+    });
   };
 
   // Open modal for adding subcategory
@@ -270,19 +272,22 @@ export default function SettingsPage() {
     }
   };
 
-  // Active Category List based on tab (from live DB categories or fallback)
-  const activeCategories = React.useMemo(() => {
-    if (!categories || categories.length === 0) {
-      return activeTab === 'expense' ? CATEGORIES_DATA.expenses : CATEGORIES_DATA.incomes;
-    }
-    const filtered = categories.filter((c) => {
-      if (activeTab === 'expense') return c.type === 'expense' || c.type === 'both' || !c.type;
-      return c.type === 'income';
-    });
-    return filtered.length > 0
-      ? filtered
-      : (activeTab === 'expense' ? CATEGORIES_DATA.expenses : CATEGORIES_DATA.incomes);
-  }, [categories, activeTab]);
+  // Expense Categories
+  const expenseCategories = React.useMemo(() => {
+    if (!categories || categories.length === 0) return CATEGORIES_DATA.expenses;
+    const filtered = categories.filter((c) => c.type === 'expense' || c.type === 'both' || !c.type);
+    return filtered.length > 0 ? filtered : CATEGORIES_DATA.expenses;
+  }, [categories]);
+
+  // Income Categories
+  const incomeCategories = React.useMemo(() => {
+    if (!categories || categories.length === 0) return CATEGORIES_DATA.incomes;
+    const filtered = categories.filter((c) => c.type === 'income');
+    return filtered.length > 0 ? filtered : CATEGORIES_DATA.incomes;
+  }, [categories]);
+
+  // Active Category List based on tab
+  const activeCategories = activeTab === 'expense' ? expenseCategories : incomeCategories;
 
   return (
     <div className="space-y-8 max-w-5xl">
@@ -470,7 +475,7 @@ export default function SettingsPage() {
                   : 'text-dark-text-muted hover:text-dark-text'
               }`}
             >
-              הוצאות ({activeCategories.length})
+              הוצאות ({expenseCategories.length})
             </button>
             <button
               onClick={() => setActiveTab('income')}
@@ -480,7 +485,7 @@ export default function SettingsPage() {
                   : 'text-dark-text-muted hover:text-dark-text'
               }`}
             >
-              הכנסות ({activeCategories.length})
+              הכנסות ({incomeCategories.length})
             </button>
           </div>
 
@@ -503,7 +508,7 @@ export default function SettingsPage() {
         {/* Categories Tree Cards */}
         <div className="space-y-3">
           {activeCategories.map((cat) => {
-            const isExpanded = expandedCats.has(cat.id) || expandedCats.has(cat.name);
+            const isExpanded = expandedCats.has(cat.id);
             const subs = cat.subs || [];
 
             return (

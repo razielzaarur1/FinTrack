@@ -14,18 +14,29 @@ export default async function analyticsRoutes(fastify, options) {
     const endDate = `${targetYear}-${String(targetMonth).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
 
     try {
-      // Monthly income & expense from non-ignored transactions
+      // Monthly income & expense from non-ignored transactions (accurately differentiating refunds from income)
       const txQuery = `
         SELECT 
-          COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0) AS "totalIncome",
-          COALESCE(SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END), 0) AS "totalExpense",
+          COALESCE(SUM(CASE 
+            WHEN (c.type = 'income' OR (c.type IS NULL AND t.category IN ('משכורת', 'הכנסה', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות', 'הכנסות'))) AND t.amount > 0 
+            THEN t.amount 
+            ELSE 0 
+          END), 0) AS "totalIncome",
+          COALESCE(SUM(CASE 
+            WHEN c.type = 'income' THEN 0
+            WHEN t.amount < 0 THEN ABS(t.amount)
+            WHEN t.amount > 0 AND (c.type = 'expense' OR t.category NOT IN ('משכורת', 'הכנסה', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות', 'הכנסות'))
+            THEN -t.amount
+            ELSE 0 
+          END), 0) AS "totalExpense",
           COUNT(*) AS "transactionCount"
-        FROM transactions
-        WHERE date >= $1 AND date <= $2 AND is_ignored = false
+        FROM transactions t
+        LEFT JOIN categories c ON (t.category = c.name OR t.category = c.name_en)
+        WHERE t.date >= $1 AND t.date <= $2 AND t.is_ignored = false
       `;
       const txRes = await pool.query(txQuery, [startDate, endDate]);
       const income = parseFloat(txRes.rows[0].totalIncome);
-      const expense = parseFloat(txRes.rows[0].totalExpense);
+      const expense = Math.max(0, parseFloat(txRes.rows[0].totalExpense));
       const netSavings = income - expense;
       const savingsRate = income > 0 ? Math.max(0, Math.round((netSavings / income) * 100)) : 0;
 
@@ -34,7 +45,7 @@ export default async function analyticsRoutes(fastify, options) {
         SELECT COALESCE(SUM(balance), 0) AS "netWorth"
         FROM bank_accounts
         WHERE is_active = true 
-          AND bank_company NOT IN ('max', 'cal', 'isracard', 'amex')
+          AND bank_company NOT IN ('max', 'cal', 'visaCal', 'isracard', 'amex')
       `);
       const netWorth = parseFloat(accountsRes.rows[0].netWorth);
 
@@ -58,22 +69,33 @@ export default async function analyticsRoutes(fastify, options) {
     const monthsCount = Math.min(parseInt(request.query.months, 10) || 12, 24);
     const { accountId } = request.query;
 
-    const conditions = ['is_ignored = false', `date >= (CURRENT_DATE - INTERVAL '${monthsCount} months')`];
+    const conditions = ['t.is_ignored = false', `t.date >= (CURRENT_DATE - INTERVAL '${monthsCount} months')`];
     const values = [];
 
     if (accountId) {
       values.push(accountId);
-      conditions.push(`account_id = $${values.length}`);
+      conditions.push(`t.account_id = $${values.length}`);
     }
 
     const query = `
       SELECT 
-        TO_CHAR(date, 'YYYY-MM') AS "monthKey",
-        COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0) AS "income",
-        COALESCE(SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END), 0) AS "expenses"
-      FROM transactions
+        TO_CHAR(t.date, 'YYYY-MM') AS "monthKey",
+        COALESCE(SUM(CASE 
+          WHEN (c.type = 'income' OR (c.type IS NULL AND t.category IN ('משכורת', 'הכנסה', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות', 'הכנסות'))) AND t.amount > 0 
+          THEN t.amount 
+          ELSE 0 
+        END), 0) AS "income",
+        COALESCE(SUM(CASE 
+          WHEN c.type = 'income' THEN 0
+          WHEN t.amount < 0 THEN ABS(t.amount)
+          WHEN t.amount > 0 AND (c.type = 'expense' OR t.category NOT IN ('משכורת', 'הכנסה', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות', 'הכנסות'))
+          THEN -t.amount
+          ELSE 0 
+        END), 0) AS "expenses"
+      FROM transactions t
+      LEFT JOIN categories c ON (t.category = c.name OR t.category = c.name_en)
       WHERE ${conditions.join(' AND ')}
-      GROUP BY TO_CHAR(date, 'YYYY-MM')
+      GROUP BY TO_CHAR(t.date, 'YYYY-MM')
       ORDER BY "monthKey" ASC
     `;
 
@@ -81,7 +103,7 @@ export default async function analyticsRoutes(fastify, options) {
       const result = await pool.query(query, values);
       const trend = result.rows.map((r) => {
         const inc = parseFloat(r.income);
-        const exp = parseFloat(r.expenses);
+        const exp = Math.max(0, parseFloat(r.expenses));
         return {
           month: r.monthKey,
           income: inc,
@@ -252,7 +274,7 @@ export default async function analyticsRoutes(fastify, options) {
     }
   });
 
-  // GET /api/analytics/category-averages - Monthly average spending per category
+  // GET /api/analytics/category-averages - Monthly average spending per specific relevant category
   fastify.get('/category-averages', async (request, reply) => {
     try {
       // Find distinct months of transaction history (up to last 12 months)
@@ -263,90 +285,139 @@ export default async function analyticsRoutes(fastify, options) {
       `);
       const distinctMonths = Math.max(parseInt(monthsRes.rows[0]?.monthsCount, 10) || 1, 1);
 
-      // 1. Get top spending categories historically
-      const topCatQuery = `
+      // Define focused, highly relevant everyday spending categories
+      const FOCUSED_CATEGORIES = [
+        {
+          key: 'groceries',
+          name: 'סופר ומכולת',
+          icon: 'ShoppingBag',
+          color: '#ec4899',
+          matchTerms: ['סופר ומכולת', 'סופר', 'מכולת', 'סופרמרקט', 'שופרסל', 'רמי לוי', 'יוחננוף', 'אושר עד', 'ויקטורי', 'מחסני השוק', 'ירקות ופירות', 'ירקות', 'פירות', 'מינימרקט', 'טיב טעם'],
+        },
+        {
+          key: 'fuel',
+          name: 'דלק וטעינה',
+          icon: 'Fuel',
+          color: '#f97316',
+          matchTerms: ['דלק וטעינה', 'דלק', 'תחנת דלק', 'פז', 'סונול', 'דלק ישראל', 'דור אלון', 'טן', 'טעינה', 'ev', 'טסלה', 'מנטה', 'סונול'],
+        },
+        {
+          key: 'dining',
+          name: 'אוכלים בחוץ ומסעדות',
+          icon: 'Utensils',
+          color: '#f59e0b',
+          matchTerms: ['אוכלים בחוץ', 'מסעדות ופאבים', 'מסעדות', 'מזון מהיר ומשלוחים', 'בתי קפה', 'וולט', 'תן ביס', 'wolt', '10bis', 'קפה', 'פיצה', 'המבורגר', 'שווארמה', 'ארומה'],
+        },
+        {
+          key: 'shopping',
+          name: 'בגדים והנעלה',
+          icon: 'Shirt',
+          color: '#a855f7',
+          matchTerms: ['בגדים והנעלה', 'עושים קניות', 'אלקטרוניקה', 'זארה', 'zara', 'h&m', 'הנעלה', 'ביגוד', 'אופנה', 'שופינג', 'קסטרו', 'רנואר', 'פוקס', 'טרמינל איקס', 'terminal x', 'shein', 'asos'],
+        },
+        {
+          key: 'pharmacy',
+          name: 'בתי מרקחת ופארם',
+          icon: 'HeartPulse',
+          color: '#ef4444',
+          matchTerms: ['בתי מרקחת', 'פארם', 'סופר פארם', 'super-pharm', 'be', 'ניו פארם', 'בית מרקחת', 'תרופות'],
+        },
+        {
+          key: 'bills',
+          name: 'משק בית וחשבונות',
+          icon: 'Home',
+          color: '#6366f1',
+          matchTerms: ['משק בית', 'חשמל', 'חברת החשמל', 'מים', 'מי אביבים', 'תאגיד מים', 'ארנונה', 'עיריית', 'גז', 'בזק', 'הוט', 'סלקום', 'פרטנר', 'טלפון ואינטרנט', 'hot', 'bezeq', 'partner', 'cellcom'],
+        },
+        {
+          key: 'leisure',
+          name: 'פנאי ותרבות',
+          icon: 'Gamepad2',
+          color: '#06b6d4',
+          matchTerms: ['פנאי ותרבות', 'הופעות וקולנוע', 'סינמה סיטי', 'יס פלאנט', 'הוט סינמה', 'כרטיסים', 'בילויים', 'הצגות', 'אטרקציות', 'פנאי ובילויים', 'קולנוע'],
+        },
+      ];
+
+      // Query historical transactions in the last 12 months (non-ignored expenses)
+      const historicalRes = await pool.query(`
         SELECT 
-          COALESCE(c.name, t.category, 'שונות') AS "categoryName",
-          COALESCE(c.color, '#6366f1') AS "color",
-          COALESCE(c.icon, 'tag') AS "icon",
-          SUM(ABS(t.amount)) AS "totalAmount",
-          COUNT(t.id) AS "txCount"
+          t.amount,
+          COALESCE(t.category, '') AS "category",
+          COALESCE(t.merchant_name, '') AS "merchantName",
+          COALESCE(t.description, '') AS "description"
         FROM transactions t
-        LEFT JOIN categories c ON (t.category = c.name OR t.category = c.name_en)
         WHERE t.is_ignored = false 
           AND t.amount < 0 
           AND t.date >= (CURRENT_DATE - INTERVAL '12 months')
-        GROUP BY COALESCE(c.name, t.category, 'שונות'), c.color, c.icon
-        ORDER BY "totalAmount" DESC
-        LIMIT 8
-      `;
-      const topCatRes = await pool.query(topCatQuery);
+      `);
 
-      // 2. Current calendar month spending per category
-      const curMonthRes = await pool.query(`
+      // Query current month transactions (non-ignored expenses)
+      const currentMonthRes = await pool.query(`
         SELECT 
-          COALESCE(c.name, t.category, 'שונות') AS "categoryName",
-          SUM(ABS(t.amount)) AS "curAmount"
+          t.amount,
+          COALESCE(t.category, '') AS "category",
+          COALESCE(t.merchant_name, '') AS "merchantName",
+          COALESCE(t.description, '') AS "description"
         FROM transactions t
-        LEFT JOIN categories c ON (t.category = c.name OR t.category = c.name_en)
         WHERE t.is_ignored = false 
           AND t.amount < 0 
           AND t.date >= DATE_TRUNC('month', CURRENT_DATE)
-        GROUP BY COALESCE(c.name, t.category, 'שונות')
       `);
-      const curMap = new Map();
-      for (const r of curMonthRes.rows) {
-        curMap.set(r.categoryName, parseFloat(r.curAmount) || 0);
-      }
 
-      // Default icons mapping
-      const iconMap = {
-        'סופר ומכולת': 'ShoppingBag',
-        'עושים קניות': 'ShoppingBag',
-        'מכולת': 'ShoppingBag',
-        'דלק וטעינה': 'Fuel',
-        'רכב ותחבורה': 'Fuel',
-        'תחבורה': 'Fuel',
-        'מסעדות ופאבים': 'Utensils',
-        'אוכלים בחוץ': 'Utensils',
-        'מסעדות': 'Utensils',
-        'בגדים והנעלה': 'Shirt',
-        'משק בית': 'Home',
-        'חשמל': 'Home',
-        'דיור': 'Home',
-        'בריאות וטיפוח': 'HeartPulse',
-        'בריאות': 'HeartPulse',
-        'פנאי ובילויים': 'Gamepad2',
-        'בידור': 'Gamepad2',
-      };
+      const results = FOCUSED_CATEGORIES.map((catDef) => {
+        const matchesItem = (row) => {
+          const text = `${row.category} ${row.merchantName} ${row.description}`.toLowerCase();
+          return catDef.matchTerms.some((term) => text.includes(term.toLowerCase()));
+        };
 
-      const results = topCatRes.rows.map((r) => {
-        const catName = r.categoryName;
-        const totalHistorical = parseFloat(r.totalAmount) || 0;
+        // Calculate historical total
+        let totalHistorical = 0;
+        let txCount = 0;
+        for (const row of historicalRes.rows) {
+          if (matchesItem(row)) {
+            totalHistorical += Math.abs(parseFloat(row.amount) || 0);
+            txCount++;
+          }
+        }
+
+        // Calculate current month total
+        let currentMonth = 0;
+        for (const row of currentMonthRes.rows) {
+          if (matchesItem(row)) {
+            currentMonth += Math.abs(parseFloat(row.amount) || 0);
+          }
+        }
+
         const monthlyAvg = Math.round((totalHistorical / distinctMonths) * 100) / 100;
-        const currentMonth = curMap.get(catName) || 0;
-        const diffPercent = monthlyAvg > 0 ? Math.round(((currentMonth - monthlyAvg) / monthlyAvg) * 100) : 0;
+        const currentRounded = Math.round(currentMonth * 100) / 100;
+        const diffPercent = monthlyAvg > 0 ? Math.round(((currentRounded - monthlyAvg) / monthlyAvg) * 100) : 0;
 
         return {
-          category: catName,
-          name: catName,
-          title: catName,
-          label: catName,
-          icon: iconMap[catName] || r.icon || 'Tag',
-          color: r.color || '#6366f1',
+          category: catDef.name,
+          name: catDef.name,
+          title: catDef.name,
+          label: catDef.name,
+          icon: catDef.icon,
+          color: catDef.color,
           monthlyAverage: monthlyAvg,
           amount: monthlyAvg,
-          currentMonth: Math.round(currentMonth * 100) / 100,
+          currentMonth: currentRounded,
           diffPercent,
           status: diffPercent > 10 ? 'higher' : diffPercent < -10 ? 'lower' : 'normal',
-          totalHistorical,
-          txCount: parseInt(r.txCount, 10) || 0,
+          totalHistorical: Math.round(totalHistorical * 100) / 100,
+          txCount,
         };
       });
 
+      // Filter to categories that either have historical spending or current month spending,
+      // and sort by monthly average descending
+      const activeAverages = results
+        .filter((r) => r.monthlyAverage > 0 || r.currentMonth > 0)
+        .sort((a, b) => b.monthlyAverage - a.monthlyAverage);
+
       return reply.code(200).send({
         distinctMonths,
-        data: results,
+        data: activeAverages.length > 0 ? activeAverages : results.slice(0, 5),
       });
     } catch (err) {
       fastify.log.error(err, 'Failed to compute category averages');

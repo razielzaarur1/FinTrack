@@ -100,6 +100,22 @@ export default function AnalyticsPage() {
 
   useEffect(() => {
     loadData();
+
+    const handleFocus = () => loadData();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') loadData();
+    };
+    const handleTxUpdate = () => loadData();
+
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('fintrack_tx_updated', handleTxUpdate);
+
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('fintrack_tx_updated', handleTxUpdate);
+    };
   }, [period, breakdownType]);
 
   const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899', '#8b5cf6', '#14b8a6'];
