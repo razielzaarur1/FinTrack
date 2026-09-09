@@ -32,6 +32,7 @@ const updateTransactionSchema = z.object({
   category: z.string().optional(),
   userDescription: z.string().optional().nullable(),
   isIgnored: z.boolean().optional(),
+  applyToSimilar: z.boolean().optional(),
 });
 
 let hasRepaired0Amount = false;
@@ -299,7 +300,7 @@ export default async function transactionsV2Routes(fastify, options) {
       return reply.code(400).send({ error: 'Validation Error', details: parseResult.error.issues });
     }
 
-    const { category, userDescription, isIgnored } = parseResult.data;
+    const { category, userDescription, isIgnored, applyToSimilar } = parseResult.data;
     const setClauses = [];
     const values = [];
 
@@ -322,15 +323,49 @@ export default async function transactionsV2Routes(fastify, options) {
       return reply.code(400).send({ error: 'Nothing to update' });
     }
 
-    values.push(id);
-    const query = `
-      UPDATE transactions 
-      SET ${setClauses.join(', ')} 
-      WHERE id = $${values.length}
-      RETURNING id, category, user_description AS "userDescription", is_ignored AS "isIgnored"
-    `;
-
     try {
+      let updatedSimilarCount = 0;
+
+      // If applyToSimilar is requested, find the original transaction details first
+      if (applyToSimilar) {
+        const origRes = await pool.query('SELECT merchant_name, description FROM transactions WHERE id = $1', [id]);
+        const origTx = origRes.rows[0];
+        if (origTx) {
+          const mName = origTx.merchant_name?.trim();
+          const desc = origTx.description?.trim();
+
+          let whereSql = '';
+          const bulkValues = [...values];
+
+          if (mName && mName !== 'בית עסק' && mName !== '') {
+            bulkValues.push(mName);
+            whereSql = `merchant_name = $${bulkValues.length}`;
+          } else if (desc && desc !== '') {
+            bulkValues.push(desc);
+            whereSql = `description = $${bulkValues.length}`;
+          }
+
+          if (whereSql) {
+            const bulkQuery = `
+              UPDATE transactions
+              SET ${setClauses.join(', ')}
+              WHERE ${whereSql}
+            `;
+            const bulkRes = await pool.query(bulkQuery, bulkValues);
+            updatedSimilarCount = bulkRes.rowCount || 0;
+          }
+        }
+      }
+
+      // Update the specific transaction
+      values.push(id);
+      const query = `
+        UPDATE transactions 
+        SET ${setClauses.join(', ')} 
+        WHERE id = $${values.length}
+        RETURNING id, category, user_description AS "userDescription", is_ignored AS "isIgnored"
+      `;
+
       const result = await pool.query(query, values);
       if (result.rows.length === 0) {
         return reply.code(404).send({ error: 'Transaction not found' });
@@ -338,13 +373,15 @@ export default async function transactionsV2Routes(fastify, options) {
 
       // Auto-learn user categorization rule if category was updated
       if (category) {
-        pool.query('SELECT merchant_name FROM transactions WHERE id = $1', [id])
+        pool.query('SELECT merchant_name, description FROM transactions WHERE id = $1', [id])
           .then((res) => {
             const m = res.rows[0]?.merchant_name;
-            if (m && m.trim() && m !== 'בית עסק') {
+            const d = res.rows[0]?.description;
+            const pattern = (m && m.trim() && m !== 'בית עסק') ? m.trim() : (d ? d.trim() : null);
+            if (pattern) {
               saveUserRule({
                 userId: '00000000-0000-0000-0000-000000000001',
-                merchantPattern: m.trim(),
+                merchantPattern: pattern,
                 category: category,
                 matchType: 'exact',
               }).catch(() => {});
@@ -353,7 +390,11 @@ export default async function transactionsV2Routes(fastify, options) {
           .catch(() => {});
       }
 
-      return reply.code(200).send({ success: true, data: result.rows[0] });
+      return reply.code(200).send({ 
+        success: true, 
+        data: result.rows[0],
+        updatedSimilarCount: Math.max(updatedSimilarCount, 1)
+      });
     } catch (err) {
       fastify.log.error(err, 'Failed to update transaction');
       return reply.code(500).send({ error: 'Database error', message: err.message });

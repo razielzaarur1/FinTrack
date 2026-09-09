@@ -33,6 +33,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
   const [category, setCategory] = useState(tx?.category || '');
   const [userDesc, setUserDesc] = useState(tx?.userDescription || '');
   const [isIgnored, setIsIgnored] = useState(tx?.isIgnored || false);
+  const [applyToSimilar, setApplyToSimilar] = useState(false);
   const [savingTx, setSavingTx] = useState(false);
   const [copiedRaw, setCopiedRaw] = useState(false);
 
@@ -67,6 +68,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
     setCategory(tx.category || '');
     setUserDesc(tx.userDescription || '');
     setIsIgnored(tx.isIgnored || false);
+    setApplyToSimilar(false);
 
     // Fetch categories
     api.getCategories().then((res) => {
@@ -120,6 +122,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
         category,
         userDescription: userDesc,
         isIgnored,
+        applyToSimilar,
       });
       if (res.data) {
         onUpdate?.({ ...tx, category, userDescription: userDesc, isIgnored });
@@ -392,23 +395,42 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
               </div>
 
               {/* Ignore Checkbox */}
-              <div className="flex items-center gap-2 pt-2">
+              <div className="flex items-center gap-2 pt-1">
                 <input
                   type="checkbox"
                   id="ignore-tx"
                   checked={isIgnored}
                   onChange={(e) => setIsIgnored(e.target.checked)}
-                  className="w-4 h-4 rounded text-brand-primary focus:ring-brand-primary"
+                  className="w-4 h-4 rounded text-brand-primary focus:ring-brand-primary cursor-pointer"
                 />
-                <label htmlFor="ignore-tx" className="text-xs font-medium cursor-pointer">
+                <label htmlFor="ignore-tx" className="text-xs font-medium cursor-pointer text-dark-text light:text-light-text">
                   {lang === 'he' ? 'התעלם מתנועה זו בחישובי דשבורד ותקציבים' : 'Ignore this transaction in dashboard calculations'}
                 </label>
+              </div>
+
+              {/* Apply to All Similar Transactions */}
+              <div className="p-3.5 rounded-2xl border border-brand-primary/30 bg-brand-primary/5 space-y-1.5 transition-colors">
+                <label className="flex items-center gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={applyToSimilar}
+                    onChange={(e) => setApplyToSimilar(e.target.checked)}
+                    className="w-4 h-4 rounded text-brand-primary focus:ring-brand-primary cursor-pointer"
+                  />
+                  <div className="text-xs font-bold text-dark-text light:text-light-text flex items-center gap-1.5">
+                    <span>⚡</span>
+                    <span>החל שינויים אלו על כל התנועות הדומות</span>
+                  </div>
+                </label>
+                <p className="text-[11px] text-dark-text-muted light:text-light-text-muted mr-6 leading-relaxed">
+                  הקטגוריה, הכינוי וההתעלמות יוחלו אוטומטית על כל התנועות של &quot;{tx.merchantName || tx.description}&quot; ויילמדו לתנועות הבאות.
+                </p>
               </div>
 
               <button
                 onClick={handleSaveDetails}
                 disabled={savingTx}
-                className="w-full mt-4 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-brand-primary text-white font-medium text-sm hover:bg-brand-primary-hover transition-all"
+                className="w-full mt-4 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-brand-primary text-white font-medium text-sm hover:bg-brand-primary-hover transition-all cursor-pointer shadow-md shadow-brand-primary/20"
               >
                 <Save className="w-4 h-4" />
                 <span>{savingTx ? (lang === 'he' ? 'שומר...' : 'Saving...') : t('save')}</span>

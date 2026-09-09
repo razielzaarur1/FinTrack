@@ -274,125 +274,142 @@ export default async function analyticsRoutes(fastify, options) {
     }
   });
 
-  // GET /api/analytics/category-averages - Monthly average spending per specific relevant category
+  // GET /api/analytics/category-averages - Monthly average spending per specific relevant category (strictly 12 months)
   fastify.get('/category-averages', async (request, reply) => {
     try {
-      // Find distinct months of transaction history (up to last 12 months)
-      const monthsRes = await pool.query(`
-        SELECT COUNT(DISTINCT TO_CHAR(date, 'YYYY-MM')) AS "monthsCount"
-        FROM transactions
-        WHERE is_ignored = false AND amount < 0 AND date >= (CURRENT_DATE - INTERVAL '12 months')
-      `);
-      const distinctMonths = Math.max(parseInt(monthsRes.rows[0]?.monthsCount, 10) || 1, 1);
+      // Build exactly 12 month keys from 11 months ago to current month
+      const monthLabels = [];
+      const heMonths = ['ינו׳', 'פבר׳', 'מרץ', 'אפר׳', 'מאי', 'יוני', 'יולי', 'אוג׳', 'ספט׳', 'אוק׳', 'נוב׳', 'דצמ׳'];
+      const now = new Date();
+      for (let i = 11; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const key = `${yyyy}-${mm}`;
+        monthLabels.push({
+          key,
+          label: `${heMonths[d.getMonth()]} ${String(yyyy).slice(2)}`,
+          year: yyyy,
+          month: d.getMonth() + 1,
+        });
+      }
 
       // Define focused, highly relevant everyday spending categories
       const FOCUSED_CATEGORIES = [
+        {
+          key: 'dining',
+          name: 'אוכל בחוץ',
+          icon: 'Utensils',
+          color: '#f59e0b',
+          matchTerms: ['אוכל בחוץ', 'אוכלים בחוץ', 'מסעדות ופאבים', 'מסעדות', 'מסעדה', 'מזון מהיר ומשלוחים', 'בתי קפה', 'בית קפה', 'וולט', 'תן ביס', 'wolt', '10bis', 'קפה', 'פיצה', 'המבורגר', 'שווארמה', 'ארומה', 'מקדונלדס', 'גולדה', 'גלידה', 'מאפיה', 'מאפייה', 'דומינוס', 'baker', 'coffee', 'cafe'],
+        },
         {
           key: 'groceries',
           name: 'סופר ומכולת',
           icon: 'ShoppingBag',
           color: '#ec4899',
-          matchTerms: ['סופר ומכולת', 'סופר', 'מכולת', 'סופרמרקט', 'שופרסל', 'רמי לוי', 'יוחננוף', 'אושר עד', 'ויקטורי', 'מחסני השוק', 'ירקות ופירות', 'ירקות', 'פירות', 'מינימרקט', 'טיב טעם'],
+          matchTerms: ['סופר ומכולת', 'סופר', 'מכולת', 'סופרמרקט', 'שופרסל', 'רמי לוי', 'יוחננוף', 'אושר עד', 'ויקטורי', 'מחסני השוק', 'ירקות ופירות', 'ירקות', 'פירות', 'מינימרקט', 'טיב טעם', 'קרפור', 'carrefour', 'חצי חינם', 'מעדניה', 'קצביה', 'בשר'],
         },
         {
           key: 'fuel',
-          name: 'דלק וטעינה',
+          name: 'דלק ותחבורה',
           icon: 'Fuel',
           color: '#f97316',
-          matchTerms: ['דלק וטעינה', 'דלק', 'תחנת דלק', 'פז', 'סונול', 'דלק ישראל', 'דור אלון', 'טן', 'טעינה', 'ev', 'טסלה', 'מנטה', 'סונול'],
-        },
-        {
-          key: 'dining',
-          name: 'אוכלים בחוץ ומסעדות',
-          icon: 'Utensils',
-          color: '#f59e0b',
-          matchTerms: ['אוכלים בחוץ', 'מסעדות ופאבים', 'מסעדות', 'מזון מהיר ומשלוחים', 'בתי קפה', 'וולט', 'תן ביס', 'wolt', '10bis', 'קפה', 'פיצה', 'המבורגר', 'שווארמה', 'ארומה'],
+          matchTerms: ['דלק וטעינה', 'דלק', 'תחנת דלק', 'פז', 'סונול', 'דלק ישראל', 'דור אלון', 'טן', 'טעינה', 'ev', 'טסלה', 'מנטה', 'רכב ותחבורה', 'חניה', 'פנגו', 'סלו', 'pango', 'cellopark', 'רב קו', 'רכבת', 'מוניות', 'יאנגו', 'yango', 'gett'],
         },
         {
           key: 'shopping',
-          name: 'בגדים והנעלה',
+          name: 'קניות וביגוד',
           icon: 'Shirt',
           color: '#a855f7',
-          matchTerms: ['בגדים והנעלה', 'עושים קניות', 'אלקטרוניקה', 'זארה', 'zara', 'h&m', 'הנעלה', 'ביגוד', 'אופנה', 'שופינג', 'קסטרו', 'רנואר', 'פוקס', 'טרמינל איקס', 'terminal x', 'shein', 'asos'],
-        },
-        {
-          key: 'pharmacy',
-          name: 'בתי מרקחת ופארם',
-          icon: 'HeartPulse',
-          color: '#ef4444',
-          matchTerms: ['בתי מרקחת', 'פארם', 'סופר פארם', 'super-pharm', 'be', 'ניו פארם', 'בית מרקחת', 'תרופות'],
+          matchTerms: ['בגדים והנעלה', 'עושים קניות', 'אלקטרוניקה', 'זארה', 'zara', 'h&m', 'הנעלה', 'ביגוד', 'אופנה', 'שופינג', 'קסטרו', 'רנואר', 'פוקס', 'טרמינל איקס', 'terminal x', 'shein', 'asos', 'אמזון', 'amazon', 'aliexpress', 'ksp', 'איקאה', 'ikea', 'אורבניקה', 'urbanica'],
         },
         {
           key: 'bills',
           name: 'משק בית וחשבונות',
           icon: 'Home',
           color: '#6366f1',
-          matchTerms: ['משק בית', 'חשמל', 'חברת החשמל', 'מים', 'מי אביבים', 'תאגיד מים', 'ארנונה', 'עיריית', 'גז', 'בזק', 'הוט', 'סלקום', 'פרטנר', 'טלפון ואינטרנט', 'hot', 'bezeq', 'partner', 'cellcom'],
+          matchTerms: ['משק בית', 'חשמל', 'חברת החשמל', 'מים', 'מי אביבים', 'תאגיד מים', 'ארנונה', 'עיריית', 'גז', 'בזק', 'הוט', 'סלקום', 'פרטנר', 'טלפון ואינטרנט', 'hot', 'bezeq', 'partner', 'cellcom', 'ועד בית'],
+        },
+        {
+          key: 'pharmacy',
+          name: 'בריאות ופארם',
+          icon: 'HeartPulse',
+          color: '#ef4444',
+          matchTerms: ['בתי מרקחת', 'פארם', 'סופר פארם', 'super-pharm', 'be', 'ניו פארם', 'בית מרקחת', 'תרופות', 'קופת חולים', 'מכבי', 'כללית', 'מאוחדת', 'לאומית', 'בריאות וטיפוח', 'אופטיקה'],
         },
         {
           key: 'leisure',
-          name: 'פנאי ותרבות',
+          name: 'פנאי ובילויים',
           icon: 'Gamepad2',
           color: '#06b6d4',
-          matchTerms: ['פנאי ותרבות', 'הופעות וקולנוע', 'סינמה סיטי', 'יס פלאנט', 'הוט סינמה', 'כרטיסים', 'בילויים', 'הצגות', 'אטרקציות', 'פנאי ובילויים', 'קולנוע'],
+          matchTerms: ['פנאי ותרבות', 'פנאי ובילויים', 'הופעות וקולנוע', 'סינמה סיטי', 'יס פלאנט', 'הוט סינמה', 'כרטיסים', 'בילויים', 'הצגות', 'אטרקציות', 'קולנוע', 'נטפליקס', 'netflix', 'spotify', 'ספוטיפיי', 'steam', 'playstation', 'מלון', 'טיסות', 'booking'],
         },
       ];
 
       // Query historical transactions in the last 12 months (non-ignored expenses)
       const historicalRes = await pool.query(`
         SELECT 
+          t.id,
+          t.date,
+          TO_CHAR(t.date, 'YYYY-MM') AS "monthKey",
           t.amount,
           COALESCE(t.category, '') AS "category",
+          COALESCE(t.user_description, '') AS "userDescription",
           COALESCE(t.merchant_name, '') AS "merchantName",
-          COALESCE(t.description, '') AS "description"
+          COALESCE(t.description, '') AS "description",
+          t.account_id AS "accountId",
+          a.display_name AS "accountDisplayName",
+          a.bank_company AS "bankCompany"
         FROM transactions t
+        LEFT JOIN accounts a ON t.account_id = a.id
         WHERE t.is_ignored = false 
           AND t.amount < 0 
-          AND t.date >= (CURRENT_DATE - INTERVAL '12 months')
+          AND t.date >= (DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '11 months')
+        ORDER BY t.date DESC
       `);
 
-      // Query current month transactions (non-ignored expenses)
-      const currentMonthRes = await pool.query(`
-        SELECT 
-          t.amount,
-          COALESCE(t.category, '') AS "category",
-          COALESCE(t.merchant_name, '') AS "merchantName",
-          COALESCE(t.description, '') AS "description"
-        FROM transactions t
-        WHERE t.is_ignored = false 
-          AND t.amount < 0 
-          AND t.date >= DATE_TRUNC('month', CURRENT_DATE)
-      `);
+      const currentMonthKey = monthLabels[monthLabels.length - 1].key;
 
       const results = FOCUSED_CATEGORIES.map((catDef) => {
         const matchesItem = (row) => {
-          const text = `${row.category} ${row.merchantName} ${row.description}`.toLowerCase();
+          const text = `${row.category} ${row.merchantName} ${row.description} ${row.userDescription}`.toLowerCase();
           return catDef.matchTerms.some((term) => text.includes(term.toLowerCase()));
         };
 
-        // Calculate historical total
+        const matchingTxs = historicalRes.rows.filter(matchesItem);
+
+        // Group spending by month key
+        const monthSpendMap = {};
+        const monthCountMap = {};
         let totalHistorical = 0;
-        let txCount = 0;
-        for (const row of historicalRes.rows) {
-          if (matchesItem(row)) {
-            totalHistorical += Math.abs(parseFloat(row.amount) || 0);
-            txCount++;
-          }
+
+        for (const tx of matchingTxs) {
+          const absAmount = Math.abs(parseFloat(tx.amount) || 0);
+          const mKey = tx.monthKey;
+          monthSpendMap[mKey] = (monthSpendMap[mKey] || 0) + absAmount;
+          monthCountMap[mKey] = (monthCountMap[mKey] || 0) + 1;
+          totalHistorical += absAmount;
         }
 
-        // Calculate current month total
-        let currentMonth = 0;
-        for (const row of currentMonthRes.rows) {
-          if (matchesItem(row)) {
-            currentMonth += Math.abs(parseFloat(row.amount) || 0);
-          }
-        }
+        // Build 12-month distribution curve data
+        const distribution = monthLabels.map((m) => {
+          const spend = Math.round((monthSpendMap[m.key] || 0) * 100) / 100;
+          return {
+            month: m.key,
+            label: m.label,
+            amount: spend,
+            txCount: monthCountMap[m.key] || 0,
+          };
+        });
 
-        const monthlyAvg = Math.round((totalHistorical / distinctMonths) * 100) / 100;
-        const currentRounded = Math.round(currentMonth * 100) / 100;
-        const diffPercent = monthlyAvg > 0 ? Math.round(((currentRounded - monthlyAvg) / monthlyAvg) * 100) : 0;
+        // 12-month average strictly divided by 12
+        const monthlyAvg = Math.round((totalHistorical / 12) * 100) / 100;
+        const currentMonthSpend = Math.round((monthSpendMap[currentMonthKey] || 0) * 100) / 100;
+        const diffPercent = monthlyAvg > 0 ? Math.round(((currentMonthSpend - monthlyAvg) / monthlyAvg) * 100) : 0;
 
         return {
+          key: catDef.key,
           category: catDef.name,
           name: catDef.name,
           title: catDef.name,
@@ -401,23 +418,34 @@ export default async function analyticsRoutes(fastify, options) {
           color: catDef.color,
           monthlyAverage: monthlyAvg,
           amount: monthlyAvg,
-          currentMonth: currentRounded,
+          currentMonth: currentMonthSpend,
           diffPercent,
           status: diffPercent > 10 ? 'higher' : diffPercent < -10 ? 'lower' : 'normal',
           totalHistorical: Math.round(totalHistorical * 100) / 100,
-          txCount,
+          txCount: matchingTxs.length,
+          distribution,
+          transactions: matchingTxs.map((tx) => ({
+            id: tx.id,
+            date: tx.date,
+            amount: tx.amount,
+            category: tx.category,
+            userDescription: tx.userDescription,
+            merchantName: tx.merchantName,
+            description: tx.description,
+            accountDisplayName: tx.accountDisplayName,
+            bankCompany: tx.bankCompany,
+          })),
         };
       });
 
-      // Filter to categories that either have historical spending or current month spending,
-      // and sort by monthly average descending
+      // Filter and sort by monthly average descending
       const activeAverages = results
         .filter((r) => r.monthlyAverage > 0 || r.currentMonth > 0)
         .sort((a, b) => b.monthlyAverage - a.monthlyAverage);
 
       return reply.code(200).send({
-        distinctMonths,
-        data: activeAverages.length > 0 ? activeAverages : results.slice(0, 5),
+        distinctMonths: 12,
+        data: activeAverages.length > 0 ? activeAverages : results,
       });
     } catch (err) {
       fastify.log.error(err, 'Failed to compute category averages');

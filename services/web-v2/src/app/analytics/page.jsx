@@ -35,6 +35,7 @@ import { api } from '@/lib/api';
 import { formatILS, formatDate } from '@/lib/formatters';
 import { useApp } from '@/lib/app-context';
 import CategoryBadge from '@/components/common/CategoryBadge';
+import CategoryAverageModal from '@/components/analytics/CategoryAverageModal';
 
 const PERIOD_PRESETS = [
   { id: 'current_month', label: 'חודש נוכחי' },
@@ -57,6 +58,7 @@ export default function AnalyticsPage() {
   const [trend, setTrend] = useState([]);
   const [averages, setAverages] = useState(null);
   const [topExpenses, setTopExpenses] = useState([]);
+  const [selectedAvgCat, setSelectedAvgCat] = useState(null);
 
   // Compute Year/Month parameters for endpoints based on period preset
   const getParamsForPeriod = () => {
@@ -221,8 +223,8 @@ export default function AnalyticsPage() {
           }
 
           return (
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-              {avgList.slice(0, 5).map((item, idx) => {
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3">
+              {avgList.map((item, idx) => {
                 const catName = item.category || item.name || item.title || item.label || 'הוצאה';
                 const diff = item.diffPercent || 0;
                 const isHigher = diff > 0;
@@ -231,10 +233,12 @@ export default function AnalyticsPage() {
                 return (
                   <div
                     key={idx}
-                    className="p-4 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface shadow-xs space-y-2 hover:border-brand-primary/40 transition-colors flex flex-col justify-between"
+                    onClick={() => setSelectedAvgCat(item)}
+                    className="p-3.5 sm:p-4 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface shadow-xs space-y-2 hover:border-brand-primary hover:shadow-md hover:-translate-y-0.5 transition-all flex flex-col justify-between cursor-pointer group"
+                    title="לחץ לצפייה בגרף התפלגות ורשימת תנועות"
                   >
                     <div className="flex items-center justify-between">
-                      <CategoryBadge category={catName} size={22} />
+                      <CategoryBadge category={catName} size={20} />
                       {hasDiff && (
                         <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
                           isHigher 
@@ -246,14 +250,15 @@ export default function AnalyticsPage() {
                       )}
                     </div>
                     <div>
-                      <div className="text-xs font-bold text-dark-text light:text-light-text truncate">
+                      <div className="text-xs font-bold text-dark-text light:text-light-text truncate group-hover:text-brand-primary transition-colors">
                         {catName}
                       </div>
                       <div className="text-base sm:text-lg font-bold text-dark-text light:text-light-text font-mono mt-0.5" dir="ltr">
                         {formatILS(item.monthlyAverage || item.amount || 0)}
                       </div>
-                      <div className="text-[10px] text-dark-text-muted light:text-light-text-muted mt-0.5">
-                        החודש: <span className="font-mono font-semibold text-dark-text light:text-light-text">{formatILS(item.currentMonth || 0)}</span>
+                      <div className="text-[10px] text-dark-text-muted light:text-light-text-muted mt-0.5 flex items-center justify-between">
+                        <span>החודש: <span className="font-mono font-semibold text-dark-text light:text-light-text">{formatILS(item.currentMonth || 0)}</span></span>
+                        <span className="text-brand-primary opacity-0 group-hover:opacity-100 transition-opacity font-bold">←</span>
                       </div>
                     </div>
                   </div>
@@ -472,6 +477,15 @@ export default function AnalyticsPage() {
           )}
         </div>
       </div>
+
+      {/* 12-Month Category Distribution & Transactions Modal */}
+      {selectedAvgCat && (
+        <CategoryAverageModal
+          categoryItem={selectedAvgCat}
+          onClose={() => setSelectedAvgCat(null)}
+          onTransactionUpdated={loadData}
+        />
+      )}
     </div>
   );
 }
