@@ -71,7 +71,7 @@ export default function AccountsPage() {
     try {
       const triggerRes = await api.triggerScrape(id);
       if (triggerRes.error) {
-        alert(`שגיאה בהפעלת הסריקה: ${triggerRes.error}`);
+        console.warn('הפעלת הסריקה ברקע:', triggerRes.error);
         setSyncingId(null);
         return;
       }
@@ -149,12 +149,12 @@ export default function AccountsPage() {
       } else {
         setStep(3);
         loadAccounts();
-        if (res.data?.id) {
+        if (res.data?.id && selectedInst?.id !== 'wallet') {
           handleSyncAccount(res.data.id);
         }
       }
     } catch (err) {
-      setFormError(err.message || 'Failed to connect account');
+      setFormError(err.message || 'שגיאה בחיבור החשבון');
     } finally {
       setSubmitting(false);
     }

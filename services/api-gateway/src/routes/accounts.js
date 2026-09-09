@@ -4,13 +4,58 @@ import { encryptCredentials } from '../crypto.js';
 
 const DEFAULT_USER_ID = '00000000-0000-0000-0000-000000000001';
 
+async function ensureAccountsSchema() {
+  try {
+    await pool.query(`CREATE EXTENSION IF NOT EXISTS "pgcrypto";`);
+
+    // Ensure default user exists
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          is_active BOOLEAN NOT NULL DEFAULT true,
+          password_hash TEXT,
+          passcode_salt TEXT
+      );
+      INSERT INTO users (id, is_active)
+      VALUES ('00000000-0000-0000-0000-000000000001', true)
+      ON CONFLICT (id) DO NOTHING;
+    `);
+
+    // Ensure bank_accounts table and all columns exist
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS bank_accounts (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          bank_company VARCHAR(50) NOT NULL,
+          encrypted_credentials TEXT NOT NULL,
+          vault_key_version INT NOT NULL DEFAULT 1,
+          display_name VARCHAR(100),
+          account_number VARCHAR(50),
+          balance NUMERIC(14, 2) DEFAULT 0.00,
+          is_active BOOLEAN NOT NULL DEFAULT true,
+          last_scraped_at TIMESTAMPTZ,
+          last_scrape_error TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS billing_day INT DEFAULT 10;
+      ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS encrypted_credentials TEXT;
+      ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS vault_key_version INT DEFAULT 1;
+      ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS display_name VARCHAR(100);
+      ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS account_number VARCHAR(50);
+      ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS balance NUMERIC(14, 2) DEFAULT 0.00;
+      ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true;
+    `);
+  } catch (err) {
+    console.warn('[Accounts] ensureAccountsSchema warning:', err.message);
+  }
+}
+
 const createAccountSchema = z.object({
   bankCompany: z.string().min(1, 'bankCompany is required'),
-  displayName: z.string().optional(),
+  displayName: z.string().optional().nullable(),
   billingDay: z.coerce.number().int().min(1).max(31).optional().default(10),
-  credentials: z.record(z.any()).refine((val) => Object.keys(val).length > 0, {
-    message: 'credentials object must not be empty',
-  }),
+  credentials: z.record(z.any()).optional().default({}),
 });
 
 const updateAccountSchema = z.object({
@@ -52,6 +97,8 @@ export default async function accountsRoutes(fastify, options) {
   // GET /accounts - List active accounts for user
   fastify.get('/', async (request, reply) => {
     try {
+      await ensureAccountsSchema();
+
       const result = await pool.query(
         `SELECT
            id,
@@ -200,29 +247,56 @@ export default async function accountsRoutes(fastify, options) {
     const parseResult = createAccountSchema.safeParse(request.body);
     if (!parseResult.success) {
       return reply.code(400).send({
-        error: 'Validation Error',
+        error: 'שגיאת אימות נתונים',
         details: parseResult.error.issues,
       });
     }
 
     const { bankCompany, credentials, displayName, billingDay } = parseResult.data;
 
-    try {
-      // ── Encrypt credentials with AES-256-GCM ──
-      const ciphertext = encryptCredentials(credentials);
+    // Validate credentials for non-wallet institutions
+    if (bankCompany !== 'wallet' && (!credentials || Object.keys(credentials).length === 0)) {
+      return reply.code(400).send({
+        error: 'יש להזין את פרטי ההתחברות עבור המוסד שנבחר',
+      });
+    }
 
-      const result = await pool.query(
-        `INSERT INTO bank_accounts (user_id, bank_company, encrypted_credentials, display_name, billing_day, is_active, created_at)
-         VALUES ($1, $2, $3, $4, $5, true, NOW())
-         RETURNING id, user_id, bank_company, display_name, billing_day, is_active, created_at`,
-        [DEFAULT_USER_ID, bankCompany, ciphertext, displayName || null, billingDay || 10]
-      );
+    try {
+      await ensureAccountsSchema();
+
+      // ── Encrypt credentials with AES-256-GCM ──
+      const credsToEncrypt = (credentials && Object.keys(credentials).length > 0)
+        ? credentials
+        : { type: bankCompany };
+      const ciphertext = encryptCredentials(credsToEncrypt);
+
+      let result;
+      try {
+        result = await pool.query(
+          `INSERT INTO bank_accounts (user_id, bank_company, encrypted_credentials, display_name, billing_day, is_active, balance, created_at)
+           VALUES ($1, $2, $3, $4, $5, true, 0.00, NOW())
+           RETURNING id, user_id AS "userId", bank_company AS "bankCompany", display_name AS "displayName", billing_day AS "billingDay", is_active AS "isActive", created_at AS "createdAt"`,
+          [DEFAULT_USER_ID, bankCompany, ciphertext, displayName || null, billingDay || 10]
+        );
+      } catch (insertErr) {
+        fastify.log.warn({ err: insertErr.message }, 'First account insert attempt failed, retrying after ensureAccountsSchema');
+        await ensureAccountsSchema();
+        result = await pool.query(
+          `INSERT INTO bank_accounts (user_id, bank_company, encrypted_credentials, display_name, billing_day, is_active, balance, created_at)
+           VALUES ($1, $2, $3, $4, $5, true, 0.00, NOW())
+           RETURNING id, user_id AS "userId", bank_company AS "bankCompany", display_name AS "displayName", billing_day AS "billingDay", is_active AS "isActive", created_at AS "createdAt"`,
+          [DEFAULT_USER_ID, bankCompany, ciphertext, displayName || null, billingDay || 10]
+        );
+      }
 
       fastify.log.info({ accountId: result.rows[0].id, bankCompany }, 'Bank account created and credentials encrypted');
       return reply.code(201).send(result.rows[0]);
     } catch (err) {
       fastify.log.error(err, 'Failed to create account');
-      return reply.code(500).send({ error: 'Internal Server Error', message: err.message });
+      return reply.code(400).send({
+        error: 'שגיאה ביצירת החשבון: ' + (err.message || 'שגיאת מערכת'),
+        message: err.message,
+      });
     }
   });
 
