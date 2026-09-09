@@ -88,6 +88,36 @@ fastify.get('/health', async (request, reply) => {
   return reply.type('text/plain').code(200).send('OK');
 });
 
+// Global Error Handler guaranteeing structured diagnostic JSON on any failure
+fastify.setErrorHandler((error, request, reply) => {
+  request.log.error(
+    {
+      err: error,
+      url: request.raw?.url,
+      method: request.raw?.method,
+      params: request.params,
+      query: request.query,
+    },
+    'Fastify intercepted error'
+  );
+
+  const statusCode =
+    typeof error.statusCode === 'number' && error.statusCode >= 400 && error.statusCode < 600
+      ? error.statusCode
+      : 500;
+
+  return reply.status(statusCode).send({
+    success: false,
+    stage: error.stage || 'APIGATEWAY_GLOBAL_ERROR',
+    error: error.message || 'Internal Server Error',
+    code: error.code || 'ERR_APIGATEWAY',
+    details: error.details || error.message,
+    path: request.url,
+    method: request.method,
+    timestamp: new Date().toISOString(),
+  });
+});
+
 // Add CORS headers for web-v2 (port 4747) and same-origin
 fastify.addHook('onRequest', async (request, reply) => {
   const origin = request.headers.origin;

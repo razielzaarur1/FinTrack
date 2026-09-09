@@ -19,7 +19,8 @@ import {
   CreditCard,
   Wallet,
   Banknote,
-  Coins
+  Coins,
+  Copy
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { formatILS, formatDate, formatRelativeTime } from '@/lib/formatters';
@@ -41,7 +42,13 @@ export default function AccountsPage() {
   const [displayName, setDisplayName] = useState('');
   const [billingDay, setBillingDay] = useState(10);
   const [submitting, setSubmitting] = useState(false);
+  const [submitStage, setSubmitStage] = useState('');
   const [formError, setFormError] = useState('');
+  const [errorDetails, setErrorDetails] = useState(null);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [diagnosticsRunning, setDiagnosticsRunning] = useState(false);
+  const [diagnosticsResult, setDiagnosticsResult] = useState(null);
+  const [copiedReport, setCopiedReport] = useState(false);
 
   // Edit Account Flow
   const [editingAccount, setEditingAccount] = useState(null);
@@ -118,12 +125,18 @@ export default function AccountsPage() {
     setDisplayName('');
     setBillingDay(10);
     setFormError('');
+    setErrorDetails(null);
+    setShowDiagnostics(false);
+    setDiagnosticsResult(null);
+    setCopiedReport(false);
     setStep(1);
     setModalOpen(true);
   };
 
   const handleSelectInstitution = (inst) => {
     setSelectedInst(inst);
+    setFormError('');
+    setErrorDetails(null);
     setStep(2);
   };
 
@@ -135,6 +148,11 @@ export default function AccountsPage() {
     e.preventDefault();
     setSubmitting(true);
     setFormError('');
+    setErrorDetails(null);
+    setSubmitStage('validating');
+
+    const stageTimer1 = setTimeout(() => setSubmitStage('encrypting'), 350);
+    const stageTimer2 = setTimeout(() => setSubmitStage('saving'), 850);
 
     try {
       const res = await api.createAccount({
@@ -144,8 +162,19 @@ export default function AccountsPage() {
         credentials,
       });
 
+      clearTimeout(stageTimer1);
+      clearTimeout(stageTimer2);
+
       if (res.error) {
         setFormError(res.error);
+        setErrorDetails(
+          res.diagnostic || {
+            error: res.error,
+            status: res.status,
+            stage: res.stage || 'ACCOUNT_CREATION_FAILED',
+            details: res.details || null,
+          }
+        );
       } else {
         setStep(3);
         loadAccounts();
@@ -154,9 +183,50 @@ export default function AccountsPage() {
         }
       }
     } catch (err) {
-      setFormError(err.message || 'שגיאה בחיבור החשבון');
+      clearTimeout(stageTimer1);
+      clearTimeout(stageTimer2);
+      setFormError(err.message || 'שגיאה בלתי צפויה בחיבור החשבון');
+      setErrorDetails({
+        stage: 'CLIENT_EXCEPTION',
+        error: err.message,
+        stack: err.stack,
+      });
     } finally {
       setSubmitting(false);
+      setSubmitStage('');
+    }
+  };
+
+  const handleRunDiagnostics = async () => {
+    setDiagnosticsRunning(true);
+    setDiagnosticsResult(null);
+    try {
+      const res = await api.getAccountDiagnostics();
+      setDiagnosticsResult(res.data || res.diagnostic || { error: res.error, status: res.status });
+    } catch (err) {
+      setDiagnosticsResult({ error: err.message });
+    } finally {
+      setDiagnosticsRunning(false);
+    }
+  };
+
+  const handleCopyReport = () => {
+    const reportText = JSON.stringify(
+      {
+        timestamp: new Date().toISOString(),
+        institution: selectedInst?.id,
+        error: formError,
+        diagnostic: errorDetails,
+        liveDiagnostics: diagnosticsResult,
+        userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : null,
+      },
+      null,
+      2
+    );
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(reportText);
+      setCopiedReport(true);
+      setTimeout(() => setCopiedReport(false), 3000);
     }
   };
 
@@ -611,9 +681,208 @@ export default function AccountsPage() {
                   </div>
                 </div>
 
+                {/* Progress stage feedback during submission */}
+                {submitting && (
+                  <div className="p-3.5 rounded-xl border border-brand-primary/30 bg-brand-primary/10 space-y-2 animate-pulse">
+                    <div className="flex items-center justify-between text-xs font-semibold text-brand-primary">
+                      <span>
+                        {submitStage === 'validating' && 'שלב 1/3: אימות נתונים והכנת הבקשה...'}
+                        {submitStage === 'encrypting' && 'שלב 2/3: הצפנת פרטי גישה (AES-256-GCM)...'}
+                        {submitStage === 'saving' && 'שלב 3/3: שמירת חשבון מוסדי במסד הנתונים...'}
+                        {!submitStage && 'מעבד בקשה...'}
+                      </span>
+                      <RefreshCw className="w-4 h-4 animate-spin text-brand-primary" />
+                    </div>
+                    <div className="w-full h-1.5 bg-brand-primary/20 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-brand-primary transition-all duration-300 rounded-full"
+                        style={{
+                          width:
+                            submitStage === 'validating'
+                              ? '30%'
+                              : submitStage === 'encrypting'
+                              ? '65%'
+                              : '90%',
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Comprehensive Failure & Diagnostic Drawer */}
                 {formError && (
-                  <div className="p-3 rounded-xl bg-brand-expense/10 border border-brand-expense/20 text-brand-expense text-xs">
-                    {formError}
+                  <div className="p-3.5 rounded-xl bg-brand-expense/10 border border-brand-expense/30 space-y-2.5">
+                    <div className="flex items-start gap-2.5">
+                      <AlertTriangle className="w-5 h-5 text-brand-expense shrink-0 mt-0.5" />
+                      <div className="flex-1 text-xs">
+                        <div className="font-bold text-brand-expense mb-0.5">
+                          {lang === 'he' ? 'שגיאה ביצירת החשבון' : 'Account Connection Failed'}
+                        </div>
+                        <div className="text-dark-text-secondary light:text-light-text-secondary font-medium">
+                          {formError}
+                        </div>
+                        {errorDetails?.stage && (
+                          <div className="mt-1.5 inline-block px-2 py-0.5 rounded bg-brand-expense/20 text-brand-expense font-mono text-[11px]">
+                            שלב כשל: {errorDetails.stage}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Diagnostic Actions */}
+                    <div className="pt-2 border-t border-brand-expense/20 flex flex-wrap items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowDiagnostics(!showDiagnostics)}
+                        className="text-[11px] font-semibold text-brand-expense hover:underline"
+                      >
+                        {showDiagnostics
+                          ? '▲ הסתר פרטי אבחון טכניים'
+                          : '▼ הצג פרטי אבחון טכניים (Telemetry)'}
+                      </button>
+
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={handleCopyReport}
+                          className="text-[11px] px-2.5 py-1 rounded-lg bg-dark-surface light:bg-light-surface border border-dark-border light:border-light-border text-dark-text-muted hover:text-white transition-colors flex items-center gap-1"
+                        >
+                          {copiedReport ? (
+                            <CheckCircle2 className="w-3.5 h-3.5 text-brand-income" />
+                          ) : (
+                            <Copy className="w-3.5 h-3.5" />
+                          )}
+                          <span>{copiedReport ? 'דוח הועתק!' : 'העתק דוח'}</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={handleRunDiagnostics}
+                          disabled={diagnosticsRunning}
+                          className="text-[11px] px-2.5 py-1 rounded-lg bg-dark-surface light:bg-light-surface border border-dark-border light:border-light-border text-dark-text-muted hover:text-white transition-colors flex items-center gap-1"
+                        >
+                          <RefreshCw
+                            className={`w-3.5 h-3.5 ${
+                              diagnosticsRunning ? 'animate-spin' : ''
+                            }`}
+                          />
+                          <span>{diagnosticsRunning ? 'בודק...' : 'בדיקת מערכת'}</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Technical Diagnostic Details */}
+                    {showDiagnostics && (
+                      <div className="mt-2 p-3 rounded-lg bg-black/60 text-[11px] font-mono text-zinc-300 space-y-1.5 overflow-x-auto max-h-52 border border-white/10">
+                        <div>
+                          <strong>HTTP Status:</strong> {errorDetails?.status || 'N/A'}
+                        </div>
+                        <div>
+                          <strong>Failing Stage:</strong> {errorDetails?.stage || 'Unknown'}
+                        </div>
+                        {errorDetails?.transitDurationMs !== undefined && (
+                          <div>
+                            <strong>Transit Duration:</strong> {errorDetails.transitDurationMs}ms
+                          </div>
+                        )}
+                        {errorDetails?.sqlCode && (
+                          <div>
+                            <strong>SQL Code:</strong> {errorDetails.sqlCode} (Table: {errorDetails.sqlTable || 'N/A'})
+                          </div>
+                        )}
+                        {errorDetails?.targetUrl && (
+                          <div>
+                            <strong>Target URL:</strong> {errorDetails.targetUrl}
+                          </div>
+                        )}
+                        {errorDetails?.details && (
+                          <div>
+                            <strong>Details:</strong>{' '}
+                            {typeof errorDetails.details === 'object'
+                              ? JSON.stringify(errorDetails.details)
+                              : String(errorDetails.details)}
+                          </div>
+                        )}
+                        <details className="mt-1">
+                          <summary className="cursor-pointer text-[10px] text-zinc-400 hover:text-white">
+                            Raw Diagnostic JSON
+                          </summary>
+                          <pre className="mt-1 text-[10px] text-zinc-400 whitespace-pre-wrap">
+                            {JSON.stringify(errorDetails, null, 2)}
+                          </pre>
+                        </details>
+                      </div>
+                    )}
+
+                    {/* Live Health Check Result */}
+                    {diagnosticsResult && (
+                      <div className="mt-2 p-3 rounded-lg bg-dark-surface light:bg-light-surface border border-dark-border light:border-light-border text-[11px] space-y-2">
+                        <div className="font-bold text-xs flex items-center justify-between">
+                          <span>דוח תקינות מערכת (Live Diagnostic):</span>
+                          <span
+                            className={
+                              diagnosticsResult?.gatewayLayer?.overallStatus === 'ok'
+                                ? 'text-brand-income font-bold'
+                                : 'text-brand-expense font-bold'
+                            }
+                          >
+                            {diagnosticsResult?.gatewayLayer?.overallStatus === 'ok'
+                              ? '✓ כל המערכות תקינות'
+                              : '⚠ שגיאה בתשתיות'}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-1 font-mono text-[10px] pt-1">
+                          <div>
+                            PostgreSQL:{' '}
+                            <span
+                              className={
+                                diagnosticsResult?.gatewayLayer?.checks?.database?.status === 'ok'
+                                  ? 'text-brand-income'
+                                  : 'text-brand-expense'
+                              }
+                            >
+                              {diagnosticsResult?.gatewayLayer?.checks?.database?.status || 'offline'}
+                            </span>
+                          </div>
+                          <div>
+                            AES Crypto Engine:{' '}
+                            <span
+                              className={
+                                diagnosticsResult?.gatewayLayer?.checks?.cryptoEngine?.status === 'ok'
+                                  ? 'text-brand-income'
+                                  : 'text-brand-expense'
+                              }
+                            >
+                              {diagnosticsResult?.gatewayLayer?.checks?.cryptoEngine?.status || 'fail'}
+                            </span>
+                          </div>
+                          <div>
+                            Default User:{' '}
+                            <span
+                              className={
+                                diagnosticsResult?.gatewayLayer?.checks?.defaultUser?.status === 'ok'
+                                  ? 'text-brand-income'
+                                  : 'text-brand-expense'
+                              }
+                            >
+                              {diagnosticsResult?.gatewayLayer?.checks?.defaultUser?.status || 'missing'}
+                            </span>
+                          </div>
+                          <div>
+                            Accounts Table:{' '}
+                            <span
+                              className={
+                                diagnosticsResult?.gatewayLayer?.checks?.bankAccountsTable?.status === 'ok'
+                                  ? 'text-brand-income'
+                                  : 'text-brand-expense'
+                              }
+                            >
+                              {diagnosticsResult?.gatewayLayer?.checks?.bankAccountsTable?.status || 'missing'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 

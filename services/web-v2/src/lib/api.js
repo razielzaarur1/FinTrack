@@ -26,20 +26,38 @@ async function request(endpoint, options = {}) {
     const data = isJson ? await res.json() : await res.text();
 
     if (!res.ok) {
-      let errMsg = data?.message || data?.error;
+      let errMsg = data?.error || data?.message;
       if (!errMsg && typeof data === 'string' && data.trim().length > 0 && data.length < 200) {
         errMsg = data.trim();
       }
+      const diagnostic = typeof data === 'object' && data !== null
+        ? data
+        : { raw: data, status: res.status, url, stage: 'HTTP_' + res.status };
+
       return {
         data: null,
         error: errMsg || `שגיאת שרת (HTTP ${res.status})`,
         status: res.status,
+        stage: diagnostic?.stage || 'HTTP_' + res.status,
+        details: diagnostic?.details || null,
+        diagnostic,
       };
     }
 
     return { data, error: null, status: res.status };
   } catch (err) {
-    return { data: null, error: 'שגיאת רשת: ' + (err.message || 'לא ניתן להתחבר לשרת'), status: 500 };
+    return {
+      data: null,
+      error: 'שגיאת רשת: ' + (err.message || 'לא ניתן להתחבר לשרת'),
+      status: 0,
+      stage: 'CLIENT_NETWORK_ERROR',
+      details: err.message,
+      diagnostic: {
+        stage: 'CLIENT_NETWORK_ERROR',
+        error: err.message,
+        url,
+      },
+    };
   }
 }
 
@@ -52,6 +70,7 @@ export const api = {
 
   // Accounts
   getAccounts: () => request('/api/accounts'),
+  getAccountDiagnostics: () => request('/api/accounts/diagnostics'),
   createAccount: (data) => request('/api/accounts', { method: 'POST', body: JSON.stringify(data) }),
   updateAccount: (id, data) => request(`/api/accounts/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteAccount: (id) => request(`/api/accounts/${id}`, { method: 'DELETE' }),

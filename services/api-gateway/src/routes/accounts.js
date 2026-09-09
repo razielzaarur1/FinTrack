@@ -1,71 +1,24 @@
 import { z } from 'zod';
 import { pool } from '../db.js';
-import { encryptCredentials } from '../crypto.js';
+import { encryptCredentials, decryptCredentials } from '../crypto.js';
 
 const DEFAULT_USER_ID = '00000000-0000-0000-0000-000000000001';
 
-async function ensureAccountsSchema() {
-  const statements = [
-    `CREATE EXTENSION IF NOT EXISTS "pgcrypto";`,
-    `CREATE TABLE IF NOT EXISTS users (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        is_active BOOLEAN NOT NULL DEFAULT true,
-        password_hash TEXT,
-        passcode_salt TEXT
-     );`,
-    `ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;`,
-    `ALTER TABLE users ADD COLUMN IF NOT EXISTS passcode_salt TEXT;`,
-    `INSERT INTO users (id, is_active)
-     VALUES ('00000000-0000-0000-0000-000000000001', true)
-     ON CONFLICT (id) DO NOTHING;`,
-    `CREATE TABLE IF NOT EXISTS bank_accounts (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        bank_company VARCHAR(50) NOT NULL,
-        encrypted_credentials TEXT NOT NULL,
-        vault_key_version INT NOT NULL DEFAULT 1,
-        display_name VARCHAR(100),
-        account_number VARCHAR(50),
-        balance NUMERIC(14, 2) DEFAULT 0.00,
-        is_active BOOLEAN NOT NULL DEFAULT true,
-        last_scraped_at TIMESTAMPTZ,
-        last_scrape_error TEXT,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-     );`,
-    `ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS billing_day INT DEFAULT 10;`,
-    `ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS encrypted_credentials TEXT;`,
-    `ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS vault_key_version INT DEFAULT 1;`,
-    `ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS display_name VARCHAR(100);`,
-    `ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS account_number VARCHAR(50);`,
-    `ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS balance NUMERIC(14, 2) DEFAULT 0.00;`,
-    `ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true;`,
-    `CREATE TABLE IF NOT EXISTS transactions (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        account_id UUID NOT NULL REFERENCES bank_accounts(id) ON DELETE CASCADE,
-        external_id VARCHAR(255) NOT NULL,
-        date DATE NOT NULL,
-        amount NUMERIC(12, 2) NOT NULL,
-        currency VARCHAR(10) NOT NULL DEFAULT 'ILS',
-        description TEXT,
-        merchant_name TEXT,
-        category VARCHAR(100),
-        status VARCHAR(50) NOT NULL DEFAULT 'completed',
-        raw_data JSONB,
-        is_notified BOOLEAN NOT NULL DEFAULT false,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-     );`,
-    `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS processed_date DATE;`,
-    `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS is_ignored BOOLEAN DEFAULT false;`,
-    `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS is_split BOOLEAN DEFAULT false;`,
-    `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS merchant_name TEXT;`,
-    `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS user_description TEXT;`,
-  ];
-
-  for (const sql of statements) {
-    try {
-      await pool.query(sql);
-    } catch (_) {}
+// One-time non-blocking initialization check
+let isInitialized = false;
+async function preflightCheck() {
+  if (isInitialized) return;
+  try {
+    // Fast idempotent user existence guarantee
+    await pool.query(
+      `INSERT INTO users (id, is_active)
+       VALUES ($1, true)
+       ON CONFLICT (id) DO NOTHING`,
+      [DEFAULT_USER_ID]
+    );
+    isInitialized = true;
+  } catch (err) {
+    console.warn('[Accounts Preflight] User check non-critical warning:', err.message);
   }
 }
 
@@ -112,11 +65,138 @@ function getBillingDates(billingDay = 10) {
 }
 
 export default async function accountsRoutes(fastify, options) {
+  // Pre-flight setup on route register
+  preflightCheck().catch(() => {});
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // GET /accounts/diagnostics - Comprehensive Live Health & Telemetry Check
+  // ──────────────────────────────────────────────────────────────────────────
+  fastify.get('/diagnostics', async (request, reply) => {
+    const report = {
+      timestamp: new Date().toISOString(),
+      overallStatus: 'ok',
+      checks: {},
+    };
+
+    // Check 1: PostgreSQL Ping & Latency
+    const dbStart = Date.now();
+    try {
+      const pingRes = await pool.query('SELECT 1 AS ping, NOW() AS server_time, current_database() AS db_name');
+      report.checks.database = {
+        status: 'ok',
+        latencyMs: Date.now() - dbStart,
+        databaseName: pingRes.rows[0]?.db_name,
+        serverTime: pingRes.rows[0]?.server_time,
+      };
+    } catch (err) {
+      report.overallStatus = 'error';
+      report.checks.database = {
+        status: 'error',
+        error: err.message,
+        code: err.code,
+      };
+    }
+
+    // Check 2: Default User Presence
+    try {
+      const userRes = await pool.query(
+        'SELECT id, is_active FROM users WHERE id = $1',
+        [DEFAULT_USER_ID]
+      );
+      report.checks.defaultUser = {
+        status: userRes.rows.length > 0 ? 'ok' : 'missing',
+        userId: DEFAULT_USER_ID,
+      };
+      if (userRes.rows.length === 0) {
+        // Provision immediately
+        await pool.query(
+          'INSERT INTO users (id, is_active) VALUES ($1, true) ON CONFLICT (id) DO NOTHING',
+          [DEFAULT_USER_ID]
+        );
+        report.checks.defaultUser.status = 'provisioned_now';
+      }
+    } catch (err) {
+      report.overallStatus = 'error';
+      report.checks.defaultUser = {
+        status: 'error',
+        error: err.message,
+      };
+    }
+
+    // Check 3: bank_accounts Table & Columns Verification
+    try {
+      const colsRes = await pool.query(
+        `SELECT column_name, data_type, is_nullable
+         FROM information_schema.columns
+         WHERE table_name = 'bank_accounts'
+         ORDER BY ordinal_position`
+      );
+      const cols = colsRes.rows.map((r) => r.column_name);
+      const requiredCols = ['id', 'user_id', 'bank_company', 'encrypted_credentials', 'billing_day', 'is_active', 'balance'];
+      const missingCols = requiredCols.filter((c) => !cols.includes(c));
+
+      report.checks.bankAccountsTable = {
+        status: missingCols.length === 0 ? 'ok' : 'incomplete_schema',
+        columnsPresent: cols,
+        missingColumns: missingCols,
+      };
+      if (missingCols.length > 0) report.overallStatus = 'error';
+    } catch (err) {
+      report.overallStatus = 'error';
+      report.checks.bankAccountsTable = {
+        status: 'error',
+        error: err.message,
+      };
+    }
+
+    // Check 4: AES-256-GCM Native Crypto Engine Self-Test (Round-Trip)
+    try {
+      const testPayload = { test: true, timestamp: Date.now(), rand: Math.random() };
+      const encrypted = encryptCredentials(testPayload);
+      const decrypted = decryptCredentials(encrypted);
+
+      const isValid = decrypted && decrypted.test === true && decrypted.rand === testPayload.rand;
+      report.checks.cryptoEngine = {
+        status: isValid ? 'ok' : 'mismatch',
+        cipherFormat: encrypted.startsWith('enc:v1:') ? 'v1_authenticated_gcm' : 'legacy',
+      };
+      if (!isValid) report.overallStatus = 'error';
+    } catch (err) {
+      report.overallStatus = 'error';
+      report.checks.cryptoEngine = {
+        status: 'error',
+        error: err.message,
+      };
+    }
+
+    // Check 5: Scraper Service Reachability
+    const scraperUrl = process.env.SCRAPER_URL || 'http://scraper-worker:3002';
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2000);
+      const scrapePing = await fetch(`${scraperUrl}/health`, { signal: controller.signal });
+      clearTimeout(timeoutId);
+      report.checks.scraperService = {
+        status: scrapePing.ok ? 'ok' : `http_${scrapePing.status}`,
+        target: scraperUrl,
+      };
+    } catch (err) {
+      report.checks.scraperService = {
+        status: 'unreachable_or_offline',
+        target: scraperUrl,
+        notice: 'Non-fatal: Account creation remains operational without active scraper',
+      };
+    }
+
+    const statusCode = report.overallStatus === 'ok' ? 200 : 503;
+    return reply.status(statusCode).send(report);
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
   // GET /accounts - List active accounts for user
+  // ──────────────────────────────────────────────────────────────────────────
   fastify.get('/', async (request, reply) => {
     try {
-      await ensureAccountsSchema();
-
       const result = await pool.query(
         `SELECT
            id,
@@ -137,7 +217,7 @@ export default async function accountsRoutes(fastify, options) {
            END AS "scrapeStatus",
            CASE
              WHEN bank_company = 'wallet' THEN 'wallet'
-             WHEN bank_company IN ('max', 'cal', 'isracard', 'amex') THEN 'credit'
+             WHEN bank_company IN ('max', 'cal', 'visaCal', 'isracard', 'amex') THEN 'credit'
              WHEN bank_company LIKE '%inv%' OR bank_company LIKE '%saving%' THEN 'savings'
              ELSE 'checking'
            END AS "accountType",
@@ -152,12 +232,10 @@ export default async function accountsRoutes(fastify, options) {
       const accounts = await Promise.all(
         result.rows.map(async (acc) => {
           if (acc.accountType === 'credit') {
-            const { nextBillingDate, prevBillingDate, prevPrevBillingDate } = getBillingDates(acc.billingDay);
+            const { nextBillingDate, prevBillingDate } = getBillingDates(acc.billingDay);
             const nextStr = formatLocalYMD(nextBillingDate);
             const prevStr = formatLocalYMD(prevBillingDate);
-            const prevPrevStr = formatLocalYMD(prevPrevBillingDate);
 
-            // 1. Upcoming Charge
             let upcomingCharge = 0;
             try {
               const upcomingRes = await pool.query(
@@ -180,7 +258,6 @@ export default async function accountsRoutes(fastify, options) {
               upcomingCharge = acc.balance;
             }
 
-            // 2. Period Spend
             let periodSpend = 0;
             try {
               const spendRes = await pool.query(
@@ -192,28 +269,17 @@ export default async function accountsRoutes(fastify, options) {
                 [acc.id, prevStr, nextStr]
               );
               periodSpend = spendRes.rows[0]?.spend || 0;
-              if (periodSpend === 0) {
-                const mSpendRes = await pool.query(
-                  `SELECT -COALESCE(SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END), 0)::FLOAT AS "spend"
-                   FROM transactions
-                   WHERE account_id = $1
-                     AND is_ignored = false
-                     AND date >= DATE_TRUNC('month', CURRENT_DATE)`,
-                  [acc.id]
-                );
-                periodSpend = mSpendRes.rows[0]?.spend || 0;
-              }
             } catch (_) {
               periodSpend = 0;
             }
 
-            // 3. Search for actual credit card bank debit in user's checking account
             let bankDebit = null;
             try {
               const bankKeywords = {
                 max: ['מקס', 'לאומי קארד', 'max'],
                 isracard: ['ישראכרט', 'isracard'],
                 cal: ['ויזה כאל', 'כאל', 'cal'],
+                visaCal: ['ויזה כאל', 'כאל', 'cal'],
                 amex: ['אמריקן אקספרס', 'amex'],
               }[acc.bankCompany] || [acc.bankCompany];
 
@@ -226,7 +292,7 @@ export default async function accountsRoutes(fastify, options) {
                  FROM transactions t
                  JOIN bank_accounts b ON t.account_id = b.id
                  WHERE b.user_id = $1
-                   AND b.bank_company NOT IN ('max', 'cal', 'isracard', 'amex', 'wallet')
+                   AND b.bank_company NOT IN ('max', 'cal', 'visaCal', 'isracard', 'amex', 'wallet')
                    AND t.amount < 0
                    AND (${keywordConditions})
                    AND t.date >= ($2::date - INTERVAL '10 days')
@@ -270,7 +336,9 @@ export default async function accountsRoutes(fastify, options) {
       fastify.log.error(err, 'Failed to fetch accounts');
       try {
         const fallbackRes = await pool.query(
-          `SELECT id, user_id AS "userId", bank_company AS "bankCompany", display_name AS "displayName", balance, is_active AS "isActive" FROM bank_accounts WHERE user_id = $1 AND is_active = true`,
+          `SELECT id, user_id AS "userId", bank_company AS "bankCompany", display_name AS "displayName", balance, is_active AS "isActive"
+           FROM bank_accounts
+           WHERE user_id = $1 AND is_active = true`,
           [DEFAULT_USER_ID]
         );
         return reply.code(200).send(fallbackRes.rows);
@@ -280,12 +348,17 @@ export default async function accountsRoutes(fastify, options) {
     }
   });
 
-  // POST /accounts - Create a new account with encrypted credentials
+  // ──────────────────────────────────────────────────────────────────────────
+  // POST /accounts - Controlled 6-Stage Account Creation Pipeline
+  // ──────────────────────────────────────────────────────────────────────────
   fastify.post('/', async (request, reply) => {
+    // ── STAGE 1: INPUT VALIDATION ───────────────────────────────────────────
     const parseResult = createAccountSchema.safeParse(request.body);
     if (!parseResult.success) {
-      return reply.code(400).send({
-        error: 'שגיאת אימות נתונים',
+      return reply.status(400).send({
+        success: false,
+        stage: 'STAGE_1_INPUT_VALIDATION',
+        error: 'שגיאת אימות נתונים: שדות חסרים או לא תקינים',
         details: parseResult.error.issues,
       });
     }
@@ -293,61 +366,179 @@ export default async function accountsRoutes(fastify, options) {
     const { bankCompany, credentials, displayName, billingDay } = parseResult.data;
 
     // Validate credentials for non-wallet institutions
-    if (bankCompany !== 'wallet' && (!credentials || Object.keys(credentials).length === 0)) {
-      return reply.code(400).send({
-        error: 'יש להזין את פרטי ההתחברות עבור המוסד שנבחר',
+    if (bankCompany !== 'wallet') {
+      const hasCreds = credentials && typeof credentials === 'object' && Object.keys(credentials).length > 0;
+      if (!hasCreds) {
+        return reply.status(400).send({
+          success: false,
+          stage: 'STAGE_1_INPUT_VALIDATION',
+          error: 'יש להזין את פרטי ההתחברות עבור המוסד שנבחר',
+          details: { bankCompany, fieldsProvided: Object.keys(credentials || {}) },
+        });
+      }
+    }
+
+    // ── STAGE 2: DATABASE CONNECTIVITY CHECK ────────────────────────────────
+    try {
+      await pool.query('SELECT 1');
+    } catch (dbPingErr) {
+      fastify.log.error({ err: dbPingErr }, 'Database connectivity pre-flight failed');
+      return reply.status(503).send({
+        success: false,
+        stage: 'STAGE_2_DB_PREFLIGHT',
+        error: 'מסד הנתונים אינו זמין כרגע. אנא נסה שוב בעוד מספר רגעים.',
+        details: dbPingErr.message,
+        sqlCode: dbPingErr.code,
       });
     }
 
+    // ── STAGE 3: USER VERIFICATION & AUTO-PROVISIONING ───────────────────────
     try {
-      await ensureAccountsSchema();
+      await pool.query(
+        `INSERT INTO users (id, is_active)
+         VALUES ($1, true)
+         ON CONFLICT (id) DO NOTHING`,
+        [DEFAULT_USER_ID]
+      );
+    } catch (userErr) {
+      fastify.log.error({ err: userErr }, 'User check/provisioning failed');
+      return reply.status(500).send({
+        success: false,
+        stage: 'STAGE_3_USER_PROVISION',
+        error: 'שגיאה בווידוא משתמש המערכת',
+        details: userErr.message,
+        sqlCode: userErr.code,
+      });
+    }
 
-      // ── Encrypt credentials with AES-256-GCM ──
+    // ── STAGE 4: AES-256-GCM CREDENTIAL ENCRYPTION & SELF-TEST ──────────────
+    let ciphertext;
+    try {
       const credsToEncrypt = (credentials && Object.keys(credentials).length > 0)
         ? credentials
         : { type: bankCompany };
-      const ciphertext = encryptCredentials(credsToEncrypt);
 
-      let result;
-      try {
-        result = await pool.query(
-          `INSERT INTO bank_accounts (
-             user_id, bank_company, encrypted_credentials, vault_key_version, display_name, billing_day, is_active, balance, created_at
-           )
-           VALUES ($1, $2, $3, 1, $4, $5, true, 0.00, NOW())
-           RETURNING id, user_id AS "userId", bank_company AS "bankCompany", display_name AS "displayName", billing_day AS "billingDay", is_active AS "isActive", created_at AS "createdAt"`,
-          [DEFAULT_USER_ID, bankCompany, ciphertext, displayName || null, billingDay || 10]
-        );
-      } catch (insertErr) {
-        fastify.log.warn({ err: insertErr.message }, 'First account insert attempt failed, retrying after ensureAccountsSchema');
-        await ensureAccountsSchema();
-        result = await pool.query(
-          `INSERT INTO bank_accounts (
-             user_id, bank_company, encrypted_credentials, vault_key_version, display_name, billing_day, is_active, balance, created_at
-           )
-           VALUES ($1, $2, $3, 1, $4, $5, true, 0.00, NOW())
-           RETURNING id, user_id AS "userId", bank_company AS "bankCompany", display_name AS "displayName", billing_day AS "billingDay", is_active AS "isActive", created_at AS "createdAt"`,
-          [DEFAULT_USER_ID, bankCompany, ciphertext, displayName || null, billingDay || 10]
-        );
+      ciphertext = encryptCredentials(credsToEncrypt);
+
+      // Verify encryption integrity by immediately decrypting
+      const decryptedVerification = decryptCredentials(ciphertext);
+      if (!decryptedVerification) {
+        throw new Error('Encryption self-test verification returned empty result');
       }
-
-      fastify.log.info({ accountId: result.rows[0].id, bankCompany }, 'Bank account created and credentials encrypted');
-      return reply.code(201).send(result.rows[0]);
-    } catch (err) {
-      fastify.log.error(err, 'Failed to create account');
-      return reply.code(400).send({
-        error: 'שגיאה ביצירת החשבון: ' + (err.message || 'שגיאת מערכת'),
-        message: err.message,
+    } catch (cryptoErr) {
+      fastify.log.error({ err: cryptoErr }, 'Credential encryption failed');
+      return reply.status(500).send({
+        success: false,
+        stage: 'STAGE_4_ENCRYPTION_ENGINE',
+        error: 'שגיאה במנוע ההצפנה המאובטח AES-256-GCM',
+        details: cryptoErr.message,
       });
     }
+
+    // ── STAGE 5: DATABASE INSERTION ─────────────────────────────────────────
+    let newAccount;
+    try {
+      const insertResult = await pool.query(
+        `INSERT INTO bank_accounts (
+           user_id,
+           bank_company,
+           encrypted_credentials,
+           vault_key_version,
+           display_name,
+           billing_day,
+           balance,
+           is_active,
+           created_at
+         )
+         VALUES ($1, $2, $3, 1, $4, $5, 0.00, true, NOW())
+         RETURNING
+           id,
+           user_id AS "userId",
+           bank_company AS "bankCompany",
+           display_name AS "displayName",
+           billing_day AS "billingDay",
+           balance,
+           is_active AS "isActive",
+           created_at AS "createdAt"`,
+        [
+          DEFAULT_USER_ID,
+          bankCompany,
+          ciphertext,
+          displayName ? displayName.trim() : null,
+          billingDay || 10,
+        ]
+      );
+
+      if (!insertResult.rows || insertResult.rows.length === 0) {
+        throw new Error('Insert completed but no record returned');
+      }
+
+      newAccount = insertResult.rows[0];
+    } catch (insertErr) {
+      fastify.log.error(
+        {
+          err: insertErr,
+          bankCompany,
+          sqlCode: insertErr.code,
+          sqlDetail: insertErr.detail,
+          sqlConstraint: insertErr.constraint,
+        },
+        'Account insertion into database failed'
+      );
+
+      return reply.status(500).send({
+        success: false,
+        stage: 'STAGE_5_DB_INSERT',
+        error: `שגיאה בשמירת החשבון במסד הנתונים: ${insertErr.message}`,
+        details: insertErr.message,
+        sqlCode: insertErr.code,
+        sqlDetail: insertErr.detail,
+        sqlTable: insertErr.table,
+        sqlConstraint: insertErr.constraint,
+      });
+    }
+
+    // ── STAGE 6: ASYNC SCRAPER TRIGGER (NON-BLOCKING) ───────────────────────
+    if (bankCompany !== 'wallet') {
+      const scraperUrl = process.env.SCRAPER_URL || 'http://scraper-worker:3002';
+      setTimeout(async () => {
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 6000);
+          await fetch(`${scraperUrl}/scrape/${newAccount.id}`, {
+            method: 'POST',
+            signal: controller.signal,
+          });
+          clearTimeout(timeoutId);
+          fastify.log.info({ accountId: newAccount.id }, 'Initial scrape trigger initiated asynchronously');
+        } catch (scraperErr) {
+          fastify.log.warn(
+            { accountId: newAccount.id, err: scraperErr.message },
+            'Initial scrape trigger background dispatch caught (non-critical)'
+          );
+        }
+      }, 300);
+    }
+
+    // ── STAGE 7: SUCCESS RESPONSE ───────────────────────────────────────────
+    fastify.log.info({ accountId: newAccount.id, bankCompany }, 'Account successfully created');
+    return reply.status(201).send({
+      success: true,
+      stage: 'STAGE_7_COMPLETE',
+      ...newAccount,
+    });
   });
 
-  // PATCH /accounts/:id - Update account displayName and billingDay
+  // ──────────────────────────────────────────────────────────────────────────
+  // PATCH /accounts/:id - Update account displayName, billingDay, balance
+  // ──────────────────────────────────────────────────────────────────────────
   fastify.patch('/:id', async (request, reply) => {
     const { id } = request.params;
     const parseResult = updateAccountSchema.safeParse(request.body);
     if (!parseResult.success) {
-      return reply.code(400).send({
+      return reply.status(400).send({
+        success: false,
+        stage: 'VALIDATION',
         error: 'Validation Error',
         details: parseResult.error.issues,
       });
@@ -372,21 +563,29 @@ export default async function accountsRoutes(fastify, options) {
       );
 
       if (result.rowCount === 0) {
-        return reply.code(404).send({ error: 'Not Found', message: 'Account not found' });
+        return reply.status(404).send({ success: false, error: 'Account not found' });
       }
 
       fastify.log.info({ accountId: id, displayName, billingDay }, 'Account updated successfully');
-      return reply.code(200).send({
+      return reply.status(200).send({
+        success: true,
         message: 'Account updated successfully',
         account: result.rows[0],
       });
     } catch (err) {
       fastify.log.error(err, 'Failed to update account');
-      return reply.code(500).send({ error: 'Internal Server Error', message: err.message });
+      return reply.status(500).send({
+        success: false,
+        stage: 'DB_UPDATE',
+        error: err.message,
+        sqlCode: err.code,
+      });
     }
   });
 
+  // ──────────────────────────────────────────────────────────────────────────
   // DELETE /accounts/:id - Soft delete account (is_active = false)
+  // ──────────────────────────────────────────────────────────────────────────
   fastify.delete('/:id', async (request, reply) => {
     const { id } = request.params;
 
@@ -400,16 +599,22 @@ export default async function accountsRoutes(fastify, options) {
       );
 
       if (result.rowCount === 0) {
-        return reply.code(404).send({ error: 'Not Found', message: 'Account not found' });
+        return reply.status(404).send({ success: false, error: 'Account not found' });
       }
 
-      return reply.code(200).send({
+      return reply.status(200).send({
+        success: true,
         message: 'Account deactivated successfully',
         account: result.rows[0],
       });
     } catch (err) {
       fastify.log.error(err, 'Failed to delete account');
-      return reply.code(500).send({ error: 'Internal Server Error', message: err.message });
+      return reply.status(500).send({
+        success: false,
+        stage: 'DB_DELETE',
+        error: err.message,
+        sqlCode: err.code,
+      });
     }
   });
 }
