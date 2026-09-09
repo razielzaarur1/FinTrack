@@ -61,35 +61,39 @@ export default function MultiSelectDropdown({
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-medium border transition-all ${
+        className={`w-full flex items-center justify-between gap-2 px-3.5 py-2 rounded-xl text-xs font-medium border transition-all ${
           selectedCount > 0
             ? 'bg-brand-primary/10 border-brand-primary/40 text-brand-primary dark:text-brand-primary'
             : 'bg-dark-surface light:bg-light-surface border-dark-border light:border-light-border text-dark-text light:text-light-text hover:border-dark-border-hover'
         }`}
       >
-        {Icon && <Icon className="w-3.5 h-3.5 shrink-0 opacity-80" />}
-        <span>{label}</span>
+        <div className="flex items-center gap-2 min-w-0">
+          {Icon && <Icon className="w-3.5 h-3.5 shrink-0 opacity-80" />}
+          <span className="truncate">{label}</span>
+        </div>
 
-        {selectedCount > 0 ? (
-          <span className="flex items-center justify-center px-1.5 py-0.2 rounded-full bg-brand-primary text-white text-[10px] font-bold min-w-[18px]">
-            {selectedCount}
-          </span>
-        ) : (
-          <span className="text-dark-text-muted light:text-light-text-muted text-[11px] font-normal">
-            ({placeholder})
-          </span>
-        )}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {selectedCount > 0 ? (
+            <span className="flex items-center justify-center px-1.5 py-0.2 rounded-full bg-brand-primary text-white text-[10px] font-bold min-w-[18px]">
+              {selectedCount}
+            </span>
+          ) : (
+            <span className="text-dark-text-muted light:text-light-text-muted text-[11px] font-normal">
+              ({placeholder})
+            </span>
+          )}
 
-        <ChevronDown
-          className={`w-3.5 h-3.5 shrink-0 transition-transform duration-200 opacity-60 ${
-            isOpen ? 'rotate-180' : ''
-          }`}
-        />
+          <ChevronDown
+            className={`w-3.5 h-3.5 shrink-0 transition-transform duration-200 opacity-60 ${
+              isOpen ? 'rotate-180' : ''
+            }`}
+          />
+        </div>
       </button>
 
       {/* Popover Dropdown */}
       {isOpen && (
-        <div className="absolute right-0 rtl:right-0 ltr:left-0 mt-2 w-72 max-h-96 z-50 bg-dark-surface-elevated light:bg-light-surface-elevated border border-dark-border light:border-light-border rounded-2xl shadow-2xl overflow-hidden flex flex-col backdrop-blur-md animate-in fade-in slide-in-from-top-2 duration-150">
+        <div className="absolute right-0 rtl:right-0 ltr:left-0 mt-2 w-72 max-w-[calc(100vw-2rem)] max-h-96 z-50 bg-dark-surface-elevated light:bg-light-surface-elevated border border-dark-border light:border-light-border rounded-2xl shadow-2xl overflow-hidden flex flex-col backdrop-blur-md animate-in fade-in slide-in-from-top-2 duration-150">
           {/* Search Header */}
           <div className="p-2.5 border-b border-dark-border/60 light:border-light-border/60">
             <div className="relative">

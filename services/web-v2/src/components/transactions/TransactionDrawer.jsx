@@ -218,48 +218,48 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
         </div>
 
         {/* Tab Selector */}
-        <div className="flex border-b border-dark-border light:border-light-border px-4 gap-2 text-xs font-medium">
+        <div className="flex border-b border-dark-border light:border-light-border px-4 gap-1.5 sm:gap-2 text-xs font-medium overflow-x-auto no-scrollbar">
           <button
             onClick={() => setActiveTab('details')}
-            className={`py-3 px-3 border-b-2 transition-all flex items-center gap-1.5 ${
+            className={`py-3 px-2.5 sm:px-3 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
               activeTab === 'details'
-                ? 'border-brand-primary text-brand-primary'
+                ? 'border-brand-primary text-brand-primary font-semibold'
                 : 'border-transparent text-dark-text-muted light:text-light-text-muted hover:text-dark-text'
             }`}
           >
-            <FileText className="w-4 h-4" />
+            <FileText className="w-3.5 h-3.5" />
             <span>{lang === 'he' ? 'פרטים' : 'Details'}</span>
           </button>
 
           <button
             onClick={() => setActiveTab('splits')}
-            className={`py-3 px-3 border-b-2 transition-all flex items-center gap-1.5 ${
+            className={`py-3 px-2.5 sm:px-3 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
               activeTab === 'splits'
-                ? 'border-brand-primary text-brand-primary'
+                ? 'border-brand-primary text-brand-primary font-semibold'
                 : 'border-transparent text-dark-text-muted light:text-light-text-muted hover:text-dark-text'
             }`}
           >
-            <Split className="w-4 h-4" />
+            <Split className="w-3.5 h-3.5" />
             <span>{t('splitTransaction')} ({splits.length})</span>
           </button>
 
           <button
             onClick={() => setActiveTab('links')}
-            className={`py-3 px-3 border-b-2 transition-all flex items-center gap-1.5 ${
+            className={`py-3 px-2.5 sm:px-3 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
               activeTab === 'links'
-                ? 'border-brand-primary text-brand-primary'
+                ? 'border-brand-primary text-brand-primary font-semibold'
                 : 'border-transparent text-dark-text-muted light:text-light-text-muted hover:text-dark-text'
             }`}
           >
-            <Link2 className="w-4 h-4" />
+            <Link2 className="w-3.5 h-3.5" />
             <span>{t('linkTransaction')} ({links.length})</span>
           </button>
 
           <button
             onClick={() => setActiveTab('notes')}
-            className={`py-3 px-3 border-b-2 transition-all flex items-center gap-1.5 ${
+            className={`py-3 px-2.5 sm:px-3 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
               activeTab === 'notes'
-                ? 'border-brand-primary text-brand-primary'
+                ? 'border-brand-primary text-brand-primary font-semibold'
                 : 'border-transparent text-dark-text-muted light:text-light-text-muted hover:text-dark-text'
             }`}
           >
@@ -402,27 +402,30 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
               <div className="space-y-2.5">
                 {splits.map((s, idx) => (
                   <div key={idx} className="p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated/40 space-y-2">
-                    <div className="flex items-center gap-2">
-                      <div className="relative">
+                    <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
+                      <div className="relative w-28 shrink-0">
                         <input
                           type="number"
                           step="0.01"
                           value={s.amount || ''}
                           onChange={(e) => handleSplitChange(idx, 'amount', e.target.value)}
                           placeholder="0.00"
-                          className="w-28 p-2 rounded-lg border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none font-mono text-left rtl:text-right"
+                          className="w-full p-2 rtl:pr-6 ltr:pl-6 rounded-lg border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-xs font-mono text-left rtl:text-right"
                         />
                         <span className="absolute left-2 rtl:left-auto rtl:right-2 top-2 text-xs text-dark-text-muted pointer-events-none">₪</span>
                       </div>
-                      <CategoryPicker
-                        className="flex-1 min-w-[160px]"
-                        value={s.category}
-                        onChange={(val) => handleSplitChange(idx, 'category', val)}
-                        placeholder="בחר קטגוריה..."
-                      />
+                      <div className="flex-1 min-w-[140px]">
+                        <CategoryPicker
+                          className="w-full"
+                          value={s.category}
+                          onChange={(val) => handleSplitChange(idx, 'category', val)}
+                          placeholder="בחר קטגוריה..."
+                        />
+                      </div>
                       <button
+                        type="button"
                         onClick={() => handleRemoveSplitRow(idx)}
-                        className="p-2 text-brand-expense hover:bg-dark-surface-elevated rounded-lg transition-colors"
+                        className="p-2 text-brand-expense hover:bg-dark-surface-elevated rounded-lg transition-colors shrink-0"
                         title="הסר שורה"
                       >
                         <Trash2 className="w-4 h-4" />

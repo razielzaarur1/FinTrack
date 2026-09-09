@@ -197,44 +197,44 @@ export default function ReviewPage() {
             return (
               <div
                 key={tx.id}
-                className={`p-4 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface shadow-xs transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-in fade-in slide-in-from-top-1 duration-200 ${
+                className={`p-3.5 sm:p-4 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface shadow-xs transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 animate-in fade-in slide-in-from-top-1 duration-200 ${
                   tx.isFlagged ? 'border-amber-500/40 bg-amber-500/5' : ''
                 }`}
               >
                 {/* Right: Info */}
-                <div className="flex items-center gap-3.5 min-w-0">
-                  <CategoryBadge category={tx.category} size={24} />
+                <div className="flex items-center gap-3 min-w-0 flex-1">
+                  <CategoryBadge category={tx.category} size={22} className="shrink-0" />
 
-                  <div className="min-w-0 space-y-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-bold text-sm text-dark-text light:text-light-text truncate">
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="font-bold text-xs sm:text-sm text-dark-text light:text-light-text truncate max-w-[180px] sm:max-w-xs">
                         {tx.userDescription || tx.merchantName || tx.description || 'ללא תיאור'}
                       </span>
 
                       {isAtm && (
-                        <span className="px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-500 text-[10px] font-bold inline-flex items-center gap-1">
+                        <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-500 text-[10px] font-bold inline-flex items-center gap-0.5 shrink-0">
                           <span>💵</span>
-                          <span>משיכת מזומן</span>
+                          <span>מזומן</span>
                         </span>
                       )}
 
                       {tx.isFlagged && (
-                        <span className="px-2 py-0.5 rounded-md bg-rose-500/15 text-rose-400 text-[10px] font-semibold">
+                        <span className="px-1.5 py-0.2 rounded bg-rose-500/15 text-rose-400 text-[10px] font-semibold shrink-0">
                           מסומנת בדגל
                         </span>
                       )}
                     </div>
 
-                    <div className="flex items-center gap-2 text-xs text-dark-text-muted light:text-light-text-muted flex-wrap">
-                      <span>{formatDate(tx.date, lang)}</span>
+                    <div className="flex items-center gap-1.5 text-[11px] text-dark-text-muted light:text-light-text-muted flex-wrap">
+                      <span className="shrink-0">{formatDate(tx.date, lang)}</span>
                       <span>•</span>
-                      <span className="flex items-center gap-1 font-mono text-[11px]">
-                        <span>{tx.accountDisplayName || tx.bankCompany}</span>
-                        {tx.accountNumber && <span>(•••• {tx.accountNumber.slice(-4)})</span>}
+                      <span className="truncate max-w-[110px] sm:max-w-none font-mono">
+                        {tx.accountDisplayName || tx.bankCompany}
+                        {tx.accountNumber ? ` (${tx.accountNumber.slice(-4)})` : ''}
                       </span>
                       <span>•</span>
-                      <span className="px-2 py-0.5 rounded-lg bg-dark-surface-elevated light:bg-light-surface-elevated font-semibold text-[11px] text-brand-primary">
-                        סיווג נוכחי: {tx.category || 'ללא סיווג'}
+                      <span className="px-1.5 py-0.2 rounded-lg bg-dark-surface-elevated light:bg-light-surface-elevated font-semibold text-[10px] text-brand-primary truncate max-w-[100px] sm:max-w-none">
+                        סיווג: {tx.category || 'ללא סיווג'}
                       </span>
                     </div>
 
@@ -254,10 +254,10 @@ export default function ReviewPage() {
                 </div>
 
                 {/* Left: Amount & Actions */}
-                <div className="flex items-center justify-between sm:justify-end gap-4 shrink-0">
+                <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-dark-border/40 light:border-light-border/40">
                   <div className="text-left rtl:text-right">
                     <div
-                      className={`text-base sm:text-lg font-bold font-mono ${
+                      className={`text-sm sm:text-base font-bold font-mono ${
                         isIncome ? 'text-emerald-500' : 'text-dark-text light:text-light-text'
                       }`}
                       dir="ltr"
@@ -267,13 +267,13 @@ export default function ReviewPage() {
                   </div>
 
                   {/* Actions Bar */}
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5">
                     {/* Approve Button */}
                     <button
                       type="button"
                       onClick={() => handleAction(tx, 'approve')}
                       disabled={actionLoadingId === tx.id}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-xs transition-all active:scale-95"
+                      className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-xs transition-all active:scale-95 shrink-0"
                       title="אשר סיווג"
                     >
                       <CheckCircle2 className="w-3.5 h-3.5" />
@@ -284,7 +284,7 @@ export default function ReviewPage() {
                     <button
                       type="button"
                       onClick={() => setEditingCatId(editingCatId === tx.id ? null : tx.id)}
-                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-dark-border light:border-light-border hover:border-brand-primary text-xs font-semibold transition-colors"
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-dark-border light:border-light-border hover:border-brand-primary text-xs font-semibold transition-colors shrink-0"
                       title="שנה קטגוריה"
                     >
                       <Tag className="w-3.5 h-3.5 text-pink-400" />
@@ -296,7 +296,7 @@ export default function ReviewPage() {
                     <button
                       type="button"
                       onClick={() => handleAction(tx, tx.isFlagged ? 'unflag' : 'flag')}
-                      className={`p-2 rounded-xl border transition-colors ${
+                      className={`p-1.5 rounded-xl border transition-colors shrink-0 ${
                         tx.isFlagged
                           ? 'border-amber-500/50 bg-amber-500/15 text-amber-400'
                           : 'border-dark-border light:border-light-border hover:bg-dark-surface-elevated text-dark-text-muted hover:text-amber-400'
@@ -315,10 +315,10 @@ export default function ReviewPage() {
 
       {/* Floating Undo Toast */}
       {undoItem && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-dark-surface-elevated light:bg-light-surface-elevated border border-brand-primary/50 text-dark-text light:text-light-text px-5 py-3.5 rounded-2xl shadow-2xl flex items-center gap-4 animate-in fade-in slide-in-from-bottom-4 duration-200">
-          <div className="flex items-center gap-2.5 text-xs font-medium">
+        <div className="fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 z-40 max-w-md w-[92%] sm:w-auto bg-dark-surface-elevated light:bg-light-surface-elevated border border-brand-primary/50 text-dark-text light:text-light-text px-4 py-3 rounded-2xl shadow-2xl flex items-center justify-between gap-3 animate-in fade-in slide-in-from-bottom-4 duration-200 backdrop-blur-md">
+          <div className="flex items-center gap-2 text-xs font-medium min-w-0">
             <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-            <span>
+            <span className="truncate">
               תנועה <b>"{undoItem.tx.userDescription || undoItem.tx.merchantName || undoItem.tx.description}"</b> {undoItem.actionName}.
             </span>
           </div>
@@ -326,7 +326,7 @@ export default function ReviewPage() {
           <button
             type="button"
             onClick={handleUndo}
-            className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-brand-primary text-white text-xs font-bold hover:bg-brand-primary-hover shadow-sm transition-all active:scale-95"
+            className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-brand-primary text-white text-xs font-bold hover:bg-brand-primary-hover shadow-sm transition-all active:scale-95 shrink-0"
           >
             <Undo2 className="w-3.5 h-3.5" />
             <span>בטל</span>

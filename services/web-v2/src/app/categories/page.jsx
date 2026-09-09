@@ -417,31 +417,31 @@ function CategoriesContent() {
                     hasSubs ? 'cursor-pointer hover:bg-dark-surface-elevated/40' : ''
                   }`}
                 >
-                  <div className="flex items-center gap-3.5 min-w-0">
-                    <CategoryBadge category={cat.name} size={24} />
-                    <div className="min-w-0">
-                      <div className="font-bold text-sm text-dark-text light:text-light-text flex items-center gap-2">
-                        <span>{cat.name}</span>
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <CategoryBadge category={cat.name} size={22} className="shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <div className="font-bold text-xs sm:text-sm text-dark-text light:text-light-text flex items-center gap-1.5 flex-wrap">
+                        <span className="truncate">{cat.name}</span>
                         {hasSubs && (
-                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-dark-surface-elevated text-dark-text-muted font-medium">
+                          <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-dark-surface-elevated text-dark-text-muted font-medium shrink-0">
                             {cat.subcategories.length} תתי-קטגוריות
                           </span>
                         )}
                       </div>
-                      <div className="text-xs text-dark-text-muted light:text-light-text-muted mt-0.5">
-                        {cat.count} תנועות • {cat.percentage}% מסך הכל
+                      <div className="text-[11px] text-dark-text-muted light:text-light-text-muted mt-0.5 truncate">
+                        {cat.count} תנועות • {cat.percentage}%
                       </div>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2 sm:gap-3 shrink-0">
                     {/* Progress Bar & Amount */}
                     <div className="text-left rtl:text-right flex flex-col items-end">
-                      <div className="font-bold text-base text-dark-text light:text-light-text font-mono" dir="ltr">
+                      <div className="font-bold text-sm sm:text-base text-dark-text light:text-light-text font-mono" dir="ltr">
                         {formatILS(cat.amount)}
                       </div>
                       {/* Visual Spending Share Bar */}
-                      <div className="w-24 bg-dark-surface-elevated light:bg-light-surface-elevated h-1.5 rounded-full overflow-hidden mt-1">
+                      <div className="hidden sm:block w-24 bg-dark-surface-elevated light:bg-light-surface-elevated h-1.5 rounded-full overflow-hidden mt-1">
                         <div
                           className={`h-full rounded-full ${categoryType === 'expense' ? 'bg-rose-500' : 'bg-emerald-500'}`}
                           style={{ width: `${Math.min(cat.percentage, 100)}%` }}
@@ -453,10 +453,10 @@ function CategoriesContent() {
                     <Link
                       href={`/transactions?categories=${encodeURIComponent(cat.name)}`}
                       onClick={(e) => e.stopPropagation()}
-                      className="p-2 rounded-xl border border-dark-border/80 light:border-light-border/80 hover:bg-brand-primary/10 hover:border-brand-primary text-dark-text-muted hover:text-brand-primary transition-colors"
+                      className="p-1.5 rounded-xl border border-dark-border/80 light:border-light-border/80 hover:bg-brand-primary/10 hover:border-brand-primary text-dark-text-muted hover:text-brand-primary transition-colors"
                       title="הצג את כל התנועות בקטגוריה זו"
                     >
-                      <ArrowUpRight className="w-4 h-4" />
+                      <ArrowUpRight className="w-3.5 h-3.5" />
                     </Link>
 
                     {/* Expand/Collapse Chevron */}
@@ -466,7 +466,7 @@ function CategoriesContent() {
                         className="p-1 text-dark-text-muted transition-transform"
                       >
                         <ChevronDown
-                          className={`w-4 h-4 transition-transform duration-200 ${
+                          className={`w-3.5 h-3.5 transition-transform duration-200 ${
                             isExpanded ? 'rotate-180' : ''
                           }`}
                         />

@@ -71,7 +71,9 @@ export default async function transactionsV2Routes(fastify, options) {
       cursor,
       cursorId,
       accountId,
+      accountIds,
       category,
+      categories,
       type,
       startDate,
       endDate,
@@ -81,6 +83,8 @@ export default async function transactionsV2Routes(fastify, options) {
       hasNotes,
       hasSplits,
       isIgnored,
+      isReviewed,
+      isFlagged,
     } = parseResult.data;
 
     const conditions = [];
