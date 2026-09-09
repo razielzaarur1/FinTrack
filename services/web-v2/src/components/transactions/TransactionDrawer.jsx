@@ -304,7 +304,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
         </div>
 
         {/* Tab Body */}
-        <div className="flex-1 min-h-0 p-5 overflow-y-auto overscroll-contain space-y-5 pb-32">
+        <div className="flex-1 min-h-0 p-5 overflow-y-auto overscroll-contain space-y-5 pb-52">
           {/* 1. Details Tab */}
           {activeTab === 'details' && (
             <div className="space-y-4">

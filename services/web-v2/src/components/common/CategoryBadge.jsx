@@ -42,15 +42,33 @@ export default function CategoryBadge({
   const iconName = subCat?.icon || mainCat?.icon || 'Tag';
   const IconComponent = ICON_MAP[iconName] || Tag;
 
+  const containerSizeClass =
+    size <= 12
+      ? 'w-5 h-5 rounded-md text-[10px]'
+      : size <= 15
+      ? 'w-6 h-6 rounded-md text-xs'
+      : size <= 18
+      ? 'w-7 h-7 rounded-lg text-xs'
+      : 'w-10 h-10 rounded-xl';
+
+  const svgSizeClass =
+    size <= 12
+      ? '[&>svg]:w-3 [&>svg]:h-3'
+      : size <= 15
+      ? '[&>svg]:w-3.5 [&>svg]:h-3.5'
+      : size <= 18
+      ? '[&>svg]:w-4 [&>svg]:h-4'
+      : '[&>svg]:w-5 [&>svg]:h-5';
+
   return (
     <div className={`flex items-center gap-2 ${className}`}>
       <div
-        className={`w-10 h-10 rounded-xl inline-flex items-center justify-center shrink-0 shadow-sm border border-black/5 dark:border-white/5 transition-transform hover:scale-105 ${mainCat.bg} ${mainCat.color}`}
+        className={`${containerSizeClass} inline-flex items-center justify-center shrink-0 shadow-2xs border border-black/5 dark:border-white/5 transition-transform hover:scale-105 ${mainCat.bg} ${mainCat.color}`}
         title={subCat?.name && subCat.name !== mainCat.name ? `${mainCat.name} • ${subCat.name}` : mainCat.name}
       >
         {activeSvg ? (
           <div
-            className="flex items-center justify-center shrink-0 [&>svg]:w-5 [&>svg]:h-5 [&>svg]:stroke-current"
+            className={`flex items-center justify-center shrink-0 ${svgSizeClass} [&>svg]:stroke-current`}
             dangerouslySetInnerHTML={{ __html: activeSvg }}
           />
         ) : (
