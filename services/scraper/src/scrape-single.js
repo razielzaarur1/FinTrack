@@ -145,12 +145,21 @@ async function saveTransactionsList(client, accountId, transactions, userId = '0
     const currency = tx.originalCurrency || tx.chargedCurrency || 'ILS';
     const txDate = tx.date ? new Date(tx.date) : new Date();
     const processedDate = tx.processedDate ? new Date(tx.processedDate) : txDate;
-    const amount =
-      typeof tx.chargedAmount === 'number'
-        ? tx.chargedAmount
-        : typeof tx.originalAmount === 'number'
-        ? tx.originalAmount
-        : parseFloat(tx.chargedAmount || tx.originalAmount) || 0;
+    // For pending transactions, chargedAmount is often 0 or null before billing cycle calculation,
+    // so we prioritize originalAmount when chargedAmount is 0 or missing.
+    const chargedNum = typeof tx.chargedAmount === 'number' ? tx.chargedAmount : parseFloat(tx.chargedAmount);
+    const origNum = typeof tx.originalAmount === 'number' ? tx.originalAmount : parseFloat(tx.originalAmount);
+    
+    let amount = 0;
+    if (!isNaN(chargedNum) && chargedNum !== 0) {
+      amount = chargedNum;
+    } else if (!isNaN(origNum) && origNum !== 0) {
+      amount = origNum;
+    } else if (!isNaN(chargedNum)) {
+      amount = chargedNum;
+    } else if (!isNaN(origNum)) {
+      amount = origNum;
+    }
     
     // In israeli-bank-scrapers:
     // tx.description is the merchant/store name (e.g. "סופר פארם", "שופרסל")
@@ -266,9 +275,10 @@ async function persistScrapedAccounts(pool, primaryAccountId, scrapedAccounts, t
             [targetDbAccountId, effectiveBalance]
           );
         } else {
-          // Create new record for this secondary card
-          const baseName = display_name || bank_company;
-          const secondaryDisplayName = cardLast4 ? `${baseName} (כרטיס ${cardLast4})` : `${baseName} (כרטיס נוסף)`;
+          // Create new record for this secondary card without duplicate suffixes
+          const rawBase = (display_name || bank_company || '').replace(/\s*\((כרטיס|card).*?\)/gi, '').trim();
+          const cleanBase = rawBase || bank_company;
+          const secondaryDisplayName = cardLast4 ? `${cleanBase} (כרטיס ${cardLast4})` : `${cleanBase} (כרטיס נוסף)`;
           const insertRes = await client.query(
             `INSERT INTO bank_accounts (
                user_id, bank_company, encrypted_credentials, display_name, account_number, balance, billing_day, is_active, last_scraped_at

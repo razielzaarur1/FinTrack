@@ -11,7 +11,14 @@ import {
   Save, 
   Check, 
   AlertCircle,
-  Tag
+  Tag,
+  Database,
+  Copy,
+  Info,
+  Layers,
+  Calendar,
+  CreditCard,
+  Hash
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { formatILS, formatDate } from '@/lib/formatters';
@@ -22,11 +29,21 @@ import { CATEGORIES_DATA } from '@/lib/categories';
 
 export default function TransactionDrawer({ tx, onClose, onUpdate }) {
   const { lang, t } = useApp();
-  const [activeTab, setActiveTab] = useState('details'); // details, splits, links, notes
+  const [activeTab, setActiveTab] = useState('details'); // details, splits, links, notes, scraper
   const [category, setCategory] = useState(tx?.category || '');
   const [userDesc, setUserDesc] = useState(tx?.userDescription || '');
   const [isIgnored, setIsIgnored] = useState(tx?.isIgnored || false);
   const [savingTx, setSavingTx] = useState(false);
+  const [copiedRaw, setCopiedRaw] = useState(false);
+
+  // Prevent background page scrolling when drawer is open
+  useEffect(() => {
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = originalOverflow || 'unset';
+    };
+  }, []);
 
   // Categories list
   const [categories, setCategories] = useState([]);
@@ -266,6 +283,18 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
             <span>💬</span>
             <span>{t('notes')} ({notes.length})</span>
           </button>
+
+          <button
+            onClick={() => setActiveTab('scraper')}
+            className={`py-3 px-2.5 sm:px-3 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
+              activeTab === 'scraper'
+                ? 'border-brand-primary text-brand-primary font-semibold'
+                : 'border-transparent text-dark-text-muted light:text-light-text-muted hover:text-dark-text'
+            }`}
+          >
+            <Database className="w-3.5 h-3.5" />
+            <span>נתוני סקריפר</span>
+          </button>
         </div>
 
         {/* Tab Body */}
@@ -308,6 +337,18 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
                   className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-sm focus:outline-none focus:border-brand-primary"
                 />
               </div>
+
+              {tx.status === 'pending' && (
+                <div className="p-3 rounded-xl border border-amber-500/30 bg-amber-500/10 flex items-start gap-2.5 text-xs text-amber-300">
+                  <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-bold text-amber-400">עסקה זמנית (Pending)</div>
+                    <div className="text-[11px] text-dark-text-muted light:text-light-text-muted mt-0.5">
+                      הסכום המוצג ({formatILS(tx.amount)}) מבוסס על סכום העסקה המקורי עד למועד החיוב הסופי.
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {isAtmWithdrawal && (
                 <div className="p-3.5 rounded-2xl border border-amber-500/30 bg-amber-500/10 flex items-center justify-between gap-3">
@@ -549,6 +590,104 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
               </div>
             </div>
           )}
+
+          {/* 5. Scraper Raw Data Tab */}
+          {activeTab === 'scraper' && (() => {
+            let parsedRaw = tx.rawData;
+            if (typeof parsedRaw === 'string') {
+              try { parsedRaw = JSON.parse(parsedRaw); } catch (e) { parsedRaw = null; }
+            }
+            const rawObj = parsedRaw || {};
+            const rawJsonString = JSON.stringify(tx.rawData ? (typeof tx.rawData === 'string' ? JSON.parse(tx.rawData) : tx.rawData) : {
+              id: tx.id,
+              identifier: tx.identifier,
+              date: tx.date,
+              processedDate: tx.processedDate,
+              originalAmount: tx.originalAmount,
+              originalCurrency: tx.originalCurrency,
+              chargedAmount: tx.chargedAmount,
+              description: tx.description,
+              memo: tx.memo,
+              category: tx.category,
+              status: tx.status,
+              type: tx.type,
+              installments: tx.installments
+            }, null, 2);
+
+            const handleCopyJson = () => {
+              navigator.clipboard.writeText(rawJsonString);
+              setCopiedRaw(true);
+              setTimeout(() => setCopiedRaw(false), 2000);
+            };
+
+            const scraperFields = [
+              { label: 'מזהה תנועה (Identifier)', value: tx.identifier || rawObj.identifier || tx.id, icon: <Hash className="w-3.5 h-3.5 text-brand-primary" /> },
+              { label: 'סטטוס תנועה (Status)', value: tx.status || rawObj.status || 'completed', badge: tx.status === 'pending' ? 'bg-amber-500/20 text-amber-400' : 'bg-emerald-500/20 text-emerald-400' },
+              { label: 'סוג תנועה (Type)', value: tx.type || rawObj.type || (parseFloat(tx.amount) < 0 ? 'expense' : 'income') },
+              { label: 'סכום מקורי (Original Amount)', value: rawObj.originalAmount != null ? `${rawObj.originalAmount} ${rawObj.originalCurrency || tx.originalCurrency || 'ILS'}` : (tx.originalAmount ? `${tx.originalAmount} ${tx.originalCurrency || 'ILS'}` : 'לא צוין') },
+              { label: 'סכום חיוב (Charged Amount)', value: rawObj.chargedAmount != null ? `${rawObj.chargedAmount} ILS` : (tx.chargedAmount ? `${tx.chargedAmount} ILS` : formatILS(tx.amount)) },
+              { label: 'תאריך עסקה (Tx Date)', value: formatDate(tx.date, lang) },
+              { label: 'תאריך עיבוד/חיוב (Processed Date)', value: tx.processedDate || rawObj.processedDate ? formatDate(tx.processedDate || rawObj.processedDate, lang) : 'לא זמין' },
+              { label: 'תיאור מקורי מלא (Original Description)', value: tx.description || rawObj.description || 'ללא תיאור' },
+              { label: 'הערות ספק (Memo)', value: tx.memo || rawObj.memo || 'אין' },
+              { label: 'סיווג ראשוני מהסקריפר (Scraper Category)', value: rawObj.category || 'לא סווג ע״י המקור' },
+              { 
+                label: 'תשלומי קרדיט/תשלומים (Installments)', 
+                value: rawObj.installments 
+                  ? `תשלום ${rawObj.installments.number || 1} מתוך ${rawObj.installments.total || 1}` 
+                  : (tx.installments ? JSON.stringify(tx.installments) : 'תשלום רגיל (תשלום יחיד)') 
+              },
+              { label: 'חשבון / כרטיס מקור', value: `${tx.accountDisplayName || tx.bankCompany || ''} (${tx.accountNumber || 'ראשי'})` }
+            ];
+
+            return (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted flex items-center gap-1.5">
+                    <Database className="w-4 h-4 text-brand-primary" />
+                    <span>כל המידע הגולמי שנשלף מסקריפר הבנק/האשראי</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleCopyJson}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-xs font-medium hover:border-brand-primary transition-colors text-dark-text light:text-light-text"
+                  >
+                    {copiedRaw ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-dark-text-muted" />}
+                    <span>{copiedRaw ? 'הועתק!' : 'העתק JSON'}</span>
+                  </button>
+                </div>
+
+                {/* Structured Fields Grid */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {scraperFields.map((field, idx) => (
+                    <div key={idx} className="p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated/40 space-y-1">
+                      <div className="text-[11px] font-medium text-dark-text-muted light:text-light-text-muted flex items-center gap-1">
+                        {field.icon}
+                        <span>{field.label}</span>
+                      </div>
+                      <div className="text-xs font-semibold break-all text-dark-text-primary light:text-light-text-primary">
+                        {field.badge ? (
+                          <span className={`px-2 py-0.5 rounded text-[11px] ${field.badge}`}>{field.value}</span>
+                        ) : (
+                          field.value
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Raw JSON Code Block */}
+                <div className="space-y-1.5">
+                  <div className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">
+                    JSON גולמי מלא (Full Raw Scraper Object):
+                  </div>
+                  <pre className="p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated/90 text-[11px] font-mono text-emerald-400 overflow-x-auto max-h-60 leading-relaxed text-left" dir="ltr">
+                    {rawJsonString}
+                  </pre>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       </div>
     </div>

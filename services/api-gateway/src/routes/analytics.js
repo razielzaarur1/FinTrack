@@ -252,73 +252,103 @@ export default async function analyticsRoutes(fastify, options) {
     }
   });
 
-  // GET /api/analytics/category-averages - Monthly average spending per key category
+  // GET /api/analytics/category-averages - Monthly average spending per category
   fastify.get('/category-averages', async (request, reply) => {
     try {
-      // Find distinct months of transaction history
+      // Find distinct months of transaction history (up to last 12 months)
       const monthsRes = await pool.query(`
         SELECT COUNT(DISTINCT TO_CHAR(date, 'YYYY-MM')) AS "monthsCount"
         FROM transactions
-        WHERE is_ignored = false AND amount < 0
+        WHERE is_ignored = false AND amount < 0 AND date >= (CURRENT_DATE - INTERVAL '12 months')
       `);
       const distinctMonths = Math.max(parseInt(monthsRes.rows[0]?.monthsCount, 10) || 1, 1);
 
-      // Key categories of interest
-      const keyCategories = [
-        { name: 'סופר ומכולת', mainCat: 'עושים קניות', label: 'סופר ומכולת', icon: 'ShoppingBag', color: '#ec4899' },
-        { name: 'דלק וטעינה', mainCat: 'רכב ותחבורה', label: 'דלק ותחבורה', icon: 'Fuel', color: '#f97316' },
-        { name: 'מסעדות ופאבים', mainCat: 'אוכלים בחוץ', label: 'אוכל בחוץ', icon: 'Utensils', color: '#f59e0b' },
-        { name: 'בגדים והנעלה', mainCat: 'עושים קניות', label: 'בגדים והנעלה', icon: 'Shirt', color: '#ec4899' },
-        { name: 'חשמל', mainCat: 'משק בית', label: 'חשמל ומשק בית', icon: 'Home', color: '#6366f1' },
-      ];
-
-      // Calculate total spent historically for each
-      const query = `
+      // 1. Get top spending categories historically
+      const topCatQuery = `
         SELECT 
-          category,
-          SUM(ABS(amount)) AS "totalAmount",
-          COUNT(*) AS "txCount"
-        FROM transactions
-        WHERE is_ignored = false AND amount < 0
-        GROUP BY category
+          COALESCE(c.name, t.category, 'שונות') AS "categoryName",
+          COALESCE(c.color, '#6366f1') AS "color",
+          COALESCE(c.icon, 'tag') AS "icon",
+          SUM(ABS(t.amount)) AS "totalAmount",
+          COUNT(t.id) AS "txCount"
+        FROM transactions t
+        LEFT JOIN categories c ON (t.category = c.name OR t.category = c.name_en)
+        WHERE t.is_ignored = false 
+          AND t.amount < 0 
+          AND t.date >= (CURRENT_DATE - INTERVAL '12 months')
+        GROUP BY COALESCE(c.name, t.category, 'שונות'), c.color, c.icon
+        ORDER BY "totalAmount" DESC
+        LIMIT 8
       `;
-      const allTxRes = await pool.query(query);
-      const catMap = new Map();
-      for (const r of allTxRes.rows) {
-        catMap.set(r.category, parseFloat(r.totalAmount));
-      }
+      const topCatRes = await pool.query(topCatQuery);
 
-      // Calculate current calendar month spending for comparison
+      // 2. Current calendar month spending per category
       const curMonthRes = await pool.query(`
         SELECT 
-          category,
-          SUM(ABS(amount)) AS "curMonthAmount"
-        FROM transactions
-        WHERE is_ignored = false AND amount < 0 AND date >= DATE_TRUNC('month', CURRENT_DATE)
-        GROUP BY category
+          COALESCE(c.name, t.category, 'שונות') AS "categoryName",
+          SUM(ABS(t.amount)) AS "curAmount"
+        FROM transactions t
+        LEFT JOIN categories c ON (t.category = c.name OR t.category = c.name_en)
+        WHERE t.is_ignored = false 
+          AND t.amount < 0 
+          AND t.date >= DATE_TRUNC('month', CURRENT_DATE)
+        GROUP BY COALESCE(c.name, t.category, 'שונות')
       `);
       const curMap = new Map();
       for (const r of curMonthRes.rows) {
-        curMap.set(r.category, parseFloat(r.curMonthAmount));
+        curMap.set(r.categoryName, parseFloat(r.curAmount) || 0);
       }
 
-      const results = keyCategories.map((kc) => {
-        const totalHistorical = (catMap.get(kc.name) || 0) + (catMap.get(kc.mainCat) ? (catMap.get(kc.mainCat) * 0.4) : 0);
-        const monthlyAvg = Math.round(totalHistorical / distinctMonths);
-        const currentMonth = curMap.get(kc.name) || curMap.get(kc.mainCat) || 0;
+      // Default icons mapping
+      const iconMap = {
+        'סופר ומכולת': 'ShoppingBag',
+        'עושים קניות': 'ShoppingBag',
+        'מכולת': 'ShoppingBag',
+        'דלק וטעינה': 'Fuel',
+        'רכב ותחבורה': 'Fuel',
+        'תחבורה': 'Fuel',
+        'מסעדות ופאבים': 'Utensils',
+        'אוכלים בחוץ': 'Utensils',
+        'מסעדות': 'Utensils',
+        'בגדים והנעלה': 'Shirt',
+        'משק בית': 'Home',
+        'חשמל': 'Home',
+        'דיור': 'Home',
+        'בריאות וטיפוח': 'HeartPulse',
+        'בריאות': 'HeartPulse',
+        'פנאי ובילויים': 'Gamepad2',
+        'בידור': 'Gamepad2',
+      };
+
+      const results = topCatRes.rows.map((r) => {
+        const catName = r.categoryName;
+        const totalHistorical = parseFloat(r.totalAmount) || 0;
+        const monthlyAvg = Math.round((totalHistorical / distinctMonths) * 100) / 100;
+        const currentMonth = curMap.get(catName) || 0;
         const diffPercent = monthlyAvg > 0 ? Math.round(((currentMonth - monthlyAvg) / monthlyAvg) * 100) : 0;
 
         return {
-          ...kc,
+          name: catName,
+          title: catName,
+          label: catName,
+          icon: iconMap[catName] || r.icon || 'Tag',
+          color: r.color || '#6366f1',
           monthlyAverage: monthlyAvg,
-          currentMonth: Math.round(currentMonth),
+          amount: monthlyAvg,
+          currentMonth: Math.round(currentMonth * 100) / 100,
           diffPercent,
           status: diffPercent > 10 ? 'higher' : diffPercent < -10 ? 'lower' : 'normal',
+          totalHistorical,
+          txCount: parseInt(r.txCount, 10) || 0,
         };
       });
 
-      return reply.code(200).send({ distinctMonths, data: results });
+      return reply.code(200).send({
+        distinctMonths,
+        data: results,
+      });
     } catch (err) {
+      fastify.log.error(err, 'Failed to compute category averages');
       return reply.code(500).send({ error: 'Database error', message: err.message });
     }
   });

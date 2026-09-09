@@ -513,50 +513,48 @@ export default function SettingsPage() {
               >
                 {/* Main Category Header Row */}
                 <div 
-                  className="p-4 flex items-center justify-between gap-3 cursor-pointer hover:bg-dark-surface-elevated/70 light:hover:bg-light-surface-elevated/70 transition-colors"
+                  className="p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer hover:bg-dark-surface-elevated/70 light:hover:bg-light-surface-elevated/70 transition-colors"
                   onClick={() => toggleExpand(cat.id)}
                 >
-                  <div className="flex items-center gap-3.5 min-w-0">
-                    <CategoryBadge category={cat.name} customSvg={cat.customSvg} size={22} />
-                    <div>
-                      <div className="font-bold text-sm text-dark-text light:text-light-text flex items-center gap-2">
-                        <span>{cat.name}</span>
+                  {/* Category Info */}
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <CategoryBadge category={cat.name} customSvg={cat.customSvg} size={22} className="shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <div className="font-bold text-xs sm:text-sm text-dark-text light:text-light-text flex items-center gap-2 flex-wrap">
+                        <span className="truncate">{cat.name}</span>
                         {cat.nameEn && (
                           <span className="text-[11px] font-normal text-dark-text-muted light:text-light-text-muted">
                             ({cat.nameEn})
                           </span>
                         )}
-                        <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-dark-surface light:bg-light-surface border border-dark-border/60 text-dark-text-muted">
+                        <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-dark-surface light:bg-light-surface border border-dark-border/60 text-dark-text-muted shrink-0">
                           {subs.length} תתי-קטגוריות
                         </span>
-                      </div>
-                      <div className="text-[11px] text-dark-text-muted flex items-center gap-2 mt-0.5">
-                        <span className={`px-1.5 py-0.5 rounded font-medium ${
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 ${
                           cat.type === 'income' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-rose-500/10 text-rose-500'
                         }`}>
                           {cat.type === 'income' ? 'הכנסה' : 'הוצאה'}
                         </span>
-                        <span>•</span>
-                        <span className="font-mono text-[10px] opacity-75">{cat.id}</span>
                       </div>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                  {/* Actions Bar */}
+                  <div className="flex items-center justify-between sm:justify-end gap-2 pt-2 sm:pt-0 border-t sm:border-t-0 border-dark-border/40 light:border-light-border/40" onClick={(e) => e.stopPropagation()}>
                     <button
                       type="button"
                       onClick={() => handleOpenAddSub(cat)}
-                      className="px-2.5 py-1.5 rounded-lg border border-dark-border light:border-light-border hover:border-brand-primary text-[11px] font-semibold flex items-center gap-1 transition-colors bg-dark-surface light:bg-light-surface"
+                      className="px-2.5 py-1.5 rounded-lg border border-dark-border light:border-light-border hover:border-brand-primary text-[11px] font-semibold flex items-center gap-1 transition-colors bg-dark-surface light:bg-light-surface shrink-0"
                       title="הוסף תת-קטגוריה"
                     >
                       <Plus className="w-3.5 h-3.5 text-brand-primary" />
-                      <span>הוסף תת-קטגוריה</span>
+                      <span>תת-קטגוריה</span>
                     </button>
 
                     <button
                       type="button"
                       onClick={() => handleOpenEdit(cat)}
-                      className="p-1.5 rounded-lg border border-dark-border/60 light:border-light-border/60 hover:bg-dark-surface text-dark-text-muted hover:text-dark-text transition-colors"
+                      className="p-1.5 rounded-lg border border-dark-border/60 light:border-light-border/60 hover:bg-dark-surface text-dark-text-muted hover:text-dark-text transition-colors shrink-0"
                       title="ערוך קטגוריה ראשית"
                     >
                       <Edit2 className="w-3.5 h-3.5" />
@@ -564,8 +562,17 @@ export default function SettingsPage() {
 
                     <button
                       type="button"
+                      onClick={() => handleDeleteCategory(cat)}
+                      className="p-1.5 rounded-lg border border-dark-border/60 light:border-light-border/60 hover:bg-rose-500/10 text-dark-text-muted hover:text-rose-500 transition-colors shrink-0"
+                      title="מחק קטגוריה ראשית"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+
+                    <button
+                      type="button"
                       onClick={() => toggleExpand(cat.id)}
-                      className="p-1.5 rounded-lg hover:bg-dark-surface text-dark-text-muted transition-transform"
+                      className="p-1.5 rounded-lg hover:bg-dark-surface text-dark-text-muted transition-transform shrink-0"
                       title={isExpanded ? 'סגור תתי-קטגוריות' : 'הצג תתי-קטגוריות'}
                     >
                       <ChevronDown className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />

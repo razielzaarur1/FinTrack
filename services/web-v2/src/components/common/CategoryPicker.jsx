@@ -95,7 +95,7 @@ export default function CategoryPicker({
           {/* Backdrop */}
           <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
 
-          <div className="absolute top-full mt-2 left-0 right-0 z-50 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface shadow-2xl overflow-hidden flex flex-col max-h-[380px] animate-in fade-in zoom-in-95 duration-150">
+          <div className="absolute top-full mt-2 left-0 right-0 z-50 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface shadow-2xl overflow-hidden flex flex-col max-h-[70vh] sm:max-h-[440px] animate-in fade-in zoom-in-95 duration-150">
             {/* Header: Tabs & Search */}
             <div className="p-3 border-b border-dark-border light:border-light-border space-y-2 bg-dark-surface-elevated/50 light:bg-light-surface-elevated/50">
               {/* Type Switcher */}
@@ -133,7 +133,6 @@ export default function CategoryPicker({
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   className="w-full pr-9 pl-3 py-1.5 text-xs rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface focus:outline-none focus:border-brand-primary"
-                  autoFocus
                 />
               </div>
             </div>

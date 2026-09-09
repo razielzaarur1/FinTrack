@@ -213,6 +213,7 @@ export default async function transactionsV2Routes(fastify, options) {
         t.is_manual_category AS "isManualCategory",
         t.is_reviewed AS "isReviewed",
         t.is_flagged AS "isFlagged",
+        t.raw_data AS "rawData",
         CASE
           WHEN LOWER(t.merchant_name) LIKE '%משיכת מזומן%' 
             OR LOWER(t.description) LIKE '%משיכת מזומן%' 
@@ -657,17 +658,30 @@ export default async function transactionsV2Routes(fastify, options) {
     }
   });
 
-  // GET /api/v2/transactions/review-queue - Get transactions awaiting review
+  // GET /api/v2/transactions/review-queue - Get transactions awaiting review or flagged
   fastify.get('/review-queue', async (request, reply) => {
-    const { flaggedOnly } = request.query;
-    const condition = flaggedOnly === 'true' ? 't.is_flagged = true' : 't.is_reviewed = false';
+    const { flaggedOnly, tab } = request.query;
+    let condition = 't.is_reviewed = false AND t.is_flagged = false';
+    
+    if (tab === 'flagged' || flaggedOnly === 'true') {
+      condition = 't.is_flagged = true';
+    } else if (tab === 'approved') {
+      condition = 't.is_reviewed = true';
+    } else if (tab === 'pending') {
+      condition = 't.is_reviewed = false AND t.is_flagged = false';
+    } else if (flaggedOnly === 'all') {
+      condition = '(t.is_reviewed = false OR t.is_flagged = true)';
+    }
+
     const query = `
       SELECT 
         t.id,
         t.account_id AS "accountId",
         b.bank_company AS "bankCompany",
         b.display_name AS "accountDisplayName",
+        b.account_number AS "accountNumber",
         t.date,
+        t.processed_date AS "processedDate",
         t.amount,
         t.currency,
         t.description,
@@ -675,7 +689,8 @@ export default async function transactionsV2Routes(fastify, options) {
         t.category,
         t.user_description AS "userDescription",
         t.is_flagged AS "isFlagged",
-        t.is_reviewed AS "isReviewed"
+        t.is_reviewed AS "isReviewed",
+        t.raw_data AS "rawData"
       FROM transactions t
       JOIN bank_accounts b ON t.account_id = b.id
       WHERE b.user_id = '00000000-0000-0000-0000-000000000001' AND ${condition} AND t.is_ignored = false

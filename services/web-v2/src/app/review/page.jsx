@@ -19,12 +19,15 @@ import { useApp } from '@/lib/app-context';
 import CategoryBadge from '@/components/common/CategoryBadge';
 import CategoryPicker from '@/components/common/CategoryPicker';
 import InstitutionLogo from '@/components/common/InstitutionLogo';
+import TransactionDrawer from '@/components/transactions/TransactionDrawer';
 
 export default function ReviewPage() {
   const { t, lang } = useApp();
+  const [activeTab, setActiveTab] = useState('pending'); // 'pending' | 'flagged' | 'approved'
   const [queue, setQueue] = useState([]);
   const [loading, setLoading] = useState(true);
   const [actionLoadingId, setActionLoadingId] = useState(null);
+  const [selectedTx, setSelectedTx] = useState(null);
 
   // Inline Category Picker State
   const [editingCatId, setEditingCatId] = useState(null);
@@ -33,10 +36,10 @@ export default function ReviewPage() {
   const [undoItem, setUndoItem] = useState(null);
   const undoTimeoutRef = useRef(null);
 
-  const loadReviewQueue = async () => {
+  const loadReviewQueue = async (tabToLoad = activeTab) => {
     setLoading(true);
     try {
-      const res = await api.getReviewQueue();
+      const res = await api.getReviewQueue({ tab: tabToLoad });
       if (res.data) {
         setQueue(res.data.data || []);
       }
@@ -48,7 +51,10 @@ export default function ReviewPage() {
   };
 
   useEffect(() => {
-    loadReviewQueue();
+    loadReviewQueue(activeTab);
+  }, [activeTab]);
+
+  useEffect(() => {
     return () => {
       if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current);
     };
@@ -144,7 +150,7 @@ export default function ReviewPage() {
         </div>
 
         <div className="flex items-center gap-2">
-          {queue.length > 1 && (
+          {activeTab === 'pending' && queue.length > 1 && (
             <button
               onClick={handleApproveAll}
               className="px-4 py-2 rounded-xl bg-brand-primary text-white text-xs font-bold hover:bg-brand-primary-hover shadow-sm transition-all"
@@ -154,7 +160,7 @@ export default function ReviewPage() {
           )}
 
           <button
-            onClick={loadReviewQueue}
+            onClick={() => loadReviewQueue(activeTab)}
             disabled={loading}
             className="p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text-muted hover:text-dark-text shadow-sm transition-colors"
             title="רענן"
@@ -164,11 +170,61 @@ export default function ReviewPage() {
         </div>
       </div>
 
+      {/* 3 Tabs Header */}
+      <div className="flex items-center gap-1.5 p-1 bg-dark-surface light:bg-light-surface rounded-2xl border border-dark-border light:border-light-border text-xs font-medium">
+        <button
+          type="button"
+          onClick={() => setActiveTab('pending')}
+          className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl transition-all ${
+            activeTab === 'pending'
+              ? 'bg-brand-primary text-white font-bold shadow-sm'
+              : 'text-dark-text-muted hover:text-dark-text'
+          }`}
+        >
+          <span>ממתינות לאישור</span>
+          {activeTab === 'pending' && queue.length > 0 && (
+            <span className="px-1.5 py-0.2 rounded-full bg-white/20 text-[10px]">{queue.length}</span>
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('flagged')}
+          className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl transition-all ${
+            activeTab === 'flagged'
+              ? 'bg-amber-500 text-black font-bold shadow-sm'
+              : 'text-dark-text-muted hover:text-dark-text'
+          }`}
+        >
+          <Flag className="w-3.5 h-3.5" />
+          <span>מסומנות בדגל</span>
+          {activeTab === 'flagged' && queue.length > 0 && (
+            <span className="px-1.5 py-0.2 rounded-full bg-black/20 text-[10px]">{queue.length}</span>
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('approved')}
+          className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl transition-all ${
+            activeTab === 'approved'
+              ? 'bg-emerald-600 text-white font-bold shadow-sm'
+              : 'text-dark-text-muted hover:text-dark-text'
+          }`}
+        >
+          <CheckCircle2 className="w-3.5 h-3.5" />
+          <span>היסטוריית מאושרות</span>
+          {activeTab === 'approved' && queue.length > 0 && (
+            <span className="px-1.5 py-0.2 rounded-full bg-white/20 text-[10px]">{queue.length}</span>
+          )}
+        </button>
+      </div>
+
       {/* Queue List */}
       {loading ? (
         <div className="p-16 text-center text-dark-text-muted">
           <RefreshCw className="w-6 h-6 animate-spin mx-auto text-brand-primary mb-2" />
-          <p className="text-sm font-medium">טוען תנועות לבדיקה...</p>
+          <p className="text-sm font-medium">טוען תנועות...</p>
         </div>
       ) : queue.length === 0 ? (
         <div className="py-20 text-center rounded-3xl border border-dashed border-dark-border light:border-light-border bg-dark-surface/50 light:bg-light-surface/50 space-y-3">
@@ -176,10 +232,18 @@ export default function ReviewPage() {
             <CheckCircle2 className="w-8 h-8" />
           </div>
           <h3 className="text-lg font-bold text-dark-text light:text-light-text">
-            כל הכבוד! אין תנועות הממתינות לבדיקה
+            {activeTab === 'pending'
+              ? 'כל הכבוד! אין תנועות הממתינות לבדיקה'
+              : activeTab === 'flagged'
+              ? 'אין תנועות מסומנות בדגל'
+              : 'אין היסטוריית תנועות מאושרות עדיין'}
           </h3>
           <p className="text-xs text-dark-text-muted max-w-sm mx-auto">
-            כל העסקאות מסווגות ומאושרות. כשתבצע סנכרון חדש או משיכת מזומן, תנועות חדשות יופיעו כאן.
+            {activeTab === 'pending'
+              ? 'כל העסקאות מסווגות ומאושרות. כשתבצע סנכרון חדש או משיכת מזומן, תנועות חדשות יופיעו כאן.'
+              : activeTab === 'flagged'
+              ? 'תנועות שתסמן בדגל יופיעו כאן לצורך מעקב וטיפול מעמיק.'
+              : 'תנועות שאושרו יישמרו כאן וניתן יהיה לערוך או לבטל את אישורן בכל עת.'}
           </p>
         </div>
       ) : (
@@ -197,7 +261,8 @@ export default function ReviewPage() {
             return (
               <div
                 key={tx.id}
-                className={`p-3.5 sm:p-4 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface shadow-xs transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 animate-in fade-in slide-in-from-top-1 duration-200 ${
+                onClick={() => setSelectedTx(tx)}
+                className={`p-3.5 sm:p-4 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface shadow-xs transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 animate-in fade-in slide-in-from-top-1 duration-200 cursor-pointer hover:border-brand-primary/40 ${
                   tx.isFlagged ? 'border-amber-500/40 bg-amber-500/5' : ''
                 }`}
               >
@@ -239,7 +304,7 @@ export default function ReviewPage() {
                     </div>
 
                     {isEditingCategory && (
-                      <div className="pt-2 max-w-xs animate-in fade-in duration-150">
+                      <div className="pt-2 max-w-xs animate-in fade-in duration-150" onClick={(e) => e.stopPropagation()}>
                         <CategoryPicker
                           value={tx.category}
                           onChange={(newCat) => {
@@ -254,7 +319,10 @@ export default function ReviewPage() {
                 </div>
 
                 {/* Left: Amount & Actions */}
-                <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-dark-border/40 light:border-light-border/40">
+                <div 
+                  className="flex items-center justify-between sm:justify-end gap-3 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-dark-border/40 light:border-light-border/40"
+                  onClick={(e) => e.stopPropagation()}
+                >
                   <div className="text-left rtl:text-right">
                     <div
                       className={`text-sm sm:text-base font-bold font-mono ${
@@ -268,17 +336,30 @@ export default function ReviewPage() {
 
                   {/* Actions Bar */}
                   <div className="flex items-center gap-1.5">
-                    {/* Approve Button */}
-                    <button
-                      type="button"
-                      onClick={() => handleAction(tx, 'approve')}
-                      disabled={actionLoadingId === tx.id}
-                      className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-xs transition-all active:scale-95 shrink-0"
-                      title="אשר סיווג"
-                    >
-                      <CheckCircle2 className="w-3.5 h-3.5" />
-                      <span>אשר</span>
-                    </button>
+                    {/* Approve / Mark Reviewed Button */}
+                    {activeTab !== 'approved' ? (
+                      <button
+                        type="button"
+                        onClick={() => handleAction(tx, 'approve')}
+                        disabled={actionLoadingId === tx.id}
+                        className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-xs transition-all active:scale-95 shrink-0"
+                        title="אשר סיווג"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>אשר</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => handleAction(tx, 'unapprove')}
+                        disabled={actionLoadingId === tx.id}
+                        className="flex items-center gap-1 px-3 py-1.5 rounded-xl border border-dark-border light:border-light-border hover:bg-dark-surface-elevated text-xs font-medium text-dark-text-muted hover:text-dark-text transition-all shrink-0"
+                        title="בטל אישור והחזר לתור"
+                      >
+                        <Undo2 className="w-3.5 h-3.5" />
+                        <span>בטל אישור</span>
+                      </button>
+                    )}
 
                     {/* Change Category Button */}
                     <button
@@ -292,7 +373,7 @@ export default function ReviewPage() {
                       <ChevronDown className="w-3 h-3 opacity-60" />
                     </button>
 
-                    {/* Flag Button */}
+                    {/* Flag / Unflag Button */}
                     <button
                       type="button"
                       onClick={() => handleAction(tx, tx.isFlagged ? 'unflag' : 'flag')}
@@ -311,6 +392,19 @@ export default function ReviewPage() {
             );
           })}
         </div>
+      )}
+
+      {/* Slide-over Transaction Drawer */}
+      {selectedTx && (
+        <TransactionDrawer
+          tx={selectedTx}
+          onClose={() => setSelectedTx(null)}
+          onUpdate={(updated) => {
+            setQueue((prev) =>
+              prev.map((t) => (t.id === updated.id ? { ...t, ...updated } : t))
+            );
+          }}
+        />
       )}
 
       {/* Floating Undo Toast */}

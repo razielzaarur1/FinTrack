@@ -14,15 +14,149 @@ import {
   ChevronDown,
   Layers,
   Search,
-  Filter
+  Filter,
+  X,
+  Calendar,
+  Tag
 } from 'lucide-react';
 import { api } from '@/lib/api';
-import { formatILS } from '@/lib/formatters';
+import { formatILS, formatDate } from '@/lib/formatters';
 import { useApp } from '@/lib/app-context';
 import CategoryBadge from '@/components/common/CategoryBadge';
 import InstitutionLogo from '@/components/common/InstitutionLogo';
 import MultiSelectDropdown from '@/components/common/MultiSelectDropdown';
+import TransactionDrawer from '@/components/transactions/TransactionDrawer';
 import { CATEGORIES_DATA } from '@/lib/categories';
+
+// Component for in-page category transaction drilldown drawer
+function CategoryTransactionsDrawer({ categoryName, year, month, accountIds, onClose, onTxUpdated }) {
+  const { lang } = useApp();
+  const [txs, setTxs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedTx, setSelectedTx] = useState(null);
+
+  useEffect(() => {
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = originalOverflow || 'unset';
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!categoryName) return;
+    setLoading(true);
+    const startDate = new Date(year, month - 1, 1).toISOString().slice(0, 10);
+    const endDate = new Date(year, month, 0).toISOString().slice(0, 10);
+
+    api.getTransactionsV2({
+      categories: [categoryName],
+      startDate,
+      endDate,
+      accountIds: accountIds.length > 0 ? accountIds : undefined,
+      limit: 100,
+    }).then((res) => {
+      if (res.data) {
+        setTxs(res.data.data || []);
+      }
+    }).finally(() => {
+      setLoading(false);
+    });
+  }, [categoryName, year, month, accountIds]);
+
+  const totalSum = txs.reduce((acc, t) => acc + (parseFloat(t.amount) || 0), 0);
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-xs transition-opacity animate-in fade-in duration-150">
+      <div className="w-full max-w-lg bg-dark-surface light:bg-light-surface h-full border-l border-dark-border light:border-light-border shadow-2xl flex flex-col justify-between overflow-hidden">
+        {/* Drawer Header */}
+        <div className="p-5 border-b border-dark-border light:border-light-border flex items-center justify-between">
+          <div className="flex items-center gap-3 min-w-0">
+            <CategoryBadge category={categoryName} size={24} />
+            <div className="min-w-0">
+              <h2 className="text-lg font-bold text-dark-text light:text-light-text truncate">
+                {categoryName}
+              </h2>
+              <div className="text-xs text-dark-text-muted light:text-light-text-muted mt-0.5">
+                {MONTH_NAMES[month - 1]} {year} • {txs.length} תנועות • <span className="font-bold text-brand-primary font-mono">{formatILS(totalSum)}</span>
+              </div>
+            </div>
+          </div>
+
+          <button
+            onClick={onClose}
+            className="p-2 rounded-xl hover:bg-dark-surface-elevated text-dark-text-muted hover:text-dark-text"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Transactions List */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-2.5">
+          {loading ? (
+            <div className="p-16 text-center text-dark-text-muted">
+              <RefreshCw className="w-5 h-5 animate-spin mx-auto text-brand-primary mb-2" />
+              <p className="text-xs">טוען תנועות...</p>
+            </div>
+          ) : txs.length === 0 ? (
+            <div className="py-16 text-center text-dark-text-muted text-xs">
+              לא נמצאו תנועות בקטגוריה זו בחודש הנבחר
+            </div>
+          ) : (
+            txs.map((t) => {
+              const isIncome = parseFloat(t.amount) > 0;
+              return (
+                <div
+                  key={t.id}
+                  onClick={() => setSelectedTx(t)}
+                  className="p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated/50 hover:bg-dark-surface-elevated transition-colors cursor-pointer flex items-center justify-between gap-3"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="font-semibold text-xs sm:text-sm text-dark-text light:text-light-text truncate">
+                      {t.userDescription || t.merchantName || t.description || 'ללא תיאור'}
+                    </div>
+                    <div className="text-[11px] text-dark-text-muted mt-0.5 flex items-center gap-1.5 truncate">
+                      <span>{formatDate(t.date, lang)}</span>
+                      <span>•</span>
+                      <span className="font-mono">{t.accountDisplayName || t.bankCompany}</span>
+                    </div>
+                  </div>
+
+                  <div className={`font-bold text-xs sm:text-sm font-mono shrink-0 ${isIncome ? 'text-emerald-500' : 'text-dark-text'}`} dir="ltr">
+                    {formatILS(t.amount, { showSign: true })}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        {/* Footer Link to full search */}
+        <div className="p-4 border-t border-dark-border light:border-light-border bg-dark-surface-elevated/40">
+          <Link
+            href={`/transactions?categories=${encodeURIComponent(categoryName)}`}
+            className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-brand-primary/15 text-brand-primary font-bold text-xs hover:bg-brand-primary/25 transition-colors"
+          >
+            <span>פתח בעמוד תנועות לסינון מלא</span>
+            <ArrowUpRight className="w-3.5 h-3.5" />
+          </Link>
+        </div>
+
+        {/* Transaction Detail Drawer */}
+        {selectedTx && (
+          <TransactionDrawer
+            tx={selectedTx}
+            onClose={() => setSelectedTx(null)}
+            onUpdate={(updated) => {
+              setTxs((prev) => prev.map((item) => (item.id === updated.id ? { ...item, ...updated } : item)));
+              onTxUpdated?.(updated);
+            }}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
 
 const MONTH_NAMES = [
   'ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני',
@@ -48,6 +182,7 @@ function CategoriesContent() {
   const [totalSpent, setTotalSpent] = useState(0);
   const [expandedCategories, setExpandedCategories] = useState(new Set());
   const [searchTerm, setSearchTerm] = useState('');
+  const [drawerCategory, setDrawerCategory] = useState(null);
 
   // Fetch accounts on mount
   useEffect(() => {
@@ -217,19 +352,22 @@ function CategoriesContent() {
       });
     }
 
+    // Filter out empty categories (where amount === 0 && count === 0)
+    let filteredResult = result.filter((cat) => cat.amount > 0 || cat.count > 0);
+
     // Sort by amount descending
-    result.sort((a, b) => b.amount - a.amount);
+    filteredResult.sort((a, b) => b.amount - a.amount);
 
     // Apply filter search if provided
     if (searchTerm.trim()) {
       const q = searchTerm.toLowerCase();
-      return result.filter((cat) =>
+      return filteredResult.filter((cat) =>
         cat.name.toLowerCase().includes(q) ||
         cat.subcategories.some((s) => s.name.toLowerCase().includes(q))
       );
     }
 
-    return result;
+    return filteredResult;
   }, [breakdownData, totalSpent, categoryType, searchTerm]);
 
   const toggleExpand = (catId) => {
@@ -412,16 +550,17 @@ function CategoriesContent() {
               >
                 {/* Main Category Header Card */}
                 <div
-                  onClick={() => hasSubs && toggleExpand(cat.id)}
-                  className={`p-4 flex items-center justify-between gap-3 ${
-                    hasSubs ? 'cursor-pointer hover:bg-dark-surface-elevated/40' : ''
-                  }`}
+                  className="p-4 flex items-center justify-between gap-3 hover:bg-dark-surface-elevated/40 transition-colors"
                 >
-                  <div className="flex items-center gap-3 min-w-0 flex-1">
-                    <CategoryBadge category={cat.name} size={22} className="shrink-0" />
+                  <div
+                    onClick={() => setDrawerCategory(cat.name)}
+                    className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer group"
+                    title="לחץ להצגת תנועות בקטגוריה זו"
+                  >
+                    <CategoryBadge category={cat.name} size={22} className="shrink-0 group-hover:scale-105 transition-transform" />
                     <div className="min-w-0 flex-1">
                       <div className="font-bold text-xs sm:text-sm text-dark-text light:text-light-text flex items-center gap-1.5 flex-wrap">
-                        <span className="truncate">{cat.name}</span>
+                        <span className="truncate group-hover:text-brand-primary transition-colors">{cat.name}</span>
                         {hasSubs && (
                           <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-dark-surface-elevated text-dark-text-muted font-medium shrink-0">
                             {cat.subcategories.length} תתי-קטגוריות
@@ -436,7 +575,10 @@ function CategoriesContent() {
 
                   <div className="flex items-center gap-2 sm:gap-3 shrink-0">
                     {/* Progress Bar & Amount */}
-                    <div className="text-left rtl:text-right flex flex-col items-end">
+                    <div 
+                      onClick={() => setDrawerCategory(cat.name)}
+                      className="text-left rtl:text-right flex flex-col items-end cursor-pointer"
+                    >
                       <div className="font-bold text-sm sm:text-base text-dark-text light:text-light-text font-mono" dir="ltr">
                         {formatILS(cat.amount)}
                       </div>
@@ -463,11 +605,16 @@ function CategoriesContent() {
                     {hasSubs && (
                       <button
                         type="button"
-                        className="p-1 text-dark-text-muted transition-transform"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleExpand(cat.id);
+                        }}
+                        className="p-1 text-dark-text-muted hover:text-dark-text transition-transform rounded-lg"
+                        title={isExpanded ? 'כווץ תתי-קטגוריות' : 'הרחב תתי-קטגוריות'}
                       >
                         <ChevronDown
-                          className={`w-3.5 h-3.5 transition-transform duration-200 ${
-                            isExpanded ? 'rotate-180' : ''
+                          className={`w-4 h-4 transition-transform duration-200 ${
+                            isExpanded ? 'rotate-180 text-brand-primary' : ''
                           }`}
                         />
                       </button>
@@ -481,11 +628,12 @@ function CategoriesContent() {
                     {cat.subcategories.map((sub, idx) => (
                       <div
                         key={idx}
-                        className="px-6 py-3 flex items-center justify-between text-xs hover:bg-dark-surface-elevated/60 transition-colors"
+                        onClick={() => setDrawerCategory(sub.name)}
+                        className="px-6 py-3 flex items-center justify-between text-xs hover:bg-dark-surface-elevated/60 transition-colors cursor-pointer group"
                       >
                         <div className="flex items-center gap-3">
                           <CategoryBadge category={sub.name} size={18} />
-                          <span className="font-semibold text-dark-text light:text-light-text">
+                          <span className="font-semibold text-dark-text light:text-light-text group-hover:text-brand-primary transition-colors">
                             {sub.name}
                           </span>
                           <span className="text-[11px] text-dark-text-muted">
@@ -500,6 +648,7 @@ function CategoriesContent() {
 
                           <Link
                             href={`/transactions?categories=${encodeURIComponent(sub.name)}`}
+                            onClick={(e) => e.stopPropagation()}
                             className="p-1.5 rounded-lg border border-dark-border/60 hover:border-brand-primary hover:text-brand-primary text-dark-text-muted transition-colors"
                             title="צפה בתנועות"
                           >
@@ -514,6 +663,18 @@ function CategoriesContent() {
             );
           })}
         </div>
+      )}
+
+      {/* Category Transactions Drawer */}
+      {drawerCategory && (
+        <CategoryTransactionsDrawer
+          categoryName={drawerCategory}
+          year={selectedYear}
+          month={selectedMonth}
+          accountIds={selectedAccountIds}
+          onClose={() => setDrawerCategory(null)}
+          onTxUpdated={() => loadData()}
+        />
       )}
     </div>
   );

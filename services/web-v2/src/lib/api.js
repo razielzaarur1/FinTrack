@@ -75,12 +75,15 @@ export const api = {
   updateAccount: (id, data) => request(`/api/accounts/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteAccount: (id) => request(`/api/accounts/${id}`, { method: 'DELETE' }),
 
-  // Transactions (v2 with cursor pagination)
   getTransactionsV2: (params = {}) => {
     const searchParams = new URLSearchParams();
     Object.entries(params).forEach(([key, val]) => {
       if (val !== undefined && val !== null && val !== '') {
-        searchParams.append(key, val);
+        if (Array.isArray(val)) {
+          if (val.length > 0) searchParams.append(key, val.join(','));
+        } else {
+          searchParams.append(key, val);
+        }
       }
     });
     return request(`/api/v2/transactions?${searchParams.toString()}`);
@@ -126,8 +129,21 @@ export const api = {
   reclassifyAllTransactions: () => request('/api/categories/reclassify-all', { method: 'POST' }),
 
   // Review Queue
-  getReviewQueue: (flaggedOnly = false) => request(`/api/v2/transactions/review-queue${flaggedOnly ? '?flaggedOnly=true' : ''}`),
-  reviewTransaction: (id, action, category) => request(`/api/v2/transactions/${id}/review`, { method: 'POST', body: JSON.stringify({ action, category }) }),
+  getReviewQueue: (options = {}) => {
+    let tab = 'pending';
+    if (typeof options === 'boolean') {
+      tab = options ? 'flagged' : 'pending';
+    } else if (typeof options === 'string') {
+      tab = options;
+    } else if (options && options.tab) {
+      tab = options.tab;
+    }
+    return request(`/api/v2/transactions/review-queue?tab=${encodeURIComponent(tab)}`);
+  },
+  reviewTransaction: (id, payload) => {
+    const body = typeof payload === 'string' ? { action: payload } : payload;
+    return request(`/api/v2/transactions/${id}/review`, { method: 'POST', body: JSON.stringify(body) });
+  },
 
   // Analytics & Statistics
   getAnalyticsOverview: (year, month) => {
