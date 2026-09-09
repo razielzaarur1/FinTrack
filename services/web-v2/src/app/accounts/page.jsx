@@ -367,6 +367,15 @@ export default function AccountsPage() {
                     <div className="p-3 rounded-xl bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40 border border-dark-border/40 light:border-light-border/40 space-y-2">
                       <div className="flex items-center justify-between text-xs">
                         <span className="text-dark-text-muted text-[11px]">
+                          סך שיצא במחזור הנוכחי:
+                        </span>
+                        <span className="font-bold text-dark-text font-mono" dir="ltr">
+                          {formatILS(acc.periodSpend || 0)}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between text-xs pt-1 border-t border-dark-border/20">
+                        <span className="text-dark-text-muted text-[11px]">
                           חויב במחזור קודם {acc.prevBillingDate ? `(${formatDate(acc.prevBillingDate)})` : ''}:
                         </span>
                         <span className="font-bold text-dark-text font-mono" dir="ltr">

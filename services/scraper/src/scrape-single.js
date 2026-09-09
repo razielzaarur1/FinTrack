@@ -370,13 +370,27 @@ export async function scrapeAccount({ accountId, bank, encryptedCreds, daysBack 
       throw new Error('Decrypted credentials payload is not a valid object');
     }
 
-    // 3. Determine start date
+    // 3. Determine start date & fetch system_settings if default
+    let effectiveDaysBack = daysBack ? parseInt(daysBack, 10) : 30;
+    if (isNaN(effectiveDaysBack) || effectiveDaysBack === 30) {
+      try {
+        const setRes = await dbPool.query(
+          `SELECT settings FROM system_settings WHERE user_id = '00000000-0000-0000-0000-000000000001'`
+        );
+        if (setRes.rows[0]?.settings?.scrapeDaysBack) {
+          effectiveDaysBack = parseInt(setRes.rows[0].settings.scrapeDaysBack, 10) || effectiveDaysBack;
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+
     let effectiveStartDate;
     if (startDate) {
       effectiveStartDate = new Date(startDate);
     } else {
       effectiveStartDate = new Date();
-      effectiveStartDate.setDate(effectiveStartDate.getDate() - parseInt(daysBack, 10));
+      effectiveStartDate.setDate(effectiveStartDate.getDate() - effectiveDaysBack);
     }
 
     // 4. Configure Puppeteer arguments

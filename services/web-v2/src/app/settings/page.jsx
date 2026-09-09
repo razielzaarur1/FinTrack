@@ -14,7 +14,8 @@ import {
   FileCode,
   Sparkles,
   X,
-  Layers
+  Layers,
+  Edit2
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useApp } from '@/lib/app-context';
@@ -38,10 +39,11 @@ export default function SettingsPage() {
 
   // Category Tree UI State
   const [activeTab, setActiveTab] = useState('expense'); // 'expense' | 'income'
-  const [expandedCats, setExpandedCats] = useState(new Set(['exp_household', 'exp_shopping']));
+  const [expandedCats, setExpandedCats] = useState(new Set(['exp_household', 'exp_shopping', 'משק בית', 'עושים קניות']));
 
   // Add/Edit Category Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingCat, setEditingCat] = useState(null);
   const [modalParentId, setModalParentId] = useState(null);
   const [modalParentName, setModalParentName] = useState('');
   const [formName, setFormName] = useState('');
@@ -71,8 +73,23 @@ export default function SettingsPage() {
   const loadCategories = async () => {
     setLoading(true);
     try {
-      const res = await api.getCategories();
-      if (res.data) setCategories(res.data.data || []);
+      const res = await api.getCategories({ tree: 'true' });
+      if (res.data?.data && Array.isArray(res.data.data) && res.data.data.length > 0) {
+        setCategories(res.data.data);
+      } else {
+        const fallback = [
+          ...CATEGORIES_DATA.expenses.map(c => ({ ...c, type: 'expense' })),
+          ...CATEGORIES_DATA.incomes.map(c => ({ ...c, type: 'income' })),
+        ];
+        setCategories(fallback);
+      }
+    } catch (err) {
+      console.error('Failed to load categories:', err);
+      const fallback = [
+        ...CATEGORIES_DATA.expenses.map(c => ({ ...c, type: 'expense' })),
+        ...CATEGORIES_DATA.incomes.map(c => ({ ...c, type: 'income' })),
+      ];
+      setCategories(fallback);
     } finally {
       setLoading(false);
     }
@@ -139,26 +156,57 @@ export default function SettingsPage() {
 
   // Open modal for adding subcategory
   const handleOpenAddSub = (parent) => {
+    setEditingCat(null);
     setModalParentId(parent.id);
     setModalParentName(parent.name);
     setFormType(parent.type || 'expense');
-    setFormColor(parent.color?.includes('#') ? parent.color : '#6366f1');
+    setFormColor(parent.color?.startsWith('#') ? parent.color : '#6366f1');
     setFormName('');
     setFormNameEn('');
+    setFormIcon(parent.icon || 'tag');
     setFormSvg('');
+    setIsModalOpen(true);
+  };
+
+  // Open modal for editing category / subcategory
+  const handleOpenEdit = (cat, parentName = '') => {
+    setEditingCat(cat);
+    setModalParentId(cat.parentId || null);
+    setModalParentName(parentName);
+    setFormType(cat.type || 'expense');
+    setFormColor(cat.color?.startsWith('#') ? cat.color : '#6366f1');
+    setFormName(cat.name || '');
+    setFormNameEn(cat.nameEn || '');
+    setFormIcon(cat.icon || 'tag');
+    setFormSvg(cat.customSvg || '');
     setIsModalOpen(true);
   };
 
   // Open modal for adding main category
   const handleOpenAddMain = () => {
+    setEditingCat(null);
     setModalParentId(null);
     setModalParentName('');
     setFormType(activeTab);
     setFormColor(activeTab === 'expense' ? '#ec4899' : '#10b981');
     setFormName('');
     setFormNameEn('');
+    setFormIcon('tag');
     setFormSvg('');
     setIsModalOpen(true);
+  };
+
+  // Delete category / subcategory
+  const handleDeleteCategory = async (cat) => {
+    if (!cat?.id) return;
+    if (window.confirm(`האם אתה בטוח שברצונך למחוק את הקטגוריה "${cat.name}"?`)) {
+      try {
+        await api.deleteCategory(cat.id);
+        await loadCategories();
+      } catch (err) {
+        console.error('Failed to delete category:', err);
+      }
+    }
   };
 
   // Handle SVG file upload
@@ -182,7 +230,7 @@ export default function SettingsPage() {
     setSubmittingCat(true);
 
     try {
-      const res = await api.createCategory({
+      const payload = {
         name: formName.trim(),
         nameEn: formNameEn.trim() || undefined,
         type: formType,
@@ -190,12 +238,19 @@ export default function SettingsPage() {
         icon: formIcon,
         parentId: modalParentId || undefined,
         customSvg: formSvg.trim() || undefined,
-      });
+      };
 
-      if (res.data) {
-        setIsModalOpen(false);
-        loadCategories();
+      if (editingCat && editingCat.id && !editingCat.id.startsWith('exp_') && !editingCat.id.startsWith('inc_')) {
+        await api.updateCategory(editingCat.id, payload);
+      } else {
+        await api.createCategory(payload);
       }
+
+      setIsModalOpen(false);
+      setEditingCat(null);
+      await loadCategories();
+    } catch (err) {
+      console.error('Failed to save category:', err);
     } finally {
       setSubmittingCat(false);
     }
@@ -215,8 +270,19 @@ export default function SettingsPage() {
     }
   };
 
-  // Active Category List based on tab
-  const categoryTree = activeTab === 'expense' ? CATEGORIES_DATA.expenses : CATEGORIES_DATA.incomes;
+  // Active Category List based on tab (from live DB categories or fallback)
+  const activeCategories = React.useMemo(() => {
+    if (!categories || categories.length === 0) {
+      return activeTab === 'expense' ? CATEGORIES_DATA.expenses : CATEGORIES_DATA.incomes;
+    }
+    const filtered = categories.filter((c) => {
+      if (activeTab === 'expense') return c.type === 'expense' || c.type === 'both' || !c.type;
+      return c.type === 'income';
+    });
+    return filtered.length > 0
+      ? filtered
+      : (activeTab === 'expense' ? CATEGORIES_DATA.expenses : CATEGORIES_DATA.incomes);
+  }, [categories, activeTab]);
 
   return (
     <div className="space-y-8 max-w-5xl">
@@ -404,7 +470,7 @@ export default function SettingsPage() {
                   : 'text-dark-text-muted hover:text-dark-text'
               }`}
             >
-              הוצאות ({CATEGORIES_DATA.expenses.length})
+              הוצאות ({activeCategories.length})
             </button>
             <button
               onClick={() => setActiveTab('income')}
@@ -414,7 +480,7 @@ export default function SettingsPage() {
                   : 'text-dark-text-muted hover:text-dark-text'
               }`}
             >
-              הכנסות ({CATEGORIES_DATA.incomes.length})
+              הכנסות ({activeCategories.length})
             </button>
           </div>
 
@@ -436,24 +502,32 @@ export default function SettingsPage() {
 
         {/* Categories Tree Cards */}
         <div className="space-y-3">
-          {categoryTree.map((cat) => {
-            const isExpanded = expandedCats.has(cat.id);
+          {activeCategories.map((cat) => {
+            const isExpanded = expandedCats.has(cat.id) || expandedCats.has(cat.name);
             const subs = cat.subs || [];
 
             return (
               <div
                 key={cat.id}
-                className="rounded-2xl border border-dark-border light:border-light-border bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40 overflow-hidden transition-all"
+                className="rounded-2xl border border-dark-border light:border-light-border bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40 overflow-hidden transition-all shadow-xs"
               >
                 {/* Main Category Header Row */}
-                <div className="p-4 flex items-center justify-between gap-3">
+                <div 
+                  className="p-4 flex items-center justify-between gap-3 cursor-pointer hover:bg-dark-surface-elevated/70 light:hover:bg-light-surface-elevated/70 transition-colors"
+                  onClick={() => toggleExpand(cat.id)}
+                >
                   <div className="flex items-center gap-3.5 min-w-0">
-                    <CategoryBadge category={cat.name} size={22} />
+                    <CategoryBadge category={cat.name} customSvg={cat.customSvg} size={22} />
                     <div>
                       <div className="font-bold text-sm text-dark-text light:text-light-text flex items-center gap-2">
                         <span>{cat.name}</span>
-                        <span className="text-[11px] font-normal text-dark-text-muted light:text-light-text-muted">
-                          ({subs.length} תתי-קטגוריות)
+                        {cat.nameEn && (
+                          <span className="text-[11px] font-normal text-dark-text-muted light:text-light-text-muted">
+                            ({cat.nameEn})
+                          </span>
+                        )}
+                        <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-dark-surface light:bg-light-surface border border-dark-border/60 text-dark-text-muted">
+                          {subs.length} תתי-קטגוריות
                         </span>
                       </div>
                       <div className="text-[11px] text-dark-text-muted flex items-center gap-2 mt-0.5">
@@ -468,46 +542,90 @@ export default function SettingsPage() {
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                     <button
                       type="button"
                       onClick={() => handleOpenAddSub(cat)}
-                      className="px-2.5 py-1.5 rounded-lg border border-dark-border light:border-light-border hover:border-brand-primary text-[11px] font-semibold flex items-center gap-1 transition-colors"
+                      className="px-2.5 py-1.5 rounded-lg border border-dark-border light:border-light-border hover:border-brand-primary text-[11px] font-semibold flex items-center gap-1 transition-colors bg-dark-surface light:bg-light-surface"
+                      title="הוסף תת-קטגוריה"
                     >
-                      <Plus className="w-3.5 h-3.5" />
+                      <Plus className="w-3.5 h-3.5 text-brand-primary" />
                       <span>הוסף תת-קטגוריה</span>
                     </button>
 
-                    {subs.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => toggleExpand(cat.id)}
-                        className="p-1.5 rounded-lg hover:bg-dark-surface text-dark-text-muted transition-transform"
-                        title={isExpanded ? 'סגור תתי-קטגוריות' : 'הצג תתי-קטגוריות'}
-                      >
-                        <ChevronDown className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => handleOpenEdit(cat)}
+                      className="p-1.5 rounded-lg border border-dark-border/60 light:border-light-border/60 hover:bg-dark-surface text-dark-text-muted hover:text-dark-text transition-colors"
+                      title="ערוך קטגוריה ראשית"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => toggleExpand(cat.id)}
+                      className="p-1.5 rounded-lg hover:bg-dark-surface text-dark-text-muted transition-transform"
+                      title={isExpanded ? 'סגור תתי-קטגוריות' : 'הצג תתי-קטגוריות'}
+                    >
+                      <ChevronDown className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                    </button>
                   </div>
                 </div>
 
                 {/* Subcategories Grid */}
-                {isExpanded && subs.length > 0 && (
-                  <div className="p-4 pt-0 border-t border-dark-border/40 light:border-light-border/40 bg-dark-surface/50 light:bg-light-surface/50">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5 mt-3">
+                {isExpanded && (
+                  <div className="p-4 pt-2 border-t border-dark-border/40 light:border-light-border/40 bg-dark-surface/50 light:bg-light-surface/50">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5 mt-2">
                       {subs.map((sub) => (
                         <div
                           key={sub.id}
-                          className="p-2.5 rounded-xl border border-dark-border/60 light:border-light-border/60 bg-dark-surface light:bg-light-surface flex items-center justify-between gap-2 shadow-2xs hover:border-brand-primary/40 transition-colors"
+                          className="group p-2.5 rounded-xl border border-dark-border/60 light:border-light-border/60 bg-dark-surface light:bg-light-surface flex items-center justify-between gap-2 shadow-2xs hover:border-brand-primary/40 transition-colors"
                         >
                           <div className="flex items-center gap-2.5 min-w-0">
-                            <CategoryBadge category={sub.name} size={16} className="scale-90" />
-                            <span className="text-xs font-semibold truncate text-dark-text light:text-light-text">
-                              {sub.name}
-                            </span>
+                            <CategoryBadge category={sub.name} customSvg={sub.customSvg} size={16} className="scale-90" />
+                            <div className="truncate">
+                              <div className="text-xs font-semibold truncate text-dark-text light:text-light-text">
+                                {sub.name}
+                              </div>
+                              {sub.nameEn && (
+                                <div className="text-[10px] text-dark-text-muted truncate">
+                                  {sub.nameEn}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1 shrink-0 opacity-80 group-hover:opacity-100 transition-opacity">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEdit(sub, cat.name)}
+                              className="p-1 rounded-md text-dark-text-muted hover:text-dark-text hover:bg-dark-surface-elevated transition-colors"
+                              title="ערוך תת-קטגוריה"
+                            >
+                              <Edit2 className="w-3 h-3" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteCategory(sub)}
+                              className="p-1 rounded-md text-dark-text-muted hover:text-rose-500 hover:bg-rose-500/10 transition-colors"
+                              title="מחק תת-קטגוריה"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
                           </div>
                         </div>
                       ))}
+
+                      {/* Quick Add Subcategory Card inside grid */}
+                      <button
+                        type="button"
+                        onClick={() => handleOpenAddSub(cat)}
+                        className="p-2.5 rounded-xl border border-dashed border-dark-border hover:border-brand-primary text-dark-text-muted hover:text-brand-primary flex items-center justify-center gap-2 text-xs font-medium transition-colors"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span>הוסף תת-קטגוריה</span>
+                      </button>
                     </div>
                   </div>
                 )}
@@ -524,9 +642,15 @@ export default function SettingsPage() {
             <div className="flex items-center justify-between">
               <h3 className="text-base font-bold flex items-center gap-2">
                 <Tag className="w-5 h-5 text-brand-primary" />
-                <span>{modalParentId ? `הוספת תת-קטגוריה תחת "${modalParentName}"` : 'הוספת קטגוריה ראשית'}</span>
+                <span>
+                  {editingCat
+                    ? `עריכת קטגוריה: "${editingCat.name}"`
+                    : modalParentId
+                    ? `הוספת תת-קטגוריה תחת "${modalParentName}"`
+                    : 'הוספת קטגוריה ראשית'}
+                </span>
               </h3>
-              <button onClick={() => setIsModalOpen(false)} className="p-1 rounded-lg hover:bg-dark-surface-elevated text-dark-text-muted">
+              <button onClick={() => { setIsModalOpen(false); setEditingCat(null); }} className="p-1 rounded-lg hover:bg-dark-surface-elevated text-dark-text-muted">
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -648,7 +772,7 @@ export default function SettingsPage() {
                   disabled={submittingCat || !formName.trim()}
                   className="flex-1 py-2.5 rounded-xl bg-brand-primary text-white text-xs font-bold hover:bg-brand-primary-hover disabled:opacity-50 transition-colors"
                 >
-                  {submittingCat ? 'שומר...' : 'שמור קטגוריה'}
+                  {submittingCat ? 'שומר...' : editingCat ? 'עדכן קטגוריה' : 'שמור קטגוריה'}
                 </button>
               </div>
             </form>

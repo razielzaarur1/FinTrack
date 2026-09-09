@@ -66,7 +66,13 @@ export const api = {
   deleteLink: (linkId) => request(`/api/v2/transactions/links/${linkId}`, { method: 'DELETE' }),
 
   // Categories & Learning
-  getCategories: (type, tree) => {
+  getCategories: (arg1, arg2) => {
+    let type = arg1;
+    let tree = arg2;
+    if (typeof arg1 === 'object' && arg1 !== null) {
+      type = arg1.type;
+      tree = arg1.tree;
+    }
     const q = new URLSearchParams();
     if (type) q.append('type', type);
     if (tree) q.append('tree', 'true');

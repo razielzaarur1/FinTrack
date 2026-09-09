@@ -28,7 +28,7 @@ function getBillingDates(billingDay = 10) {
   const day = Math.min(Math.max(parseInt(billingDay, 10) || 10, 1), 28);
 
   let nextBillingDate, prevBillingDate;
-  if (curDay <= day) {
+  if (curDay < day) {
     nextBillingDate = new Date(curYear, curMonth, day);
     prevBillingDate = new Date(curYear, curMonth - 1, day);
   } else {
@@ -36,7 +36,9 @@ function getBillingDates(billingDay = 10) {
     prevBillingDate = new Date(curYear, curMonth, day);
   }
 
-  return { nextBillingDate, prevBillingDate };
+  const prevPrevBillingDate = new Date(prevBillingDate.getFullYear(), prevBillingDate.getMonth() - 1, day);
+
+  return { nextBillingDate, prevBillingDate, prevPrevBillingDate };
 }
 
 export default async function accountsRoutes(fastify, options) {
@@ -78,11 +80,12 @@ export default async function accountsRoutes(fastify, options) {
       const accounts = await Promise.all(
         result.rows.map(async (acc) => {
           if (acc.accountType === 'credit') {
-            const { nextBillingDate, prevBillingDate } = getBillingDates(acc.billingDay);
+            const { nextBillingDate, prevBillingDate, prevPrevBillingDate } = getBillingDates(acc.billingDay);
             const nextStr = nextBillingDate.toISOString().slice(0, 10);
             const prevStr = prevBillingDate.toISOString().slice(0, 10);
+            const prevPrevStr = prevPrevBillingDate.toISOString().slice(0, 10);
 
-            // 1. Upcoming Charge (transactions scheduled for next billing date)
+            // 1. Upcoming Charge (transactions scheduled for next billing date or within upcoming cycle)
             const upcomingRes = await pool.query(
               `SELECT -COALESCE(SUM(amount), 0)::FLOAT AS "charge"
                FROM transactions
@@ -90,22 +93,41 @@ export default async function accountsRoutes(fastify, options) {
                  AND is_ignored = false
                  AND (
                    processed_date = $2::date
-                   OR (processed_date >= CURRENT_DATE AND processed_date <= $2::date)
+                   OR (
+                     (processed_date IS NULL OR processed_date = date)
+                     AND date > $3::date AND date <= $2::date
+                   )
                  )`,
-              [acc.id, nextStr]
+              [acc.id, nextStr, prevStr]
             );
 
-            // 2. Billed in Previous Cycle (transactions that were processed on the previous cycle date)
+            // 2. Period Spend (total expenses spent between previous billing date and next billing date)
+            const spendRes = await pool.query(
+              `SELECT -COALESCE(SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END), 0)::FLOAT AS "spend"
+               FROM transactions
+               WHERE account_id = $1
+                 AND is_ignored = false
+                 AND date > $2::date AND date <= $3::date`,
+              [acc.id, prevStr, nextStr]
+            );
+
+            // 3. Billed in Previous Cycle (transactions that were processed on the previous cycle date)
             const prevRes = await pool.query(
               `SELECT -COALESCE(SUM(amount), 0)::FLOAT AS "charge"
                FROM transactions
                WHERE account_id = $1
                  AND is_ignored = false
-                 AND processed_date = $2::date`,
-              [acc.id, prevStr]
+                 AND (
+                   processed_date = $2::date
+                   OR (
+                     (processed_date IS NULL OR processed_date = date)
+                     AND date > $3::date AND date <= $2::date
+                   )
+                 )`,
+              [acc.id, prevStr, prevPrevStr]
             );
 
-            // 3. Search for actual credit card bank debit in user's checking account
+            // 4. Search for actual credit card bank debit in user's checking account
             const bankKeywords = {
               max: ['מקס', 'לאומי קארד', 'max'],
               isracard: ['ישראכרט', 'isracard'],
@@ -133,6 +155,7 @@ export default async function accountsRoutes(fastify, options) {
             );
 
             const upcomingCharge = upcomingRes.rows[0]?.charge || 0;
+            const periodSpend = spendRes.rows[0]?.spend || 0;
             const billedLastCycle = prevRes.rows[0]?.charge || 0;
             const bankDebit = debitRes.rows[0]
               ? {
@@ -146,6 +169,7 @@ export default async function accountsRoutes(fastify, options) {
               ...acc,
               balance: upcomingCharge,
               upcomingCharge,
+              periodSpend,
               billedLastCycle,
               bankDebit,
               nextBillingDate: nextStr,

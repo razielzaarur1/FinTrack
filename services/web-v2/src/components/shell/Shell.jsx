@@ -45,18 +45,18 @@ export default function Shell({ children }) {
 
   return (
     <div className="min-h-screen flex bg-dark-bg text-dark-text light:bg-light-bg light:text-light-text selection:bg-brand-primary selection:text-white">
-      {/* Desktop Sidebar (Fixed Sticky Height) */}
-      <aside className="hidden md:flex flex-col w-64 border-r border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface p-4 shrink-0 justify-between sticky top-0 h-screen overflow-y-auto z-20">
-        <div className="space-y-6">
-          <div className="flex items-center gap-3 px-2">
-            <div className="w-10 h-10 rounded-xl bg-brand-primary flex items-center justify-center text-white font-bold text-xl shadow-lg shadow-brand-primary/25">
+      {/* Desktop Sidebar (Permanently Fixed in Viewport) */}
+      <aside className="hidden md:flex flex-col w-60 border-r rtl:border-l rtl:border-r-0 border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface p-3.5 shrink-0 justify-between fixed top-0 bottom-0 start-0 z-30 overflow-y-auto">
+        <div className="space-y-5">
+          <div className="flex items-center gap-2.5 px-2 pt-1">
+            <div className="w-9 h-9 rounded-xl bg-brand-primary flex items-center justify-center text-white font-bold text-lg shadow-md shadow-brand-primary/25">
               FT
             </div>
             <div>
-              <div className="font-bold tracking-wide text-lg flex items-center gap-2">
-                FinTrack <span className="text-xs px-1.5 py-0.5 rounded bg-brand-primary/20 text-brand-primary font-medium">v2</span>
+              <div className="font-bold tracking-wide text-base flex items-center gap-1.5">
+                FinTrack <span className="text-[10px] px-1.5 py-0.2 rounded bg-brand-primary/20 text-brand-primary font-semibold">v2</span>
               </div>
-              <div className="text-xs text-dark-text-muted light:text-light-text-muted">Personal Finance</div>
+              <div className="text-[11px] text-dark-text-muted light:text-light-text-muted">ניהול פיננסי חכם</div>
             </div>
           </div>
 
@@ -68,13 +68,13 @@ export default function Shell({ children }) {
                 <Link
                   key={item.href}
                   href={item.href}
-                  className={`flex items-center gap-3 px-3 py-2.5 rounded-xl font-medium transition-all ${
+                  className={`flex items-center gap-2.5 px-3 py-2 rounded-xl font-medium text-xs transition-all ${
                     isActive
-                      ? 'bg-brand-primary text-white shadow-md shadow-brand-primary/20'
+                      ? 'bg-brand-primary text-white shadow-sm shadow-brand-primary/20 font-semibold'
                       : 'text-dark-text-muted light:text-light-text-muted hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated hover:text-dark-text light:hover:text-light-text'
                   }`}
                 >
-                  <Icon className="w-5 h-5" />
+                  <Icon className="w-4 h-4 shrink-0" />
                   <span>{item.label}</span>
                 </Link>
               );
@@ -83,30 +83,30 @@ export default function Shell({ children }) {
         </div>
 
         {/* Sync & Quick Controls */}
-        <div className="space-y-3 pt-4 border-t border-dark-border light:border-light-border">
+        <div className="space-y-2.5 pt-3 border-t border-dark-border light:border-light-border">
           <button
             onClick={handleSyncAll}
             disabled={syncing}
-            className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated hover:border-brand-primary transition-all text-sm font-medium"
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated hover:border-brand-primary transition-all text-xs font-semibold"
           >
-            <RefreshCw className={`w-4 h-4 text-brand-cyan ${syncing ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-3.5 h-3.5 text-brand-cyan ${syncing ? 'animate-spin' : ''}`} />
             <span>{syncing ? t('syncing') : t('syncAll')}</span>
           </button>
 
           <div className="flex items-center justify-between px-1">
             <button
               onClick={toggleLanguage}
-              className="flex items-center gap-1.5 text-xs text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text p-2 rounded-lg hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated transition-colors"
+              className="flex items-center gap-1.5 text-[11px] text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text p-1.5 rounded-lg hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated transition-colors"
             >
-              <Globe className="w-4 h-4" />
+              <Globe className="w-3.5 h-3.5" />
               <span>{lang === 'he' ? 'English' : 'עברית'}</span>
             </button>
 
             <button
               onClick={toggleTheme}
-              className="flex items-center gap-1.5 text-xs text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text p-2 rounded-lg hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated transition-colors"
+              className="flex items-center gap-1.5 text-[11px] text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text p-1.5 rounded-lg hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated transition-colors"
             >
-              {theme === 'dark' ? <Sun className="w-4 h-4 text-brand-amber" /> : <Moon className="w-4 h-4" />}
+              {theme === 'dark' ? <Sun className="w-3.5 h-3.5 text-brand-amber" /> : <Moon className="w-3.5 h-3.5" />}
               <span>{theme === 'dark' ? t('lightMode') : t('darkMode')}</span>
             </button>
           </div>
@@ -114,7 +114,7 @@ export default function Shell({ children }) {
       </aside>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0 pb-20 md:pb-6 overflow-x-hidden">
+      <div className="flex-1 flex flex-col min-w-0 md:ms-60 pb-20 md:pb-6 overflow-x-hidden">
         {/* Mobile Header */}
         <header className="md:hidden flex items-center justify-between p-4 border-b border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface sticky top-0 z-30">
           <div className="flex items-center gap-2">
