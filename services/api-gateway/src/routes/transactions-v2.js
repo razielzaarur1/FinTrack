@@ -34,6 +34,27 @@ const updateTransactionSchema = z.object({
   isIgnored: z.boolean().optional(),
 });
 
+let hasRepaired0Amount = false;
+async function repair0AmountTransactions() {
+  if (hasRepaired0Amount) return;
+  try {
+    await pool.query(`
+      UPDATE transactions
+      SET amount = CASE 
+        WHEN (raw_data->>'originalAmount') IS NOT NULL AND (raw_data->>'originalAmount')::numeric != 0 
+        THEN (raw_data->>'originalAmount')::numeric
+        WHEN (raw_data->>'chargedAmount') IS NOT NULL AND (raw_data->>'chargedAmount')::numeric != 0
+        THEN (raw_data->>'chargedAmount')::numeric
+        ELSE amount
+      END
+      WHERE (amount = 0 OR amount IS NULL) AND raw_data IS NOT NULL
+    `);
+    hasRepaired0Amount = true;
+  } catch (err) {
+    // Non-critical background task
+  }
+}
+
 const cursorPaginationQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
   cursor: z.string().optional(), // ISO date or compound cursor
@@ -56,6 +77,8 @@ const cursorPaginationQuerySchema = z.object({
 });
 
 export default async function transactionsV2Routes(fastify, options) {
+  repair0AmountTransactions().catch(() => {});
+
   // GET /api/v2/transactions - Cursor-based Infinite Scroll Transactions with rich multi-filters
   fastify.get('/', async (request, reply) => {
     const parseResult = cursorPaginationQuerySchema.safeParse(request.query);
@@ -202,7 +225,20 @@ export default async function transactionsV2Routes(fastify, options) {
         t.external_id AS "externalId",
         t.date,
         t.processed_date AS "processedDate",
-        t.amount,
+        COALESCE(
+          NULLIF(t.amount, 0),
+          NULLIF((t.raw_data->>'originalAmount')::numeric, 0),
+          NULLIF((t.raw_data->>'chargedAmount')::numeric, 0),
+          0
+        ) AS "amount",
+        COALESCE(
+          (t.raw_data->>'originalAmount')::numeric,
+          t.amount
+        ) AS "originalAmount",
+        COALESCE(
+          (t.raw_data->>'chargedAmount')::numeric,
+          t.amount
+        ) AS "chargedAmount",
         t.currency,
         t.description,
         t.merchant_name AS "merchantName",

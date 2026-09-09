@@ -184,7 +184,11 @@ async function saveTransactionsList(client, accountId, transactions, userId = '0
         account_id, external_id, date, processed_date, amount, currency, description,
         merchant_name, category, status, raw_data, is_notified, created_at
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, false, NOW())
-      ON CONFLICT (account_id, external_id) DO NOTHING
+      ON CONFLICT (account_id, external_id) DO UPDATE SET
+        amount = CASE WHEN transactions.amount = 0 OR transactions.amount IS NULL THEN EXCLUDED.amount ELSE transactions.amount END,
+        status = EXCLUDED.status,
+        processed_date = COALESCE(EXCLUDED.processed_date, transactions.processed_date),
+        raw_data = EXCLUDED.raw_data
       RETURNING id;
     `;
 

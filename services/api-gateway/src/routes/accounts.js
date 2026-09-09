@@ -16,9 +16,46 @@ async function preflightCheck() {
        ON CONFLICT (id) DO NOTHING`,
       [DEFAULT_USER_ID]
     );
+    // Run cleanup for duplicate cards and malformed names
+    await cleanDuplicateAccountsAndNames();
     isInitialized = true;
   } catch (err) {
     console.warn('[Accounts Preflight] User check non-critical warning:', err.message);
+  }
+}
+
+async function cleanDuplicateAccountsAndNames() {
+  try {
+    // 1. Clean duplicated card suffixes in display_name
+    const accountsRes = await pool.query(
+      `SELECT id, display_name, bank_company, account_number FROM bank_accounts WHERE is_active = true`
+    );
+    for (const acc of accountsRes.rows) {
+      if (acc.display_name && /\(.*?\).*\(/i.test(acc.display_name)) {
+        const lastDigits = acc.account_number ? acc.account_number.slice(-4) : '';
+        const baseCompany = acc.bank_company || 'כרטיס';
+        const cleanName = lastDigits ? `${baseCompany} (כרטיס ${lastDigits})` : baseCompany;
+        await pool.query(`UPDATE bank_accounts SET display_name = $1 WHERE id = $2`, [cleanName, acc.id]);
+      }
+    }
+
+    // 2. Identify duplicate accounts with identical user_id, bank_company, account_number
+    const dupesRes = await pool.query(`
+      SELECT user_id, bank_company, account_number, array_agg(id ORDER BY created_at ASC) AS ids, count(*) 
+      FROM bank_accounts 
+      WHERE is_active = true AND account_number IS NOT NULL AND length(account_number) >= 3
+      GROUP BY user_id, bank_company, account_number 
+      HAVING count(*) > 1
+    `);
+    for (const row of dupesRes.rows) {
+      const [primaryId, ...duplicateIds] = row.ids;
+      for (const dupId of duplicateIds) {
+        await pool.query(`UPDATE transactions SET account_id = $1 WHERE account_id = $2`, [primaryId, dupId]);
+        await pool.query(`UPDATE bank_accounts SET is_active = false WHERE id = $1`, [dupId]);
+      }
+    }
+  } catch (err) {
+    console.warn('[Accounts Cleanup] Non-critical warning:', err.message);
   }
 }
 
@@ -233,24 +270,58 @@ export default async function accountsRoutes(fastify, options) {
         result.rows.map(async (acc) => {
           if (acc.accountType === 'credit') {
             const { nextBillingDate, prevBillingDate } = getBillingDates(acc.billingDay);
-            const nextStr = formatLocalYMD(nextBillingDate);
-            const prevStr = formatLocalYMD(prevBillingDate);
+            let nextStr = formatLocalYMD(nextBillingDate);
+            let prevStr = formatLocalYMD(prevBillingDate);
 
             let upcomingCharge = 0;
             try {
-              const upcomingRes = await pool.query(
-                `SELECT -COALESCE(SUM(amount), 0)::FLOAT AS "charge"
+              // 1. Find dominant upcoming processed_date for this card
+              const dominantProcessedRes = await pool.query(
+                `SELECT processed_date, COUNT(*)::INT AS cnt
                  FROM transactions
                  WHERE account_id = $1
                    AND is_ignored = false
-                   AND (
-                     (processed_date IS NOT NULL AND processed_date > $3::date AND processed_date <= $2::date)
-                     OR (processed_date = $2::date)
-                     OR (date > $3::date AND date <= $2::date)
-                   )`,
-                [acc.id, nextStr, prevStr]
+                   AND processed_date IS NOT NULL
+                   AND processed_date >= (CURRENT_DATE - INTERVAL '15 days')
+                 GROUP BY processed_date
+                 ORDER BY cnt DESC, processed_date ASC
+                 LIMIT 1`,
+                [acc.id]
               );
-              upcomingCharge = upcomingRes.rows[0]?.charge || 0;
+
+              if (dominantProcessedRes.rows.length > 0 && dominantProcessedRes.rows[0].processed_date) {
+                const targetDate = formatLocalYMD(new Date(dominantProcessedRes.rows[0].processed_date));
+                nextStr = targetDate;
+
+                // Sum all transactions matching that specific billing date PLUS any pending transactions
+                const chargeRes = await pool.query(
+                  `SELECT -COALESCE(SUM(amount), 0)::FLOAT AS "charge"
+                   FROM transactions
+                   WHERE account_id = $1
+                     AND is_ignored = false
+                     AND (
+                       processed_date = $2::date
+                       OR (status = 'pending' AND (processed_date IS NULL OR processed_date >= CURRENT_DATE - INTERVAL '10 days'))
+                     )`,
+                  [acc.id, targetDate]
+                );
+                upcomingCharge = chargeRes.rows[0]?.charge || 0;
+              } else {
+                // Fallback to billing cycle date window
+                const fallbackRes = await pool.query(
+                  `SELECT -COALESCE(SUM(amount), 0)::FLOAT AS "charge"
+                   FROM transactions
+                   WHERE account_id = $1
+                     AND is_ignored = false
+                     AND (
+                       (processed_date IS NOT NULL AND processed_date > $3::date AND processed_date <= $2::date)
+                       OR (processed_date = $2::date)
+                       OR status = 'pending'
+                     )`,
+                  [acc.id, nextStr, prevStr]
+                );
+                upcomingCharge = fallbackRes.rows[0]?.charge || 0;
+              }
             } catch (_) {
               upcomingCharge = 0;
             }

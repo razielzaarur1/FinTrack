@@ -155,8 +155,14 @@ export default function CategoryPicker({
                       <div className="flex items-center justify-between p-2 rounded-xl hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated transition-colors group">
                         <button
                           type="button"
-                          onClick={() => handleSelect(cat.name)}
-                          className="flex items-center gap-3 flex-1 text-right"
+                          onClick={() => {
+                            if (hasSubs) {
+                              setExpandedCatId(isExpanded ? null : cat.id);
+                            } else {
+                              handleSelect(cat.name);
+                            }
+                          }}
+                          className="flex items-center gap-3 flex-1 text-right cursor-pointer"
                         >
                           <CategoryBadge category={cat.name} size={18} />
                           <div>
@@ -166,7 +172,7 @@ export default function CategoryPicker({
                             </div>
                             {hasSubs && (
                               <span className="text-[11px] text-dark-text-muted light:text-light-text-muted">
-                                {cat.subs.length} תתי-קטגוריות
+                                {cat.subs.length} תתי-קטגוריות • לחץ לפתיחה
                               </span>
                             )}
                           </div>
@@ -180,17 +186,34 @@ export default function CategoryPicker({
                               e.stopPropagation();
                               setExpandedCatId(isExpanded ? null : cat.id);
                             }}
-                            className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-dark-text-muted transition-transform"
+                            className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-dark-text-muted transition-transform cursor-pointer"
                             title={isExpanded ? 'סגור תתי-קטגוריות' : 'פתח תתי-קטגוריות'}
                           >
-                            <ChevronDown className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                            <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${isExpanded ? 'rotate-180 text-brand-primary' : ''}`} />
                           </button>
                         )}
                       </div>
 
                       {/* Subcategories Grid / List */}
                       {hasSubs && isExpanded && (
-                        <div className="mr-8 ml-2 mt-1 mb-2 pl-2 border-r-2 border-dark-border/60 light:border-light-border/60 space-y-1">
+                        <div className="mr-6 ml-2 mt-1 mb-2 pl-2 border-r-2 border-dark-border/60 light:border-light-border/60 space-y-1">
+                          {/* Option to select the main parent category */}
+                          <button
+                            type="button"
+                            onClick={() => handleSelect(cat.name)}
+                            className={`w-full flex items-center justify-between p-1.5 rounded-lg text-xs transition-colors text-right ${
+                              isSelectedMain
+                                ? 'bg-brand-primary/15 text-brand-primary font-bold'
+                                : 'hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-dark-text-muted'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 font-medium">
+                              <span>📌</span>
+                              <span>בחר "{cat.name}" (קטגוריית אב)</span>
+                            </div>
+                            {isSelectedMain && <Check className="w-3.5 h-3.5 text-brand-primary" />}
+                          </button>
+
                           {cat.subs.map((sub) => {
                             const isSelectedSub = value === sub.name;
                             return (

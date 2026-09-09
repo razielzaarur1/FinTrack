@@ -194,50 +194,58 @@ export default function AnalyticsPage() {
           <span className="text-[11px] text-dark-text-muted">מחושב מתוך נתוני ההוצאות בפועל בחשבונותיך</span>
         </div>
 
-        {Array.isArray(averages) && averages.length > 0 ? (
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-            {averages.slice(0, 5).map((item, idx) => {
-              const diff = item.diffPercent || 0;
-              const isHigher = diff > 0;
-              const hasDiff = item.currentMonth > 0 && item.monthlyAverage > 0;
+        {(() => {
+          const avgList = Array.isArray(averages) ? averages : (averages?.data && Array.isArray(averages.data) ? averages.data : []);
+          if (avgList.length === 0) {
+            return (
+              <div className="p-8 text-center rounded-2xl border border-dark-border/60 bg-dark-surface text-xs text-dark-text-muted">
+                טרם נצברו מספיק עסקאות לחישוב ממוצעים חודשיים. הממוצעים יחושבו אוטומטית ככל שיצטברו תנועות.
+              </div>
+            );
+          }
 
-              return (
-                <div
-                  key={idx}
-                  className="p-4 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface shadow-xs space-y-2 hover:border-brand-primary/40 transition-colors flex flex-col justify-between"
-                >
-                  <div className="flex items-center justify-between">
-                    <CategoryBadge category={item.category} size={22} />
-                    {hasDiff && (
-                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
-                        isHigher 
-                          ? 'bg-rose-500/15 text-rose-400' 
-                          : 'bg-emerald-500/15 text-emerald-400'
-                      }`}>
-                        {isHigher ? `+${diff}%` : `${diff}%`}
-                      </span>
-                    )}
+          return (
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+              {avgList.slice(0, 5).map((item, idx) => {
+                const catName = item.category || item.name || item.title || item.label || 'הוצאה';
+                const diff = item.diffPercent || 0;
+                const isHigher = diff > 0;
+                const hasDiff = (item.currentMonth > 0 || diff !== 0) && item.monthlyAverage > 0;
+
+                return (
+                  <div
+                    key={idx}
+                    className="p-4 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface shadow-xs space-y-2 hover:border-brand-primary/40 transition-colors flex flex-col justify-between"
+                  >
+                    <div className="flex items-center justify-between">
+                      <CategoryBadge category={catName} size={22} />
+                      {hasDiff && (
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
+                          isHigher 
+                            ? 'bg-rose-500/15 text-rose-400' 
+                            : 'bg-emerald-500/15 text-emerald-400'
+                        }`}>
+                          {isHigher ? `+${diff}%` : `${diff}%`}
+                        </span>
+                      )}
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-dark-text light:text-light-text truncate">
+                        {catName}
+                      </div>
+                      <div className="text-base sm:text-lg font-bold text-dark-text light:text-light-text font-mono mt-0.5" dir="ltr">
+                        {formatILS(item.monthlyAverage || item.amount || 0)}
+                      </div>
+                      <div className="text-[10px] text-dark-text-muted mt-0.5">
+                        החודש: <span className="font-mono font-semibold">{formatILS(item.currentMonth || 0)}</span>
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <div className="text-xs text-dark-text-muted light:text-light-text-muted font-medium truncate">
-                      {item.category}
-                    </div>
-                    <div className="text-base sm:text-lg font-bold text-dark-text light:text-light-text font-mono mt-0.5" dir="ltr">
-                      {formatILS(item.monthlyAverage)}
-                    </div>
-                    <div className="text-[10px] text-dark-text-muted mt-0.5">
-                      החודש: <span className="font-mono font-semibold">{formatILS(item.currentMonth)}</span>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="p-8 text-center rounded-2xl border border-dark-border/60 bg-dark-surface text-xs text-dark-text-muted">
-            טרם נצברו מספיק עסקאות לחישוב ממוצעים חודשיים. הממוצעים יחושבו אוטומטית ככל שיצטברו תנועות.
-          </div>
-        )}
+                );
+              })}
+            </div>
+          );
+        })()}
       </div>
 
       {/* 5 Largest Single Expenses in Selected Period */}

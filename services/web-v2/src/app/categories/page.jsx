@@ -49,12 +49,19 @@ function CategoryTransactionsDrawer({ categoryName, year, month, accountIds, onC
     const startDate = new Date(year, month - 1, 1).toISOString().slice(0, 10);
     const endDate = new Date(year, month, 0).toISOString().slice(0, 10);
 
+    // If categoryName is a main category, gather all its subcategories too
+    const allMain = [...CATEGORIES_DATA.expenses, ...CATEGORIES_DATA.incomes];
+    const foundMain = allMain.find((c) => c.name === categoryName);
+    const categoryList = foundMain && foundMain.subs?.length > 0
+      ? [categoryName, ...foundMain.subs.map((s) => s.name)]
+      : [categoryName];
+
     api.getTransactionsV2({
-      categories: [categoryName],
+      categories: categoryList,
       startDate,
       endDate,
       accountIds: accountIds.length > 0 ? accountIds : undefined,
-      limit: 100,
+      limit: 300,
     }).then((res) => {
       if (res.data) {
         setTxs(res.data.data || []);
@@ -64,7 +71,34 @@ function CategoryTransactionsDrawer({ categoryName, year, month, accountIds, onC
     });
   }, [categoryName, year, month, accountIds]);
 
-  const totalSum = txs.reduce((acc, t) => acc + (parseFloat(t.amount) || 0), 0);
+  const totalSum = useMemo(() => {
+    return txs.reduce((acc, t) => acc + (parseFloat(t.amount) || 0), 0);
+  }, [txs]);
+
+  // Group transactions by category name
+  const groupedTxs = useMemo(() => {
+    const groups = {};
+    txs.forEach((t) => {
+      const cat = t.category || 'אחר / שונות';
+      if (!groups[cat]) {
+        groups[cat] = {
+          name: cat,
+          items: [],
+          total: 0,
+        };
+      }
+      groups[cat].items.push(t);
+      groups[cat].total += parseFloat(t.amount) || 0;
+    });
+
+    // Sort transactions inside each group by date descending
+    Object.values(groups).forEach((g) => {
+      g.items.sort((a, b) => new Date(b.date) - new Date(a.date));
+    });
+
+    // Return groups array sorted by total amount descending
+    return Object.values(groups).sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
+  }, [txs]);
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-xs transition-opacity animate-in fade-in duration-150">
@@ -85,14 +119,14 @@ function CategoryTransactionsDrawer({ categoryName, year, month, accountIds, onC
 
           <button
             onClick={onClose}
-            className="p-2 rounded-xl hover:bg-dark-surface-elevated text-dark-text-muted hover:text-dark-text"
+            className="p-2 rounded-xl hover:bg-dark-surface-elevated text-dark-text-muted hover:text-dark-text cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Transactions List */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-2.5">
+        {/* Transactions List Grouped by Subcategory */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {loading ? (
             <div className="p-16 text-center text-dark-text-muted">
               <RefreshCw className="w-5 h-5 animate-spin mx-auto text-brand-primary mb-2" />
@@ -103,27 +137,50 @@ function CategoryTransactionsDrawer({ categoryName, year, month, accountIds, onC
               לא נמצאו תנועות בקטגוריה זו בחודש הנבחר
             </div>
           ) : (
-            txs.map((t) => {
-              const isIncome = parseFloat(t.amount) > 0;
+            groupedTxs.map((group) => {
+              const isGroupIncome = group.total > 0;
               return (
-                <div
-                  key={t.id}
-                  onClick={() => setSelectedTx(t)}
-                  className="p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated/50 hover:bg-dark-surface-elevated transition-colors cursor-pointer flex items-center justify-between gap-3"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="font-semibold text-xs sm:text-sm text-dark-text light:text-light-text truncate">
-                      {t.userDescription || t.merchantName || t.description || 'ללא תיאור'}
+                <div key={group.name} className="space-y-2">
+                  {/* Group header if multiple groups or distinct from drawer category */}
+                  {(groupedTxs.length > 1 || group.name !== categoryName) && (
+                    <div className="flex items-center justify-between px-1 py-1 text-xs font-semibold text-dark-text-muted border-b border-dark-border/40 light:border-light-border/40">
+                      <div className="flex items-center gap-2">
+                        <CategoryBadge category={group.name} size={16} />
+                        <span className="text-dark-text light:text-light-text font-bold">{group.name}</span>
+                        <span className="text-[10px] text-dark-text-muted font-normal">({group.items.length} תנועות)</span>
+                      </div>
+                      <span className={`font-mono font-bold text-xs ${isGroupIncome ? 'text-emerald-500' : 'text-dark-text'}`} dir="ltr">
+                        {formatILS(group.total)}
+                      </span>
                     </div>
-                    <div className="text-[11px] text-dark-text-muted mt-0.5 flex items-center gap-1.5 truncate">
-                      <span>{formatDate(t.date, lang)}</span>
-                      <span>•</span>
-                      <span className="font-mono">{t.accountDisplayName || t.bankCompany}</span>
-                    </div>
-                  </div>
+                  )}
 
-                  <div className={`font-bold text-xs sm:text-sm font-mono shrink-0 ${isIncome ? 'text-emerald-500' : 'text-dark-text'}`} dir="ltr">
-                    {formatILS(t.amount, { showSign: true })}
+                  <div className="space-y-1.5">
+                    {group.items.map((t) => {
+                      const isIncome = parseFloat(t.amount) > 0;
+                      return (
+                        <div
+                          key={t.id}
+                          onClick={() => setSelectedTx(t)}
+                          className="p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated/50 hover:bg-dark-surface-elevated transition-colors cursor-pointer flex items-center justify-between gap-3"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="font-semibold text-xs sm:text-sm text-dark-text light:text-light-text truncate">
+                              {t.userDescription || t.merchantName || t.description || 'ללא תיאור'}
+                            </div>
+                            <div className="text-[11px] text-dark-text-muted mt-0.5 flex items-center gap-1.5 truncate">
+                              <span>{formatDate(t.date, lang)}</span>
+                              <span>•</span>
+                              <span className="font-mono">{t.accountDisplayName || t.bankCompany}</span>
+                            </div>
+                          </div>
+
+                          <div className={`font-bold text-xs sm:text-sm font-mono shrink-0 ${isIncome ? 'text-emerald-500' : 'text-dark-text'}`} dir="ltr">
+                            {formatILS(t.amount, { showSign: true })}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               );
@@ -591,16 +648,6 @@ function CategoriesContent() {
                       </div>
                     </div>
 
-                    {/* View Transactions Link */}
-                    <Link
-                      href={`/transactions?categories=${encodeURIComponent(cat.name)}`}
-                      onClick={(e) => e.stopPropagation()}
-                      className="p-1.5 rounded-xl border border-dark-border/80 light:border-light-border/80 hover:bg-brand-primary/10 hover:border-brand-primary text-dark-text-muted hover:text-brand-primary transition-colors"
-                      title="הצג את כל התנועות בקטגוריה זו"
-                    >
-                      <ArrowUpRight className="w-3.5 h-3.5" />
-                    </Link>
-
                     {/* Expand/Collapse Chevron */}
                     {hasSubs && (
                       <button
@@ -609,7 +656,7 @@ function CategoriesContent() {
                           e.stopPropagation();
                           toggleExpand(cat.id);
                         }}
-                        className="p-1 text-dark-text-muted hover:text-dark-text transition-transform rounded-lg"
+                        className="p-1 text-dark-text-muted hover:text-dark-text transition-transform rounded-lg cursor-pointer"
                         title={isExpanded ? 'כווץ תתי-קטגוריות' : 'הרחב תתי-קטגוריות'}
                       >
                         <ChevronDown
@@ -645,15 +692,6 @@ function CategoriesContent() {
                           <span className="font-bold font-mono text-dark-text light:text-light-text" dir="ltr">
                             {formatILS(sub.amount)}
                           </span>
-
-                          <Link
-                            href={`/transactions?categories=${encodeURIComponent(sub.name)}`}
-                            onClick={(e) => e.stopPropagation()}
-                            className="p-1.5 rounded-lg border border-dark-border/60 hover:border-brand-primary hover:text-brand-primary text-dark-text-muted transition-colors"
-                            title="צפה בתנועות"
-                          >
-                            <ArrowUpRight className="w-3.5 h-3.5" />
-                          </Link>
                         </div>
                       </div>
                     ))}

@@ -328,6 +328,7 @@ export default async function analyticsRoutes(fastify, options) {
         const diffPercent = monthlyAvg > 0 ? Math.round(((currentMonth - monthlyAvg) / monthlyAvg) * 100) : 0;
 
         return {
+          category: catName,
           name: catName,
           title: catName,
           label: catName,

@@ -31,7 +31,7 @@ import CategoryPicker from '@/components/common/CategoryPicker';
 import InstitutionLogo from '@/components/common/InstitutionLogo';
 import MultiSelectDropdown from '@/components/common/MultiSelectDropdown';
 import TransactionDrawer from '@/components/transactions/TransactionDrawer';
-import { CATEGORIES_DATA } from '@/lib/categories';
+import { CATEGORIES_DATA, getCategoryDetails } from '@/lib/categories';
 
 function TransactionsContent() {
   const { t, lang } = useApp();
@@ -654,8 +654,18 @@ function TransactionsContent() {
               const isIncome = parseFloat(tx.amount) > 0;
               const isSelected = selectedIds.has(tx.id);
               const merchantTitle = tx.userDescription || tx.merchantName || tx.description || 'ללא תיאור';
-              const subDescription = tx.description && tx.description !== merchantTitle ? tx.description : null;
               const isAtm = Boolean(tx.isCashWithdrawal || (tx.merchantName && tx.merchantName.includes('משיכת מזומן')));
+
+              const catDetails = getCategoryDetails(tx.category);
+              const parentCat = catDetails?.mainCat?.name;
+              const subCat = catDetails?.subCat?.name;
+              const hasDistinctSub = parentCat && subCat && parentCat !== subCat;
+              const categoryPath = hasDistinctSub ? `${parentCat} › ${subCat}` : (tx.category || 'ללא סיווג');
+
+              const cleanAccount = (tx.accountDisplayName || tx.bankCompany || '')
+                .replace(/\s*\((כרטיס|card).*?\)/gi, '')
+                .trim();
+              const accountText = tx.accountNumber ? `${cleanAccount} (${tx.accountNumber.slice(-4)})` : cleanAccount;
 
               return (
                 <div
@@ -690,10 +700,10 @@ function TransactionsContent() {
 
                     <CategoryBadge category={tx.category} size={20} className="shrink-0" />
 
-                    <div className="min-w-0 flex-1">
+                    <div className="min-w-0 flex-1 space-y-1">
                       {/* Merchant Store Name (Headline) + Badges */}
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="font-bold text-xs sm:text-sm text-dark-text light:text-light-text truncate max-w-[180px] sm:max-w-xs">
+                        <span className="font-bold text-xs sm:text-sm text-dark-text light:text-light-text truncate max-w-[200px] sm:max-w-xs">
                           {merchantTitle}
                         </span>
 
@@ -727,25 +737,14 @@ function TransactionsContent() {
                         )}
                       </div>
 
-                      {/* Subtitle: Date + Account + Category */}
-                      <div className="text-[11px] text-dark-text-muted light:text-light-text-muted flex items-center gap-1.5 mt-0.5 truncate">
-                        {subDescription && (
-                          <>
-                            <span className="hidden sm:inline text-dark-text/75 truncate max-w-[140px]">
-                              {subDescription}
-                            </span>
-                            <span className="hidden sm:inline">•</span>
-                          </>
-                        )}
+                      {/* Subtitle: Date • Account • Parent > Subcategory */}
+                      <div className="text-[11px] text-dark-text-muted light:text-light-text-muted flex items-center gap-1.5 flex-wrap">
                         <span className="shrink-0">{formatDate(tx.date, lang)}</span>
                         <span>•</span>
-                        <span className="truncate max-w-[110px] sm:max-w-none font-mono">
-                          {tx.accountDisplayName || tx.bankCompany}
-                          {tx.accountNumber ? ` (${tx.accountNumber.slice(-4)})` : ''}
-                        </span>
+                        <span className="font-mono text-dark-text-muted shrink-0">{accountText}</span>
                         <span>•</span>
-                        <span className="px-1.5 py-0.2 rounded bg-dark-surface-elevated light:bg-light-surface-elevated text-[10px] truncate max-w-[100px] sm:max-w-none">
-                          {tx.category || 'ללא סיווג'}
+                        <span className="px-1.5 py-0.5 rounded-md bg-dark-surface-elevated light:bg-light-surface-elevated text-[10px] text-brand-primary font-medium truncate max-w-[160px] sm:max-w-none">
+                          {categoryPath}
                         </span>
                       </div>
                     </div>
