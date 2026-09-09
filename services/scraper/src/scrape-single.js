@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import pg from 'pg';
 import israeliBankScrapersPkg from 'israeli-bank-scrapers';
 import { logger } from './logger.js';
@@ -133,20 +134,67 @@ export function calculateEffectiveBalance(card, bankCompany, billingDay = 10) {
   return typeof card?.balance === 'number' ? card.balance : 0.0;
 }
 
+/**
+ * Generates a globally unique, deterministic external_id for each transaction.
+ * Solves the critical Israeli bank scrapers bug where checking accounts (e.g. Otsar HaHayal / FIBI)
+ * return sequential numeric row indices (1, 2, 3...) that collide and overwrite across months.
+ */
+export function generateTransactionExternalId(accountId, tx, occurrenceIndex = 0) {
+  let dateStr = 'unknown_date';
+  if (tx.date) {
+    try {
+      const d = new Date(tx.date);
+      if (!isNaN(d.getTime())) {
+        dateStr = d.toISOString().slice(0, 10);
+      }
+    } catch (e) {
+      dateStr = String(tx.date).slice(0, 10);
+    }
+  }
+
+  const chargedNum = typeof tx.chargedAmount === 'number' ? tx.chargedAmount : parseFloat(tx.chargedAmount);
+  const origNum = typeof tx.originalAmount === 'number' ? tx.originalAmount : parseFloat(tx.originalAmount);
+  let amount = 0;
+  if (!isNaN(chargedNum) && chargedNum !== 0) {
+    amount = chargedNum;
+  } else if (!isNaN(origNum) && origNum !== 0) {
+    amount = origNum;
+  } else if (!isNaN(chargedNum)) {
+    amount = chargedNum;
+  } else if (!isNaN(origNum)) {
+    amount = origNum;
+  }
+
+  const merchantName = (tx.description || tx.memo || '').trim();
+  const description = (tx.memo && tx.memo !== tx.description ? tx.memo : tx.description || '').trim();
+
+  // If tx has a genuinely unique external identifier provided by the financial institution (e.g. long voucher string > 7 chars and not a generic row index):
+  const rawId = tx.identifier != null ? String(tx.identifier).trim() : (tx.id != null ? String(tx.id).trim() : '');
+  const isReliableExternalId = rawId.length > 7 && !/^\d{1,5}$/.test(rawId);
+
+  if (isReliableExternalId) {
+    return `${dateStr}_${rawId}`;
+  }
+
+  // Deterministic composite SHA-256 hash incorporating date, amount, merchant, description, occurrence:
+  const hashPayload = `${accountId}_${dateStr}_${Number(amount).toFixed(2)}_${merchantName}_${description}_${occurrenceIndex}`;
+  const hash = crypto.createHash('sha256').update(hashPayload).digest('hex').slice(0, 20);
+  return `tx_${dateStr}_${hash}`;
+}
+
 async function saveTransactionsList(client, accountId, transactions, userId = '00000000-0000-0000-0000-000000000001') {
   if (!transactions || transactions.length === 0) {
     return { inserted: 0, total: 0 };
   }
 
   let insertedCount = 0;
+  const occurrenceMap = new Map();
+
   for (const tx of transactions) {
-    const externalId =
-      tx.identifier || tx.id || `${tx.date}_${tx.chargedAmount || tx.originalAmount}_${tx.description}`;
-    const currency = tx.originalCurrency || tx.chargedCurrency || 'ILS';
     const txDate = tx.date ? new Date(tx.date) : new Date();
     const processedDate = tx.processedDate ? new Date(tx.processedDate) : txDate;
-    // For pending transactions, chargedAmount is often 0 or null before billing cycle calculation,
-    // so we prioritize originalAmount when chargedAmount is 0 or missing.
+    const dateStr = !isNaN(txDate.getTime()) ? txDate.toISOString().slice(0, 10) : 'unknown_date';
+
     const chargedNum = typeof tx.chargedAmount === 'number' ? tx.chargedAmount : parseFloat(tx.chargedAmount);
     const origNum = typeof tx.originalAmount === 'number' ? tx.originalAmount : parseFloat(tx.originalAmount);
     
@@ -161,11 +209,16 @@ async function saveTransactionsList(client, accountId, transactions, userId = '0
       amount = origNum;
     }
     
-    // In israeli-bank-scrapers:
-    // tx.description is the merchant/store name (e.g. "סופר פארם", "שופרסל")
-    // tx.memo is the comments / transaction details (e.g. "עסקה רגילה בארץ")
     const merchantName = (tx.description || tx.memo || '').trim() || 'בית עסק';
     const description = (tx.memo && tx.memo !== tx.description ? tx.memo : tx.description) || '';
+    const currency = tx.originalCurrency || tx.chargedCurrency || 'ILS';
+
+    // Track occurrences of identical transactions on the same day to maintain uniqueness
+    const occKey = `${dateStr}_${Number(amount).toFixed(2)}_${merchantName}_${description}`;
+    const occIndex = occurrenceMap.get(occKey) || 0;
+    occurrenceMap.set(occKey, occIndex + 1);
+
+    const externalId = generateTransactionExternalId(accountId, tx, occIndex);
 
     // Auto-classify using the 3-tier hierarchy: User rules -> Scraper Category -> Israeli Merchant KB
     const category = await classifyScrapedTx(client, {
@@ -186,6 +239,10 @@ async function saveTransactionsList(client, accountId, transactions, userId = '0
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, false, NOW())
       ON CONFLICT (account_id, external_id) DO UPDATE SET
         amount = CASE WHEN transactions.amount = 0 OR transactions.amount IS NULL THEN EXCLUDED.amount ELSE transactions.amount END,
+        date = EXCLUDED.date,
+        description = EXCLUDED.description,
+        merchant_name = EXCLUDED.merchant_name,
+        category = COALESCE(transactions.category, EXCLUDED.category),
         status = EXCLUDED.status,
         processed_date = COALESCE(EXCLUDED.processed_date, transactions.processed_date),
         raw_data = EXCLUDED.raw_data
@@ -260,6 +317,13 @@ async function persistScrapedAccounts(pool, primaryAccountId, scrapedAccounts, t
            WHERE id = $1`,
           [targetDbAccountId, cardLast4, effectiveBalance]
         );
+
+        // Clean up legacy corrupted row-number external IDs on primary checking account
+        await client.query(
+          `DELETE FROM transactions
+           WHERE account_id = $1 AND (external_id ~ '^[0-9]{1,4}$' OR external_id LIKE 'undefined_%')`,
+          [primaryAccountId]
+        );
       } else {
         // Secondary card under the same login credentials
         const existingRes = await client.query(
@@ -303,17 +367,12 @@ async function persistScrapedAccounts(pool, primaryAccountId, scrapedAccounts, t
           logger.info({ targetDbAccountId, cardLast4, secondaryDisplayName }, 'Created separate account row for secondary card');
         }
 
-        // Clean up any transactions of this secondary card that might have previously been inserted under primaryAccountId
-        if (cardTxns.length > 0) {
-          const externalIds = cardTxns.map(
-            (tx) => tx.identifier || tx.id || `${tx.date}_${tx.chargedAmount || tx.originalAmount}_${tx.description}`
-          );
-          await client.query(
-            `DELETE FROM transactions
-             WHERE account_id = $1 AND external_id = ANY($2::text[])`,
-            [primaryAccountId, externalIds]
-          );
-        }
+        // Clean up legacy corrupted row-number external IDs from previous scraper versions
+        await client.query(
+          `DELETE FROM transactions
+           WHERE account_id = $1 AND (external_id ~ '^[0-9]{1,4}$' OR external_id LIKE 'undefined_%')`,
+          [targetDbAccountId]
+        );
       }
 
       // Save transactions for targetDbAccountId with auto-classification
