@@ -1,4 +1,4 @@
-﻿name: Build and Push Docker Images
+name: Build and Push Docker Images
 
 on:
   push:
@@ -28,9 +28,6 @@ jobs:
           - service: web-v2
             context: ./services/web-v2
             image: fintrack-web-v2
-          - service: web
-            context: ./services/web
-            image: fintrack-web
           - service: notifier
             context: ./services/notifier
             image: fintrack-notifier

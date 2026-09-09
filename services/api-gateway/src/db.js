@@ -69,8 +69,13 @@ async function ensureSchema() {
           CREATE TABLE IF NOT EXISTS users (
               id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
               created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-              is_active BOOLEAN NOT NULL DEFAULT true
+              is_active BOOLEAN NOT NULL DEFAULT true,
+              password_hash TEXT,
+              passcode_salt TEXT
           );
+
+          ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;
+          ALTER TABLE users ADD COLUMN IF NOT EXISTS passcode_salt TEXT;
 
           -- Ensure default user exists
           INSERT INTO users (id, is_active)

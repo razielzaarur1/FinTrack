@@ -17,6 +17,7 @@ import internalRoutes from './routes/internal.js';
 import transactionsV2Routes from './routes/transactions-v2.js';
 import categoriesRoutes from './routes/categories.js';
 import analyticsRoutes from './routes/analytics.js';
+import authRoutes from './routes/auth.js';
 
 function readSecret(filePath, envVarName) {
   if (filePath && fs.existsSync(filePath)) {
@@ -111,6 +112,7 @@ await fastify.register(analyticsRoutes, { prefix: '/api/analytics' });
 await fastify.register(budgetsRoutes, { prefix: '/api/budgets' });
 await fastify.register(goalsRoutes, { prefix: '/api/goals' });
 await fastify.register(scraperRoutes, { prefix: '/api/scraper' });
+await fastify.register(authRoutes, { prefix: '/api/auth' });
 await fastify.register(systemRoutes, { prefix: '/api/system' });
 await fastify.register(internalRoutes, { prefix: '/internal' });
 

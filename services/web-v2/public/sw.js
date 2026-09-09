@@ -1,5 +1,5 @@
 // FinTrack PWA Service Worker
-const CACHE_NAME = 'fintrack-v1';
+const CACHE_NAME = 'fintrack-v2-secure';
 const STATIC_ASSETS = [
   '/',
   '/manifest.json',
@@ -44,6 +44,12 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  // CRITICAL: NEVER cache API responses in Service Worker CacheStorage
+  // All financial balances, accounts, and transactions must always hit the secure live server
+  if (url.pathname.startsWith('/api/') || url.pathname.includes('/api/')) {
+    return;
+  }
+
   // 1. Static Next.js assets & icons: Cache-First
   if (
     url.pathname.startsWith('/_next/static/') ||
@@ -75,8 +81,8 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(
     fetch(request)
       .then((networkResponse) => {
-        // Cache successful GET responses
-        if (networkResponse && networkResponse.status === 200 && request.method === 'GET') {
+        // Cache successful HTML navigation responses only
+        if (networkResponse && networkResponse.status === 200 && request.mode === 'navigate') {
           const responseToCache = networkResponse.clone();
           caches.open(CACHE_NAME).then((cache) => {
             cache.put(request, responseToCache);

@@ -2,12 +2,21 @@ const API_BASE = typeof window !== 'undefined' ? '' : (process.env.INTERNAL_API_
 
 async function request(endpoint, options = {}) {
   const url = `${API_BASE}${endpoint}`;
+  const headers = {
+    'Content-Type': 'application/json',
+    ...options.headers,
+  };
+
+  if (typeof window !== 'undefined') {
+    const token = localStorage.getItem('fintrack_auth_token');
+    if (token && !headers['Authorization']) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+  }
+
   const config = {
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
     ...options,
+    headers,
   };
 
   try {
@@ -31,6 +40,12 @@ async function request(endpoint, options = {}) {
 }
 
 export const api = {
+  // Auth & Master Passcode
+  getAuthStatus: () => request('/api/auth/status'),
+  setupPasscode: (passcode) => request('/api/auth/setup', { method: 'POST', body: JSON.stringify({ passcode }) }),
+  verifyPasscode: (passcode) => request('/api/auth/verify', { method: 'POST', body: JSON.stringify({ passcode }) }),
+  changePasscode: (currentPasscode, newPasscode) => request('/api/auth/change', { method: 'POST', body: JSON.stringify({ currentPasscode, newPasscode }) }),
+
   // Accounts
   getAccounts: () => request('/api/accounts'),
   createAccount: (data) => request('/api/accounts', { method: 'POST', body: JSON.stringify(data) }),

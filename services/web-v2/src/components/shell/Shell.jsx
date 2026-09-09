@@ -16,13 +16,14 @@ import {
   Sun, 
   Moon,
   Tag,
-  CheckCircle2
+  CheckCircle2,
+  Lock
 } from 'lucide-react';
 import { useApp } from '@/lib/app-context';
 import { api } from '@/lib/api';
 
 export default function Shell({ children }) {
-  const { t, lang, theme, toggleLanguage, toggleTheme } = useApp();
+  const { t, lang, theme, toggleLanguage, toggleTheme, lock } = useApp();
   const pathname = usePathname();
   const [syncing, setSyncing] = React.useState(false);
 
@@ -98,6 +99,15 @@ export default function Shell({ children }) {
             <span>{syncing ? t('syncing') : t('syncAll')}</span>
           </button>
 
+          <button
+            onClick={lock}
+            className="w-full flex items-center justify-center gap-2 px-3 py-1.5 rounded-xl border border-dark-border light:border-light-border hover:border-rose-500/40 hover:text-rose-400 transition-all text-[11px] font-medium text-dark-text-muted"
+            title="נעילת אפליקציה"
+          >
+            <Lock className="w-3 h-3" />
+            <span>{lang === 'he' ? 'נעילת אפליקציה' : 'Lock App'}</span>
+          </button>
+
           <div className="flex items-center justify-between px-1">
             <button
               onClick={toggleLanguage}
@@ -148,6 +158,13 @@ export default function Shell({ children }) {
               className="p-2 rounded-lg border border-dark-border light:border-light-border"
             >
               {theme === 'dark' ? <Sun className="w-4 h-4 text-brand-amber" /> : <Moon className="w-4 h-4" />}
+            </button>
+            <button
+              onClick={lock}
+              className="p-2 rounded-lg border border-dark-border light:border-light-border text-dark-text-muted hover:text-rose-400"
+              title="נעילת מסך"
+            >
+              <Lock className="w-4 h-4" />
             </button>
           </div>
         </header>

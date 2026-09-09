@@ -1,4 +1,5 @@
-/** @type {import('next').NextConfig} */
+const apiGatewayUrl = process.env.INTERNAL_API_URL || process.env.API_GATEWAY_URL || 'http://api-gateway:3000';
+
 const nextConfig = {
   output: 'standalone',
   reactStrictMode: true,
@@ -10,7 +11,7 @@ const nextConfig = {
     return [
       {
         source: '/api/:path*',
-        destination: 'http://api-gateway:3000/api/:path*',
+        destination: `${apiGatewayUrl}/api/:path*`,
       },
     ];
   },

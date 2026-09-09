@@ -12,7 +12,7 @@ services:
       - "80:80"
     depends_on:
       - api-gateway
-      - web
+      - web-v2
     volumes:
       - /opt/finapp/certs:/etc/ssl/tailscale:ro
     read_only: true
@@ -27,27 +27,7 @@ services:
         reservations:
           memory: 16m
 
-  # ── Web PWA Frontend (Original) ──────────────────────────────────────────
-  web:
-    image: ghcr.io/razielzaarur1/fintrack-web:latest
-    container_name: finapp-web
-    networks:
-      - fintrack-net
-    environment:
-      - NODE_ENV=production
-      - NEXT_PUBLIC_API_URL=/api
-    security_opt:
-      - no-new-privileges:true
-    read_only: false
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          memory: 256m
-        reservations:
-          memory: 64m
-
-  # ── Web v2 New Interface (Port 4747) ─────────────────────────────────────
+  # ── Web v2 Interface (Primary Frontend on Port 4747, 80 & 443 via Nginx) ─
   web-v2:
     image: ghcr.io/razielzaarur1/fintrack-web-v2:latest
     container_name: finapp-web-v2
@@ -58,6 +38,7 @@ services:
     environment:
       - NODE_ENV=production
       - NEXT_PUBLIC_API_URL=/api
+      - INTERNAL_API_URL=http://api-gateway:3000
     security_opt:
       - no-new-privileges:true
     read_only: false
