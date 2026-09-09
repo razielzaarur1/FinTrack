@@ -37,25 +37,6 @@ export default function CategoryBadge({
   className = '',
   showLabel = false,
 }) {
-  // Special ATM / Cash withdrawal badge
-  if (category === 'משיכת מזומן') {
-    return (
-      <div className={`flex items-center gap-2 ${className}`}>
-        <div
-          className="w-10 h-10 rounded-xl inline-flex items-center justify-center shrink-0 shadow-sm border border-amber-500/20 bg-amber-500/15 text-amber-500 dark:text-amber-400 transition-transform hover:scale-105"
-          title="משיכת מזומן (נדרש פיצול/סיווג)"
-        >
-          <Banknote size={size} strokeWidth={2} />
-        </div>
-        {showLabel && (
-          <span className="text-xs font-semibold text-amber-600 dark:text-amber-400 truncate">
-            משיכת מזומן
-          </span>
-        )}
-      </div>
-    );
-  }
-
   const { mainCat, subCat } = getCategoryDetails(category);
   const activeSvg = customSvg || subCat?.customSvg || mainCat?.customSvg;
   const iconName = subCat?.icon || mainCat?.icon || 'Tag';

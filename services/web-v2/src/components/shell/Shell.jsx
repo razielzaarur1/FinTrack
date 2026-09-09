@@ -7,13 +7,16 @@ import {
   LayoutDashboard, 
   ArrowLeftRight, 
   PieChart, 
+  BarChart3,
   Landmark, 
   Target, 
   Settings, 
   RefreshCw, 
   Globe, 
   Sun, 
-  Moon 
+  Moon,
+  Tag,
+  CheckCircle2
 } from 'lucide-react';
 import { useApp } from '@/lib/app-context';
 import { api } from '@/lib/api';
@@ -37,7 +40,9 @@ export default function Shell({ children }) {
   const navItems = [
     { href: '/', label: t('dashboard'), icon: LayoutDashboard },
     { href: '/transactions', label: t('transactions'), icon: ArrowLeftRight },
-    { href: '/analytics', label: t('analytics'), icon: PieChart },
+    { href: '/review', label: t('review'), icon: CheckCircle2 },
+    { href: '/categories', label: t('categories'), icon: Tag },
+    { href: '/analytics', label: t('analytics'), icon: BarChart3 },
     { href: '/accounts', label: t('accounts'), icon: Landmark },
     { href: '/budgets', label: t('budgets'), icon: Target },
     { href: '/settings', label: t('settings'), icon: Settings },
@@ -154,7 +159,7 @@ export default function Shell({ children }) {
       </div>
 
       {/* Mobile Bottom Navigation */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 border-t border-dark-border light:border-light-border bg-dark-surface/95 light:bg-light-surface/95 backdrop-blur-lg flex justify-around items-center py-2 z-40">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 border-t border-dark-border light:border-light-border bg-dark-surface/95 light:bg-light-surface/95 backdrop-blur-lg flex overflow-x-auto no-scrollbar items-center py-1.5 px-2 gap-1 z-40 justify-around">
         {navItems.map((item) => {
           const Icon = item.icon;
           const isActive = pathname === item.href;
@@ -162,11 +167,11 @@ export default function Shell({ children }) {
             <Link
               key={item.href}
               href={item.href}
-              className={`flex flex-col items-center gap-1 p-2 rounded-lg text-xs font-medium transition-colors ${
-                isActive ? 'text-brand-primary' : 'text-dark-text-muted light:text-light-text-muted'
+              className={`flex flex-col items-center gap-0.5 p-1.5 rounded-xl text-[10px] font-medium shrink-0 min-w-[48px] transition-colors ${
+                isActive ? 'text-brand-primary font-bold' : 'text-dark-text-muted light:text-light-text-muted'
               }`}
             >
-              <Icon className="w-5 h-5" />
+              <Icon className="w-4 h-4" />
               <span>{item.label}</span>
             </Link>
           );

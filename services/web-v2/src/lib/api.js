@@ -87,7 +87,11 @@ export const api = {
   saveCategoryRule: (data) => request('/api/categories/rules', { method: 'POST', body: JSON.stringify(data) }),
   reclassifyAllTransactions: () => request('/api/categories/reclassify-all', { method: 'POST' }),
 
-  // Analytics
+  // Review Queue
+  getReviewQueue: (flaggedOnly = false) => request(`/api/v2/transactions/review-queue${flaggedOnly ? '?flaggedOnly=true' : ''}`),
+  reviewTransaction: (id, action, category) => request(`/api/v2/transactions/${id}/review`, { method: 'POST', body: JSON.stringify({ action, category }) }),
+
+  // Analytics & Statistics
   getAnalyticsOverview: (year, month) => {
     const q = new URLSearchParams();
     if (year) q.append('year', year);
@@ -99,12 +103,27 @@ export const api = {
     if (accountId) q.append('accountId', accountId);
     return request(`/api/analytics/monthly-trend?${q.toString()}`);
   },
-  getCategoryBreakdown: (year, month, type = 'expense', accountId) => {
-    const q = new URLSearchParams({ type });
+  getCategoryBreakdown: (arg1, month, type = 'expense', accountId) => {
+    let opts = {};
+    if (typeof arg1 === 'object' && arg1 !== null) {
+      opts = arg1;
+    } else {
+      opts = { year: arg1, month, type, accountId };
+    }
+    const q = new URLSearchParams();
+    if (opts.type) q.append('type', opts.type);
+    if (opts.year) q.append('year', opts.year);
+    if (opts.month) q.append('month', opts.month);
+    if (opts.accountId) q.append('accountId', opts.accountId);
+    if (opts.accountIds) q.append('accountIds', Array.isArray(opts.accountIds) ? opts.accountIds.join(',') : opts.accountIds);
+    return request(`/api/analytics/category-breakdown?${q.toString()}`);
+  },
+  getCategoryAverages: () => request('/api/analytics/category-averages'),
+  getTopExpenses: (year, month, limit = 5) => {
+    const q = new URLSearchParams({ limit });
     if (year) q.append('year', year);
     if (month) q.append('month', month);
-    if (accountId) q.append('accountId', accountId);
-    return request(`/api/analytics/category-breakdown?${q.toString()}`);
+    return request(`/api/analytics/top-expenses?${q.toString()}`);
   },
   getTopMerchants: (year, month, limit = 10) => {
     const q = new URLSearchParams({ limit });

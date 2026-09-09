@@ -159,28 +159,6 @@ async function ensureSchema() {
               CONSTRAINT uq_categories_user_name UNIQUE (user_id, name)
           );
 
-          -- Seed categories
-          INSERT INTO categories (user_id, name, name_en, type, color, icon, is_system, sort_order)
-          VALUES
-            ('00000000-0000-0000-0000-000000000001', 'מכולת', 'Groceries', 'expense', '#10b981', 'shopping-cart', true, 1),
-            ('00000000-0000-0000-0000-000000000001', 'מסעדות', 'Dining', 'expense', '#f59e0b', 'utensils', true, 2),
-            ('00000000-0000-0000-0000-000000000001', 'דיור', 'Housing', 'expense', '#3b82f6', 'home', true, 3),
-            ('00000000-0000-0000-0000-000000000001', 'תחבורה', 'Transport', 'expense', '#8b5cf6', 'car', true, 4),
-            ('00000000-0000-0000-0000-000000000001', 'בריאות', 'Health', 'expense', '#ef4444', 'heart-pulse', true, 5),
-            ('00000000-0000-0000-0000-000000000001', 'קניות', 'Shopping', 'expense', '#ec4899', 'bag', true, 6),
-            ('00000000-0000-0000-0000-000000000001', 'בידור', 'Entertainment', 'expense', '#f97316', 'gamepad-2', true, 7),
-            ('00000000-0000-0000-0000-000000000001', 'חינוך', 'Education', 'expense', '#06b6d4', 'graduation-cap', true, 8),
-            ('00000000-0000-0000-0000-000000000001', 'ביטוח', 'Insurance', 'expense', '#64748b', 'shield', true, 9),
-            ('00000000-0000-0000-0000-000000000001', 'טכנולוגיה', 'Technology', 'expense', '#6366f1', 'laptop', true, 10),
-            ('00000000-0000-0000-0000-000000000001', 'מנויים', 'Subscriptions', 'expense', '#a855f7', 'repeat', true, 11),
-            ('00000000-0000-0000-0000-000000000001', 'חשבונות', 'Bills', 'expense', '#94a3b8', 'file-text', true, 12),
-            ('00000000-0000-0000-0000-000000000001', 'משכורת', 'Salary', 'income', '#22c55e', 'briefcase', true, 13),
-            ('00000000-0000-0000-0000-000000000001', 'העברה', 'Transfer', 'income', '#4ade80', 'arrow-left-right', true, 14),
-            ('00000000-0000-0000-0000-000000000001', 'זיכוי', 'Refund', 'income', '#86efac', 'undo', true, 15),
-            ('00000000-0000-0000-0000-000000000001', 'השקעות', 'Investments', 'income', '#fbbf24', 'trending-up', true, 16),
-            ('00000000-0000-0000-0000-000000000001', 'אחר', 'Other', 'both', '#94a3b8', 'more-horizontal', true, 99)
-          ON CONFLICT (user_id, name) DO NOTHING;
-
           -- 8. Budgets
           CREATE TABLE IF NOT EXISTS budgets (
               id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -231,11 +209,36 @@ async function ensureSchema() {
           -- 12. Alterations & Migrations
           ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS billing_day INT DEFAULT 10;
           ALTER TABLE transactions ADD COLUMN IF NOT EXISTS processed_date DATE;
+          ALTER TABLE transactions ADD COLUMN IF NOT EXISTS is_manual_category BOOLEAN NOT NULL DEFAULT false;
+          ALTER TABLE transactions ADD COLUMN IF NOT EXISTS is_reviewed BOOLEAN NOT NULL DEFAULT false;
+          ALTER TABLE transactions ADD COLUMN IF NOT EXISTS is_flagged BOOLEAN NOT NULL DEFAULT false;
           ALTER TABLE categories ADD COLUMN IF NOT EXISTS parent_id UUID REFERENCES categories(id) ON DELETE CASCADE;
           ALTER TABLE categories ADD COLUMN IF NOT EXISTS custom_svg TEXT;
 
           CREATE INDEX IF NOT EXISTS idx_transactions_processed_date ON transactions(processed_date);
+          CREATE INDEX IF NOT EXISTS idx_transactions_reviewed ON transactions(is_reviewed);
           CREATE INDEX IF NOT EXISTS idx_user_category_rules_user_pattern ON user_category_rules(user_id, merchant_pattern);
+
+          -- Clean up old legacy flat categories and migrate any transactions
+          UPDATE transactions SET category = 'סופר ומכולת' WHERE category IN ('מכולת', 'food', 'groceries');
+          UPDATE transactions SET category = 'מסעדות ופאבים' WHERE category IN ('מסעדות', 'dining');
+          UPDATE transactions SET category = 'משק בית' WHERE category IN ('דיור', 'housing', 'חשבונות', 'utilities');
+          UPDATE transactions SET category = 'רכב ותחבורה' WHERE category IN ('תחבורה', 'transportation');
+          UPDATE transactions SET category = 'בריאות וטיפוח' WHERE category IN ('בריאות', 'healthcare');
+          UPDATE transactions SET category = 'עושים קניות' WHERE category IN ('קניות', 'shopping');
+          UPDATE transactions SET category = 'פנאי ותרבות' WHERE category IN ('בידור', 'entertainment');
+          UPDATE transactions SET category = 'משפחה והשכלה' WHERE category IN ('חינוך', 'education');
+          UPDATE transactions SET category = 'ביטוח דירה' WHERE category IN ('ביטוח', 'insurance');
+          UPDATE transactions SET category = 'אלקטרוניקה' WHERE category IN ('טכנולוגיה', 'technology');
+          UPDATE transactions SET category = 'הכנסות שונות' WHERE category IN ('מנויים', 'העברה', 'זיכוי', 'other_income');
+          UPDATE transactions SET category = 'דיווידנדים ורווחים' WHERE category IN ('השקעות', 'investments');
+          UPDATE transactions SET category = 'ללא סיווג' WHERE category IN ('אחר', 'other_expense', 'cash');
+
+          -- Delete flat legacy categories that have no subcategories and are not valid income categories
+          DELETE FROM categories 
+          WHERE parent_id IS NULL 
+            AND id NOT IN (SELECT DISTINCT parent_id FROM categories WHERE parent_id IS NOT NULL)
+            AND name NOT IN ('משכורת', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות');
 
           -- Correct past transactions where merchant_name was set to memo instead of actual store description
           UPDATE transactions 

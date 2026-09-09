@@ -19,6 +19,13 @@ const updateAccountSchema = z.object({
   balance: z.coerce.number().optional(),
 });
 
+function formatLocalYMD(d) {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 function getBillingDates(billingDay = 10) {
   const now = new Date();
   const curDay = now.getDate();
@@ -76,14 +83,14 @@ export default async function accountsRoutes(fastify, options) {
         [DEFAULT_USER_ID]
       );
 
-      // Compute dynamic upcoming cycle charge, past billed cycle, and matching bank debits
+      // Compute dynamic upcoming cycle charge, period spend, and matching bank debits
       const accounts = await Promise.all(
         result.rows.map(async (acc) => {
           if (acc.accountType === 'credit') {
             const { nextBillingDate, prevBillingDate, prevPrevBillingDate } = getBillingDates(acc.billingDay);
-            const nextStr = nextBillingDate.toISOString().slice(0, 10);
-            const prevStr = prevBillingDate.toISOString().slice(0, 10);
-            const prevPrevStr = prevPrevBillingDate.toISOString().slice(0, 10);
+            const nextStr = formatLocalYMD(nextBillingDate);
+            const prevStr = formatLocalYMD(prevBillingDate);
+            const prevPrevStr = formatLocalYMD(prevPrevBillingDate);
 
             // 1. Upcoming Charge (transactions scheduled for next billing date or within upcoming cycle)
             const upcomingRes = await pool.query(
@@ -92,14 +99,18 @@ export default async function accountsRoutes(fastify, options) {
                WHERE account_id = $1
                  AND is_ignored = false
                  AND (
-                   processed_date = $2::date
-                   OR (
-                     (processed_date IS NULL OR processed_date = date)
-                     AND date > $3::date AND date <= $2::date
-                   )
+                   (processed_date IS NOT NULL AND processed_date > $3::date AND processed_date <= $2::date)
+                   OR (processed_date = $2::date)
+                   OR (date > $3::date AND date <= $2::date)
                  )`,
               [acc.id, nextStr, prevStr]
             );
+
+            let upcomingCharge = upcomingRes.rows[0]?.charge || 0;
+            // Fallback to scraped balance if transactions in this cycle sum to 0 but account balance is recorded
+            if (upcomingCharge === 0 && Math.abs(acc.balance) > 0) {
+              upcomingCharge = acc.balance;
+            }
 
             // 2. Period Spend (total expenses spent between previous billing date and next billing date)
             const spendRes = await pool.query(
@@ -111,23 +122,20 @@ export default async function accountsRoutes(fastify, options) {
               [acc.id, prevStr, nextStr]
             );
 
-            // 3. Billed in Previous Cycle (transactions that were processed on the previous cycle date)
-            const prevRes = await pool.query(
-              `SELECT -COALESCE(SUM(amount), 0)::FLOAT AS "charge"
-               FROM transactions
-               WHERE account_id = $1
-                 AND is_ignored = false
-                 AND (
-                   processed_date = $2::date
-                   OR (
-                     (processed_date IS NULL OR processed_date = date)
-                     AND date > $3::date AND date <= $2::date
-                   )
-                 )`,
-              [acc.id, prevStr, prevPrevStr]
-            );
+            let periodSpend = spendRes.rows[0]?.spend || 0;
+            if (periodSpend === 0) {
+              const mSpendRes = await pool.query(
+                `SELECT -COALESCE(SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END), 0)::FLOAT AS "spend"
+                 FROM transactions
+                 WHERE account_id = $1
+                   AND is_ignored = false
+                   AND date >= DATE_TRUNC('month', CURRENT_DATE)`,
+                [acc.id]
+              );
+              periodSpend = mSpendRes.rows[0]?.spend || 0;
+            }
 
-            // 4. Search for actual credit card bank debit in user's checking account
+            // 3. Search for actual credit card bank debit in user's checking account
             const bankKeywords = {
               max: ['מקס', 'לאומי קארד', 'max'],
               isracard: ['ישראכרט', 'isracard'],
@@ -154,9 +162,6 @@ export default async function accountsRoutes(fastify, options) {
               [DEFAULT_USER_ID, prevStr, ...bankKeywords]
             );
 
-            const upcomingCharge = upcomingRes.rows[0]?.charge || 0;
-            const periodSpend = spendRes.rows[0]?.spend || 0;
-            const billedLastCycle = prevRes.rows[0]?.charge || 0;
             const bankDebit = debitRes.rows[0]
               ? {
                   date: debitRes.rows[0].date,
@@ -170,7 +175,6 @@ export default async function accountsRoutes(fastify, options) {
               balance: upcomingCharge,
               upcomingCharge,
               periodSpend,
-              billedLastCycle,
               bankDebit,
               nextBillingDate: nextStr,
               prevBillingDate: prevStr,

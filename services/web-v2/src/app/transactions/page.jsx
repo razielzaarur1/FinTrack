@@ -20,7 +20,8 @@ import {
   Clock,
   ChevronDown,
   CheckSquare,
-  Square
+  Square,
+  Check
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { formatILS, formatDate } from '@/lib/formatters';
@@ -28,13 +29,14 @@ import { useApp } from '@/lib/app-context';
 import CategoryBadge from '@/components/common/CategoryBadge';
 import CategoryPicker from '@/components/common/CategoryPicker';
 import InstitutionLogo from '@/components/common/InstitutionLogo';
+import MultiSelectDropdown from '@/components/common/MultiSelectDropdown';
 import TransactionDrawer from '@/components/transactions/TransactionDrawer';
 import { CATEGORIES_DATA } from '@/lib/categories';
 
 function TransactionsContent() {
   const { t, lang } = useApp();
   const searchParams = useSearchParams();
-  const initialAccountId = searchParams?.get('accountId') || 'all';
+  const initialAccountId = searchParams?.get('accountId');
 
   const [transactions, setTransactions] = useState([]);
   const [accounts, setAccounts] = useState([]);
@@ -43,11 +45,11 @@ function TransactionsContent() {
   const [nextCursorId, setNextCursorId] = useState(null);
   const [hasNextPage, setHasNextPage] = useState(true);
 
-  // Filters State
+  // Filters State (Supports Multi-Select)
   const [search, setSearch] = useState('');
   const [type, setType] = useState('all'); // all, expense, income
-  const [selectedAccountId, setSelectedAccountId] = useState(initialAccountId);
-  const [selectedCategory, setSelectedCategory] = useState('all');
+  const [selectedAccountIds, setSelectedAccountIds] = useState(initialAccountId ? [initialAccountId] : []);
+  const [selectedCategories, setSelectedCategories] = useState([]);
   const [minAmount, setMinAmount] = useState('');
   const [maxAmount, setMaxAmount] = useState('');
   const [datePreset, setDatePreset] = useState('all'); // all, current_month, last_month, last_90, custom
@@ -57,6 +59,7 @@ function TransactionsContent() {
   // UI State
   const [showFilters, setShowFilters] = useState(false);
   const [selectedTx, setSelectedTx] = useState(null);
+  const [selectMode, setSelectMode] = useState(false);
 
   // Multi-selection state & banner
   const [selectedIds, setSelectedIds] = useState(new Set());
@@ -125,7 +128,7 @@ function TransactionsContent() {
 
   const observer = useRef();
 
-  // Load user accounts for filter dropdown
+  // Load user accounts for filter options
   useEffect(() => {
     api.getAccounts().then((res) => {
       if (res.data) setAccounts(res.data);
@@ -136,17 +139,49 @@ function TransactionsContent() {
   useEffect(() => {
     const accParam = searchParams?.get('accountId');
     if (accParam) {
-      setSelectedAccountId(accParam);
+      setSelectedAccountIds([accParam]);
       setShowFilters(true);
     }
   }, [searchParams]);
+
+  // Options for Account Multi-Select
+  const accountOptions = useMemo(() => {
+    return accounts.map((acc) => ({
+      id: acc.id,
+      label: acc.displayName || acc.bankCompany,
+      secondaryLabel: acc.accountNumber ? `•••• ${acc.accountNumber.slice(-4)}` : undefined,
+      icon: <InstitutionLogo institution={acc.bankCompany} size={18} />,
+    }));
+  }, [accounts]);
+
+  // Options for Category Multi-Select
+  const categoryOptions = useMemo(() => {
+    const list = [];
+    CATEGORIES_DATA.expenses.forEach((cat) => {
+      list.push({
+        id: cat.name,
+        label: cat.name,
+        secondaryLabel: 'הוצאה',
+        icon: <CategoryBadge category={cat.name} size={18} />,
+      });
+    });
+    CATEGORIES_DATA.incomes.forEach((cat) => {
+      list.push({
+        id: cat.name,
+        label: cat.name,
+        secondaryLabel: 'הכנסה',
+        icon: <CategoryBadge category={cat.name} size={18} />,
+      });
+    });
+    return list;
+  }, []);
 
   // Compute active filters count
   const activeFiltersCount = [
     search.trim() ? 1 : 0,
     type !== 'all' ? 1 : 0,
-    selectedAccountId !== 'all' ? 1 : 0,
-    selectedCategory !== 'all' ? 1 : 0,
+    selectedAccountIds.length > 0 ? selectedAccountIds.length : 0,
+    selectedCategories.length > 0 ? selectedCategories.length : 0,
     minAmount ? 1 : 0,
     maxAmount ? 1 : 0,
     datePreset !== 'all' || startDate || endDate ? 1 : 0,
@@ -169,7 +204,7 @@ function TransactionsContent() {
       return { start: s.toISOString().slice(0, 10), end: e.toISOString().slice(0, 10) };
     }
     if (preset === 'last_90') {
-      const s = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+      const s = new Date(now.getTime() - 90 * 24 * 60 * 1000);
       return { start: s.toISOString().slice(0, 10), end: now.toISOString().slice(0, 10) };
     }
     return { start: startDate || undefined, end: endDate || undefined };
@@ -186,8 +221,8 @@ function TransactionsContent() {
         cursorId,
         search: search.trim() || undefined,
         type: type !== 'all' ? type : undefined,
-        accountId: selectedAccountId !== 'all' ? selectedAccountId : undefined,
-        category: selectedCategory !== 'all' ? selectedCategory : undefined,
+        accountIds: selectedAccountIds.length > 0 ? selectedAccountIds : undefined,
+        categories: selectedCategories.length > 0 ? selectedCategories : undefined,
         minAmount: minAmount ? parseFloat(minAmount) : undefined,
         maxAmount: maxAmount ? parseFloat(maxAmount) : undefined,
         startDate: range.start,
@@ -210,7 +245,7 @@ function TransactionsContent() {
   // Reload transactions on filter change
   useEffect(() => {
     loadTransactions(null, null, true);
-  }, [type, selectedAccountId, selectedCategory, datePreset, startDate, endDate]);
+  }, [type, selectedAccountIds, selectedCategories, datePreset, startDate, endDate]);
 
   const handleSearchSubmit = (e) => {
     e?.preventDefault();
@@ -220,8 +255,8 @@ function TransactionsContent() {
   const handleResetFilters = () => {
     setSearch('');
     setType('all');
-    setSelectedAccountId('all');
-    setSelectedCategory('all');
+    setSelectedAccountIds([]);
+    setSelectedCategories([]);
     setMinAmount('');
     setMaxAmount('');
     setDatePreset('all');
@@ -267,8 +302,6 @@ function TransactionsContent() {
     a.click();
   };
 
-  const selectedAccountObj = accounts.find((a) => a.id === selectedAccountId);
-
   return (
     <div className="space-y-5">
       {/* Top Header */}
@@ -283,14 +316,33 @@ function TransactionsContent() {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Select Mode Toggle Button */}
+          <button
+            onClick={() => {
+              if (selectMode) {
+                setSelectedIds(new Set());
+              }
+              setSelectMode(!selectMode);
+            }}
+            className={`inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl border text-xs font-semibold shadow-sm transition-all ${
+              selectMode
+                ? 'bg-brand-primary text-white border-brand-primary shadow-brand-primary/20'
+                : 'bg-dark-surface light:bg-light-surface border-dark-border light:border-light-border text-dark-text hover:border-brand-primary/40'
+            }`}
+          >
+            <CheckSquare className="w-3.5 h-3.5" />
+            <span>{selectMode ? 'ביטול בחירה' : 'מצב בחירה'}</span>
+          </button>
+
           <button
             onClick={() => loadTransactions(null, null, true)}
             disabled={loading}
-            className="p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text-muted hover:text-dark-text shadow-sm"
+            className="p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text-muted hover:text-dark-text shadow-sm transition-colors"
             title="רענן"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-brand-primary' : ''}`} />
           </button>
+
           <button
             onClick={handleExportCSV}
             className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface hover:bg-dark-surface-elevated text-xs font-semibold shadow-sm transition-colors"
@@ -372,56 +424,41 @@ function TransactionsContent() {
           </button>
         </div>
 
-        {/* Expandable Advanced Filter Options */}
+        {/* Expandable Advanced Multi-Select Filters */}
         {showFilters && (
           <div className="pt-3 border-t border-dark-border/60 light:border-light-border/60 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 animate-in fade-in duration-200">
-            {/* 1. Account / Card Filter */}
+            {/* 1. Account / Card Multi-Select Filter */}
             <div className="space-y-1">
               <label className="text-[11px] font-semibold text-dark-text-muted flex items-center gap-1">
                 <CreditCard className="w-3 h-3 text-indigo-400" />
-                <span>חשבון / כרטיס אשראי</span>
+                <span>חשבונות וכרטיסים (בחירה מרובה)</span>
               </label>
-              <select
-                value={selectedAccountId}
-                onChange={(e) => setSelectedAccountId(e.target.value)}
-                className="w-full p-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-xs font-medium focus:outline-none focus:border-brand-primary cursor-pointer"
-              >
-                <option value="all">כל החשבונות והכרטיסים</option>
-                {accounts.map((acc) => (
-                  <option key={acc.id} value={acc.id}>
-                    {acc.displayName || acc.bankCompany} {acc.accountNumber ? `(•••• ${acc.accountNumber})` : ''}
-                  </option>
-                ))}
-              </select>
+              <MultiSelectDropdown
+                label="בחר חשבונות"
+                options={accountOptions}
+                selectedValues={selectedAccountIds}
+                onChange={setSelectedAccountIds}
+                placeholder="הכל"
+                icon={CreditCard}
+                className="w-full"
+              />
             </div>
 
-            {/* 2. Category Filter */}
+            {/* 2. Category Multi-Select Filter */}
             <div className="space-y-1">
               <label className="text-[11px] font-semibold text-dark-text-muted flex items-center gap-1">
                 <Tag className="w-3 h-3 text-pink-400" />
-                <span>קטגוריה</span>
+                <span>קטגוריות (בחירה מרובה)</span>
               </label>
-              <select
-                value={selectedCategory}
-                onChange={(e) => setSelectedCategory(e.target.value)}
-                className="w-full p-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-xs font-medium focus:outline-none focus:border-brand-primary cursor-pointer"
-              >
-                <option value="all">כל הקטגוריות</option>
-                <optgroup label="הוצאות">
-                  {CATEGORIES_DATA.expenses.map((cat) => (
-                    <option key={cat.id} value={cat.name}>
-                      {cat.name}
-                    </option>
-                  ))}
-                </optgroup>
-                <optgroup label="הכנסות">
-                  {CATEGORIES_DATA.incomes.map((cat) => (
-                    <option key={cat.id} value={cat.name}>
-                      {cat.name}
-                    </option>
-                  ))}
-                </optgroup>
-              </select>
+              <MultiSelectDropdown
+                label="בחר קטגוריות"
+                options={categoryOptions}
+                selectedValues={selectedCategories}
+                onChange={setSelectedCategories}
+                placeholder="הכל"
+                icon={Tag}
+                className="w-full"
+              />
             </div>
 
             {/* 3. Amount Range (Min - Max) */}
@@ -436,7 +473,7 @@ function TransactionsContent() {
                   value={minAmount}
                   onChange={(e) => setMinAmount(e.target.value)}
                   onBlur={() => loadTransactions(null, null, true)}
-                  className="w-1/2 p-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated text-xs"
+                  className="w-1/2 p-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated text-xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none font-mono"
                 />
                 <span className="text-dark-text-muted text-xs">-</span>
                 <input
@@ -445,87 +482,95 @@ function TransactionsContent() {
                   value={maxAmount}
                   onChange={(e) => setMaxAmount(e.target.value)}
                   onBlur={() => loadTransactions(null, null, true)}
-                  className="w-1/2 p-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated text-xs"
+                  className="w-1/2 p-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated text-xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none font-mono"
                 />
               </div>
             </div>
 
-            {/* 4. Date Presets */}
+            {/* 4. Date Filter */}
             <div className="space-y-1">
               <label className="text-[11px] font-semibold text-dark-text-muted flex items-center gap-1">
-                <Calendar className="w-3 h-3 text-amber-400" />
-                <span>מועד / טווח תאריכים</span>
+                <Calendar className="w-3 h-3 text-sky-400" />
+                <span>תקופה ותאריכים</span>
               </label>
               <select
                 value={datePreset}
                 onChange={(e) => setDatePreset(e.target.value)}
                 className="w-full p-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-xs font-medium focus:outline-none focus:border-brand-primary cursor-pointer"
               >
-                <option value="all">כל התקופות</option>
+                <option value="all">כל הזמנים</option>
                 <option value="current_month">חודש נוכחי</option>
-                <option value="last_month">חודש קודם</option>
+                <option value="last_month">חודש שעבר</option>
                 <option value="last_90">90 ימים אחרונים</option>
                 <option value="custom">טווח תאריכים מותאם אישית...</option>
               </select>
             </div>
 
-            {/* Custom Date Pickers if 'custom' is selected */}
             {datePreset === 'custom' && (
-              <div className="sm:col-span-2 lg:col-span-4 flex items-center gap-3 pt-2">
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="text-dark-text-muted">מתאריך:</span>
-                  <input
-                    type="date"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                    className="p-1.5 rounded-lg border border-dark-border bg-dark-surface-elevated text-xs"
-                  />
-                </div>
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="text-dark-text-muted">עד תאריך:</span>
-                  <input
-                    type="date"
-                    value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                    className="p-1.5 rounded-lg border border-dark-border bg-dark-surface-elevated text-xs"
-                  />
-                </div>
+              <div className="col-span-full flex items-center gap-2 pt-2">
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="p-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated text-xs"
+                />
+                <span className="text-xs text-dark-text-muted">עד</span>
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  className="p-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated text-xs"
+                />
               </div>
             )}
           </div>
         )}
 
-        {/* Active Filters Chips Bar */}
+        {/* Active Filter Badges */}
         {activeFiltersCount > 0 && (
-          <div className="pt-2.5 border-t border-dark-border/40 light:border-light-border/40 flex flex-wrap items-center gap-1.5 text-xs">
-            <span className="text-[11px] text-dark-text-muted pl-1">סינונים פעילים:</span>
+          <div className="flex flex-wrap items-center gap-1.5 pt-1">
+            <span className="text-[11px] text-dark-text-muted light:text-light-text-muted font-medium">
+              מסננים פעילים:
+            </span>
 
-            {search.trim() && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-brand-primary/15 text-brand-primary font-medium text-[11px]">
-                <span>חיפוש: &quot;{search}&quot;</span>
+            {search && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-dark-surface-elevated border border-dark-border text-[11px]">
+                <span>חיפוש: "{search}"</span>
                 <button onClick={() => { setSearch(''); loadTransactions(null, null, true); }}>
                   <X className="w-3 h-3" />
                 </button>
               </span>
             )}
 
-            {selectedAccountId !== 'all' && selectedAccountObj && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-500/15 text-indigo-400 font-medium text-[11px]">
-                <span>כרטיס: {selectedAccountObj.displayName || selectedAccountObj.bankCompany}</span>
-                <button onClick={() => setSelectedAccountId('all')}>
+            {type !== 'all' && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-brand-primary/15 text-brand-primary font-medium text-[11px]">
+                <span>סוג: {type === 'expense' ? 'הוצאות' : 'הכנסות'}</span>
+                <button onClick={() => setType('all')}>
                   <X className="w-3 h-3" />
                 </button>
               </span>
             )}
 
-            {selectedCategory !== 'all' && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-pink-500/15 text-pink-400 font-medium text-[11px]">
-                <span>קטגוריה: {selectedCategory}</span>
-                <button onClick={() => setSelectedCategory('all')}>
+            {selectedAccountIds.map((accId) => {
+              const acc = accounts.find((a) => a.id === accId);
+              return (
+                <span key={accId} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-500/15 text-indigo-400 font-medium text-[11px]">
+                  <span>{acc?.displayName || acc?.bankCompany || 'חשבון'}</span>
+                  <button onClick={() => setSelectedAccountIds(selectedAccountIds.filter((id) => id !== accId))}>
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              );
+            })}
+
+            {selectedCategories.map((catName) => (
+              <span key={catName} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-pink-500/15 text-pink-400 font-medium text-[11px]">
+                <span>{catName}</span>
+                <button onClick={() => setSelectedCategories(selectedCategories.filter((c) => c !== catName))}>
                   <X className="w-3 h-3" />
                 </button>
               </span>
-            )}
+            ))}
 
             {(minAmount || maxAmount) && (
               <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-400 font-medium text-[11px]">
@@ -558,25 +603,34 @@ function TransactionsContent() {
 
       {/* Infinite Transaction List */}
       <div className="rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface overflow-hidden shadow-sm">
-        {/* Select All & Multi-select Header Bar */}
-        {transactions.length > 0 && (
-          <div className="px-4 py-2.5 bg-dark-surface-elevated/50 light:bg-light-surface-elevated/50 border-b border-dark-border/60 light:border-light-border/60 flex items-center justify-between text-xs text-dark-text-muted light:text-light-text-muted">
+        {/* Select All & Multi-select Header Bar (Shown only in selectMode) */}
+        {selectMode && transactions.length > 0 && (
+          <div className="px-4 py-2.5 bg-dark-surface-elevated/80 light:bg-light-surface-elevated/80 border-b border-dark-border/60 light:border-light-border/60 flex items-center justify-between text-xs text-dark-text-muted light:text-light-text-muted animate-in fade-in duration-150">
             <div className="flex items-center gap-2.5">
-              <input
-                type="checkbox"
-                checked={selectedIds.size === transactions.length && transactions.length > 0}
-                onChange={toggleSelectAll}
-                className="w-4 h-4 rounded text-brand-primary focus:ring-brand-primary cursor-pointer"
+              {/* Custom Squircle Checkbox for Select All */}
+              <button
+                type="button"
+                onClick={toggleSelectAll}
+                className={`w-5 h-5 rounded-lg flex items-center justify-center transition-all ${
+                  selectedIds.size === transactions.length && transactions.length > 0
+                    ? 'bg-brand-primary text-white shadow-sm ring-2 ring-brand-primary/30'
+                    : 'border-2 border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface'
+                }`}
                 title="סמן את כל התנועות"
-              />
-              <span className="font-medium">
+              >
+                {selectedIds.size === transactions.length && transactions.length > 0 && (
+                  <Check className="w-3.5 h-3.5 stroke-[3]" />
+                )}
+              </button>
+
+              <span className="font-semibold text-dark-text light:text-light-text">
                 {selectedCount > 0 ? `נבחרו ${selectedCount} מתוך ${transactions.length}` : `סמן הכל (${transactions.length})`}
               </span>
             </div>
             {selectedCount > 0 && (
               <button
                 onClick={() => setSelectedIds(new Set())}
-                className="text-[11px] text-brand-primary hover:underline font-medium"
+                className="text-[11px] text-brand-primary hover:underline font-semibold"
               >
                 נקה בחירה
               </button>
@@ -604,20 +658,32 @@ function TransactionsContent() {
                 <div
                   key={tx.id}
                   ref={isLast ? lastTxRef : null}
-                  onClick={() => setSelectedTx(tx)}
+                  onClick={() => {
+                    if (selectMode) {
+                      toggleSelect(tx.id);
+                    } else {
+                      setSelectedTx(tx);
+                    }
+                  }}
                   className={`p-4 flex items-center justify-between hover:bg-dark-surface-elevated/70 light:hover:bg-light-surface-elevated/70 transition-colors cursor-pointer group ${
                     isSelected ? 'bg-brand-primary/5 dark:bg-brand-primary/10' : ''
                   }`}
                 >
-                  {/* Right side (in RTL): Checkbox + Category Icon + Merchant Name + Details */}
+                  {/* Right side (in RTL): Checkbox (if in selectMode) + Category Icon + Merchant Name + Details */}
                   <div className="flex items-center gap-3.5 min-w-0">
-                    <input
-                      type="checkbox"
-                      checked={isSelected}
-                      onChange={(e) => toggleSelect(tx.id, e)}
-                      onClick={(e) => e.stopPropagation()}
-                      className="w-4 h-4 rounded text-brand-primary focus:ring-brand-primary cursor-pointer shrink-0"
-                    />
+                    {selectMode && (
+                      <button
+                        type="button"
+                        onClick={(e) => toggleSelect(tx.id, e)}
+                        className={`w-5 h-5 rounded-lg flex items-center justify-center transition-all shrink-0 ${
+                          isSelected
+                            ? 'bg-brand-primary text-white shadow-sm ring-2 ring-brand-primary/30'
+                            : 'border-2 border-dark-border light:border-light-border hover:border-brand-primary/60 bg-dark-surface light:bg-light-surface'
+                        }`}
+                      >
+                        {isSelected && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                      </button>
+                    )}
 
                     <CategoryBadge category={tx.category} size={20} />
 
@@ -627,7 +693,7 @@ function TransactionsContent() {
                         <span>{merchantTitle}</span>
 
                         {isAtm && (
-                          <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-500 dark:text-amber-400 text-[10px] font-bold inline-flex items-center gap-1" title="משיכת מזומן - לא נספר כבית עסק">
+                          <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-500 dark:text-amber-400 text-[10px] font-bold inline-flex items-center gap-1" title="משיכת מזומן">
                             <span>💵</span>
                             <span>מזומן</span>
                           </span>

@@ -362,7 +362,7 @@ export default function AccountsPage() {
                     </div>
                   </div>
 
-                  {/* Credit Card Past Cycle & Checking Debit Status */}
+                  {/* Credit Card Cycle Information */}
                   {isCredit && (
                     <div className="p-3 rounded-xl bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40 border border-dark-border/40 light:border-light-border/40 space-y-2">
                       <div className="flex items-center justify-between text-xs">
@@ -370,33 +370,18 @@ export default function AccountsPage() {
                           סך שיצא במחזור הנוכחי:
                         </span>
                         <span className="font-bold text-dark-text font-mono" dir="ltr">
-                          {formatILS(acc.periodSpend || 0)}
+                          {formatILS(acc.periodSpend ?? acc.balance ?? 0)}
                         </span>
                       </div>
 
-                      <div className="flex items-center justify-between text-xs pt-1 border-t border-dark-border/20">
-                        <span className="text-dark-text-muted text-[11px]">
-                          חויב במחזור קודם {acc.prevBillingDate ? `(${formatDate(acc.prevBillingDate)})` : ''}:
-                        </span>
-                        <span className="font-bold text-dark-text font-mono" dir="ltr">
-                          {formatILS(acc.billedLastCycle || 0)}
-                        </span>
-                      </div>
-
-                      {acc.bankDebit ? (
-                        <div className="flex items-center justify-between text-[11px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-2.5 py-1.5 rounded-lg border border-emerald-500/20">
-                          <span className="flex items-center gap-1.5 font-medium">
-                            <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-                            <span>ירד בעו"ש ({formatDate(acc.bankDebit.date)})</span>
+                      {acc.nextBillingDate && (
+                        <div className="flex items-center justify-between text-xs pt-1 border-t border-dark-border/20 light:border-light-border/20">
+                          <span className="text-dark-text-muted text-[11px]">
+                            מועד החיוב הקרוב:
                           </span>
-                          <span className="font-bold font-mono" dir="ltr">
-                            {formatILS(acc.bankDebit.amount)}
+                          <span className="font-semibold text-dark-text font-mono">
+                            {formatDate(acc.nextBillingDate)}
                           </span>
-                        </div>
-                      ) : (
-                        <div className="text-[11px] text-dark-text-muted bg-dark-surface/50 px-2.5 py-1 rounded-lg border border-dark-border/30 flex items-center gap-1.5">
-                          <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
-                          <span>טרם זוהה חיוב מקביל בעו"ש למחזור זה</span>
                         </div>
                       )}
                     </div>

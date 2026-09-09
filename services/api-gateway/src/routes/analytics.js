@@ -97,7 +97,7 @@ export default async function analyticsRoutes(fastify, options) {
 
   // GET /api/analytics/category-breakdown - Expenses or Income categorized distribution
   fastify.get('/category-breakdown', async (request, reply) => {
-    const { year, month, type = 'expense', accountId } = request.query;
+    const { year, month, type = 'expense', accountId, accountIds } = request.query;
     const now = new Date();
     const targetYear = parseInt(year, 10) || now.getFullYear();
     const targetMonth = parseInt(month, 10) || (now.getMonth() + 1);
@@ -114,7 +114,13 @@ export default async function analyticsRoutes(fastify, options) {
     ];
     const values = [startDate, endDate];
 
-    if (accountId) {
+    if (accountIds) {
+      const ids = String(accountIds).split(',').map((s) => s.trim()).filter(Boolean);
+      if (ids.length > 0) {
+        values.push(ids);
+        conditions.push(`t.account_id = ANY($${values.length}::uuid[])`);
+      }
+    } else if (accountId) {
       values.push(accountId);
       conditions.push(`t.account_id = $${values.length}`);
     }
@@ -239,6 +245,124 @@ export default async function analyticsRoutes(fastify, options) {
           expense: parseFloat(r.expense),
           income: parseFloat(r.income),
           count: parseInt(r.count, 10),
+        })),
+      });
+    } catch (err) {
+      return reply.code(500).send({ error: 'Database error', message: err.message });
+    }
+  });
+
+  // GET /api/analytics/category-averages - Monthly average spending per key category
+  fastify.get('/category-averages', async (request, reply) => {
+    try {
+      // Find distinct months of transaction history
+      const monthsRes = await pool.query(`
+        SELECT COUNT(DISTINCT TO_CHAR(date, 'YYYY-MM')) AS "monthsCount"
+        FROM transactions
+        WHERE is_ignored = false AND amount < 0
+      `);
+      const distinctMonths = Math.max(parseInt(monthsRes.rows[0]?.monthsCount, 10) || 1, 1);
+
+      // Key categories of interest
+      const keyCategories = [
+        { name: 'סופר ומכולת', mainCat: 'עושים קניות', label: 'סופר ומכולת', icon: 'ShoppingBag', color: '#ec4899' },
+        { name: 'דלק וטעינה', mainCat: 'רכב ותחבורה', label: 'דלק ותחבורה', icon: 'Fuel', color: '#f97316' },
+        { name: 'מסעדות ופאבים', mainCat: 'אוכלים בחוץ', label: 'אוכל בחוץ', icon: 'Utensils', color: '#f59e0b' },
+        { name: 'בגדים והנעלה', mainCat: 'עושים קניות', label: 'בגדים והנעלה', icon: 'Shirt', color: '#ec4899' },
+        { name: 'חשמל', mainCat: 'משק בית', label: 'חשמל ומשק בית', icon: 'Home', color: '#6366f1' },
+      ];
+
+      // Calculate total spent historically for each
+      const query = `
+        SELECT 
+          category,
+          SUM(ABS(amount)) AS "totalAmount",
+          COUNT(*) AS "txCount"
+        FROM transactions
+        WHERE is_ignored = false AND amount < 0
+        GROUP BY category
+      `;
+      const allTxRes = await pool.query(query);
+      const catMap = new Map();
+      for (const r of allTxRes.rows) {
+        catMap.set(r.category, parseFloat(r.totalAmount));
+      }
+
+      // Calculate current calendar month spending for comparison
+      const curMonthRes = await pool.query(`
+        SELECT 
+          category,
+          SUM(ABS(amount)) AS "curMonthAmount"
+        FROM transactions
+        WHERE is_ignored = false AND amount < 0 AND date >= DATE_TRUNC('month', CURRENT_DATE)
+        GROUP BY category
+      `);
+      const curMap = new Map();
+      for (const r of curMonthRes.rows) {
+        curMap.set(r.category, parseFloat(r.curMonthAmount));
+      }
+
+      const results = keyCategories.map((kc) => {
+        const totalHistorical = (catMap.get(kc.name) || 0) + (catMap.get(kc.mainCat) ? (catMap.get(kc.mainCat) * 0.4) : 0);
+        const monthlyAvg = Math.round(totalHistorical / distinctMonths);
+        const currentMonth = curMap.get(kc.name) || curMap.get(kc.mainCat) || 0;
+        const diffPercent = monthlyAvg > 0 ? Math.round(((currentMonth - monthlyAvg) / monthlyAvg) * 100) : 0;
+
+        return {
+          ...kc,
+          monthlyAverage: monthlyAvg,
+          currentMonth: Math.round(currentMonth),
+          diffPercent,
+          status: diffPercent > 10 ? 'higher' : diffPercent < -10 ? 'lower' : 'normal',
+        };
+      });
+
+      return reply.code(200).send({ distinctMonths, data: results });
+    } catch (err) {
+      return reply.code(500).send({ error: 'Database error', message: err.message });
+    }
+  });
+
+  // GET /api/analytics/top-expenses - Largest single expenses
+  fastify.get('/top-expenses', async (request, reply) => {
+    const { year, month, limit = 5 } = request.query;
+    const now = new Date();
+    const targetYear = parseInt(year, 10) || now.getFullYear();
+    const targetMonth = parseInt(month, 10) || (now.getMonth() + 1);
+
+    const startDate = `${targetYear}-${String(targetMonth).padStart(2, '0')}-01`;
+    const lastDay = new Date(targetYear, targetMonth, 0).getDate();
+    const endDate = `${targetYear}-${String(targetMonth).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+
+    const query = `
+      SELECT 
+        t.id,
+        t.date,
+        ABS(t.amount) AS "amount",
+        t.currency,
+        COALESCE(NULLIF(t.merchant_name, ''), t.description, 'עסקה') AS "merchantName",
+        t.description,
+        t.category,
+        b.display_name AS "accountDisplayName",
+        b.bank_company AS "bankCompany"
+      FROM transactions t
+      JOIN bank_accounts b ON t.account_id = b.id
+      WHERE t.is_ignored = false 
+        AND t.amount < 0
+        AND t.date >= $1 AND t.date <= $2
+        AND LOWER(COALESCE(t.merchant_name, '')) NOT LIKE '%משיכת מזומן%'
+        AND LOWER(COALESCE(t.description, '')) NOT LIKE '%משיכת מזומן%'
+      ORDER BY ABS(t.amount) DESC
+      LIMIT $3
+    `;
+
+    try {
+      const res = await pool.query(query, [startDate, endDate, Math.min(parseInt(limit, 10) || 5, 20)]);
+      return reply.code(200).send({
+        period: { year: targetYear, month: targetMonth },
+        data: res.rows.map(r => ({
+          ...r,
+          amount: parseFloat(r.amount),
         })),
       });
     } catch (err) {

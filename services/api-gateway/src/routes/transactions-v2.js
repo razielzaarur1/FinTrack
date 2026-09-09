@@ -39,7 +39,9 @@ const cursorPaginationQuerySchema = z.object({
   cursor: z.string().optional(), // ISO date or compound cursor
   cursorId: z.string().uuid().optional(),
   accountId: z.string().uuid().optional(),
+  accountIds: z.string().optional(),
   category: z.string().optional(),
+  categories: z.string().optional(),
   type: z.enum(['income', 'expense', 'all']).optional(),
   startDate: z.string().optional(),
   endDate: z.string().optional(),
@@ -49,6 +51,8 @@ const cursorPaginationQuerySchema = z.object({
   hasNotes: z.coerce.boolean().optional(),
   hasSplits: z.coerce.boolean().optional(),
   isIgnored: z.coerce.boolean().default(false),
+  isReviewed: z.coerce.boolean().optional(),
+  isFlagged: z.coerce.boolean().optional(),
 });
 
 export default async function transactionsV2Routes(fastify, options) {
@@ -98,16 +102,38 @@ export default async function transactionsV2Routes(fastify, options) {
       conditions.push(`t.date <= $${values.length}`);
     }
 
-    // Account
-    if (accountId) {
+    // Account / Accounts (multi-select support)
+    if (accountIds) {
+      const ids = String(accountIds).split(',').map(s => s.trim()).filter(Boolean);
+      if (ids.length > 0) {
+        values.push(ids);
+        conditions.push(`t.account_id = ANY($${values.length}::uuid[])`);
+      }
+    } else if (accountId) {
       values.push(accountId);
       conditions.push(`t.account_id = $${values.length}`);
     }
 
-    // Category
-    if (category) {
+    // Category / Categories (multi-select + checks splits)
+    if (categories) {
+      const cats = String(categories).split(',').map(s => s.trim()).filter(Boolean);
+      if (cats.length > 0) {
+        values.push(cats);
+        conditions.push(`(t.category = ANY($${values.length}) OR EXISTS (SELECT 1 FROM transaction_splits ts WHERE ts.transaction_id = t.id AND ts.category = ANY($${values.length})))`);
+      }
+    } else if (category) {
       values.push(category);
-      conditions.push(`t.category = $${values.length}`);
+      conditions.push(`(t.category = $${values.length} OR EXISTS (SELECT 1 FROM transaction_splits ts WHERE ts.transaction_id = t.id AND ts.category = $${values.length}))`);
+    }
+
+    // Reviewed / Flagged filter
+    if (isReviewed !== undefined) {
+      values.push(isReviewed);
+      conditions.push(`t.is_reviewed = $${values.length}`);
+    }
+    if (isFlagged !== undefined) {
+      values.push(isFlagged);
+      conditions.push(`t.is_flagged = $${values.length}`);
     }
 
     // Transaction Type: income (positive amount) vs expense (negative amount)
@@ -180,6 +206,9 @@ export default async function transactionsV2Routes(fastify, options) {
         t.user_description AS "userDescription",
         t.is_ignored AS "isIgnored",
         t.is_split AS "isSplit",
+        t.is_manual_category AS "isManualCategory",
+        t.is_reviewed AS "isReviewed",
+        t.is_flagged AS "isFlagged",
         CASE
           WHEN LOWER(t.merchant_name) LIKE '%משיכת מזומן%' 
             OR LOWER(t.description) LIKE '%משיכת מזומן%' 
@@ -236,6 +265,8 @@ export default async function transactionsV2Routes(fastify, options) {
     if (category !== undefined) {
       values.push(category);
       setClauses.push(`category = $${values.length}`);
+      setClauses.push(`is_manual_category = true`);
+      setClauses.push(`is_reviewed = true`);
     }
     if (userDescription !== undefined) {
       values.push(userDescription);
@@ -302,6 +333,8 @@ export default async function transactionsV2Routes(fastify, options) {
     if (category !== undefined) {
       values.push(category);
       setClauses.push(`category = $${values.length}`);
+      setClauses.push(`is_manual_category = true`);
+      setClauses.push(`is_reviewed = true`);
     }
     if (isIgnored !== undefined) {
       values.push(isIgnored);
@@ -426,6 +459,23 @@ export default async function transactionsV2Routes(fastify, options) {
            WHERE bank_company = 'wallet' AND user_id = '00000000-0000-0000-0000-000000000001'`,
           [walletSplit.amount]
         );
+
+        // Fetch wallet account ID and insert/update deposit transaction
+        const walletAccRes = await client.query(
+          `SELECT id FROM bank_accounts WHERE bank_company = 'wallet' AND user_id = '00000000-0000-0000-0000-000000000001' LIMIT 1`
+        );
+        if (walletAccRes.rows.length > 0) {
+          const walletId = walletAccRes.rows[0].id;
+          const splitExternalId = `split_wallet_${id}`;
+          await client.query(
+            `INSERT INTO transactions (
+               account_id, external_id, date, amount, currency, description, merchant_name, category, status, user_description, is_manual_category, is_reviewed
+             ) VALUES ($1, $2, $3, $4, 'ILS', $5, 'ארנק מזומנים', 'ארנק מזומנים', 'completed', $6, true, true)
+             ON CONFLICT (account_id, external_id) DO UPDATE
+               SET amount = EXCLUDED.amount, description = EXCLUDED.description, user_description = EXCLUDED.user_description`,
+            [walletId, splitExternalId, txRes.rows[0].date || new Date(), walletSplit.amount, 'הפקדה מפיצול משיכת מזומן', walletSplit.description || 'הפקדה לארנק מזומנים']
+          );
+        }
       }
 
       await client.query('COMMIT');
@@ -452,6 +502,19 @@ export default async function transactionsV2Routes(fastify, options) {
       await client.query('BEGIN');
       await client.query('DELETE FROM transaction_splits WHERE transaction_id = $1', [id]);
       await client.query('UPDATE transactions SET is_split = false WHERE id = $1', [id]);
+
+      // Revert wallet deposit if it existed
+      const splitExternalId = `split_wallet_${id}`;
+      const prevWalletTx = await client.query('SELECT amount FROM transactions WHERE external_id = $1', [splitExternalId]);
+      if (prevWalletTx.rows.length > 0) {
+        const amt = parseFloat(prevWalletTx.rows[0].amount) || 0;
+        await client.query(
+          `UPDATE bank_accounts SET balance = GREATEST(balance - $1, 0) WHERE bank_company = 'wallet'`,
+          [amt]
+        );
+        await client.query('DELETE FROM transactions WHERE external_id = $1', [splitExternalId]);
+      }
+
       await client.query('COMMIT');
       return reply.code(200).send({ success: true, message: 'Splits removed' });
     } catch (err) {
@@ -584,7 +647,57 @@ export default async function transactionsV2Routes(fastify, options) {
       if (result.rows.length === 0) {
         return reply.code(404).send({ error: 'Link not found' });
       }
-      return reply.code(200).send({ success: true });
+  // GET /api/v2/transactions/review-queue - Get transactions awaiting review
+  fastify.get('/review-queue', async (request, reply) => {
+    const { flaggedOnly } = request.query;
+    const condition = flaggedOnly === 'true' ? 't.is_flagged = true' : 't.is_reviewed = false';
+    const query = `
+      SELECT 
+        t.id,
+        t.account_id AS "accountId",
+        b.bank_company AS "bankCompany",
+        b.display_name AS "accountDisplayName",
+        t.date,
+        t.amount,
+        t.currency,
+        t.description,
+        t.merchant_name AS "merchantName",
+        t.category,
+        t.user_description AS "userDescription",
+        t.is_flagged AS "isFlagged",
+        t.is_reviewed AS "isReviewed"
+      FROM transactions t
+      JOIN bank_accounts b ON t.account_id = b.id
+      WHERE b.user_id = '00000000-0000-0000-0000-000000000001' AND ${condition} AND t.is_ignored = false
+      ORDER BY t.date DESC, t.id DESC
+      LIMIT 100
+    `;
+    try {
+      const res = await pool.query(query);
+      return reply.code(200).send({ data: res.rows });
+    } catch (err) {
+      return reply.code(500).send({ error: 'Database error', message: err.message });
+    }
+  });
+
+  // POST /api/v2/transactions/:id/review - Fast review actions (approve, flag, unapprove, change_category)
+  fastify.post('/:id/review', async (request, reply) => {
+    const { id } = request.params;
+    const { action, category } = request.body || {};
+    try {
+      if (action === 'approve') {
+        await pool.query('UPDATE transactions SET is_reviewed = true, is_flagged = false WHERE id = $1', [id]);
+      } else if (action === 'flag') {
+        await pool.query('UPDATE transactions SET is_flagged = NOT is_flagged WHERE id = $1', [id]);
+      } else if (action === 'unapprove') {
+        await pool.query('UPDATE transactions SET is_reviewed = false WHERE id = $1', [id]);
+      } else if (action === 'change_category' && category) {
+        await pool.query(
+          'UPDATE transactions SET category = $1, is_manual_category = true, is_reviewed = true WHERE id = $2',
+          [category, id]
+        );
+      }
+      return reply.code(200).send({ success: true, id, action });
     } catch (err) {
       return reply.code(500).send({ error: 'Database error', message: err.message });
     }

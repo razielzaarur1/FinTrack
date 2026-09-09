@@ -9,7 +9,15 @@ import {
   Calendar,
   Layers,
   ArrowUpRight,
-  ArrowDownRight
+  ArrowDownRight,
+  Receipt,
+  Sparkles,
+  ShoppingBag,
+  Fuel,
+  Utensils,
+  Shirt,
+  Home,
+  RefreshCw
 } from 'lucide-react';
 import { 
   ResponsiveContainer, 
@@ -24,62 +32,248 @@ import {
   Cell 
 } from 'recharts';
 import { api } from '@/lib/api';
-import { formatILS } from '@/lib/formatters';
+import { formatILS, formatDate } from '@/lib/formatters';
 import { useApp } from '@/lib/app-context';
+import CategoryBadge from '@/components/common/CategoryBadge';
+
+const PERIOD_PRESETS = [
+  { id: 'current_month', label: 'חודש נוכחי' },
+  { id: 'last_month', label: 'חודש שעבר' },
+  { id: '3_months', label: '3 חודשים' },
+  { id: 'year', label: 'שנה אחרונה' },
+];
 
 export default function AnalyticsPage() {
   const { lang, t } = useApp();
+  const now = new Date();
+
+  const [period, setPeriod] = useState('current_month');
   const [breakdownType, setBreakdownType] = useState('expense');
+  
+  // Data States
+  const [loading, setLoading] = useState(true);
   const [breakdown, setBreakdown] = useState({ total: 0, data: [] });
   const [merchants, setMerchants] = useState([]);
-  const [daily, setDaily] = useState([]);
   const [trend, setTrend] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [averages, setAverages] = useState(null);
+  const [topExpenses, setTopExpenses] = useState([]);
+
+  // Compute Year/Month parameters for endpoints based on period preset
+  const getParamsForPeriod = () => {
+    if (period === 'current_month') {
+      return { year: now.getFullYear(), month: now.getMonth() + 1, trendMonths: 6 };
+    }
+    if (period === 'last_month') {
+      const lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      return { year: lastMonthDate.getFullYear(), month: lastMonthDate.getMonth() + 1, trendMonths: 6 };
+    }
+    if (period === '3_months') {
+      return { year: undefined, month: undefined, trendMonths: 3 };
+    }
+    return { year: undefined, month: undefined, trendMonths: 12 };
+  };
+
+  const loadData = async () => {
+    setLoading(true);
+    const { year, month, trendMonths } = getParamsForPeriod();
+
+    try {
+      const [catRes, merchRes, trendRes, avgRes, topExpRes] = await Promise.all([
+        api.getCategoryBreakdown({ year, month, type: breakdownType }),
+        api.getTopMerchants(year, month, 8),
+        api.getMonthlyTrend(trendMonths),
+        api.getCategoryAverages(),
+        api.getTopExpenses(year, month, 5),
+      ]);
+
+      if (catRes.data) setBreakdown(catRes.data);
+      if (merchRes.data) setMerchants(merchRes.data.data || []);
+      if (trendRes.data) setTrend(trendRes.data.data || []);
+      if (avgRes.data) setAverages(avgRes.data.data || null);
+      if (topExpRes.data) setTopExpenses(topExpRes.data.data || []);
+    } catch (err) {
+      console.error('Error fetching analytics data:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    async function loadAnalytics() {
-      setLoading(true);
-      try {
-        const [catRes, merchRes, dailyRes, trendRes] = await Promise.all([
-          api.getCategoryBreakdown(undefined, undefined, breakdownType),
-          api.getTopMerchants(undefined, undefined, 8),
-          api.getDailySpending(),
-          api.getMonthlyTrend(12),
-        ]);
-
-        if (catRes.data) setBreakdown(catRes.data);
-        if (merchRes.data) setMerchants(merchRes.data.data || []);
-        if (dailyRes.data) setDaily(dailyRes.data.data || []);
-        if (trendRes.data) setTrend(trendRes.data.data || []);
-      } catch (err) {
-        console.error('Error fetching analytics:', err);
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    loadAnalytics();
-  }, [breakdownType]);
+    loadData();
+  }, [period, breakdownType]);
 
   const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899', '#8b5cf6', '#14b8a6'];
 
+  const categoryAverageCards = [
+    {
+      title: 'סופר ומכולת',
+      amount: averages?.groceries || 0,
+      icon: ShoppingBag,
+      color: 'text-pink-500',
+      bg: 'bg-pink-500/10',
+    },
+    {
+      title: 'דלק ותחבורה',
+      amount: averages?.fuel || 0,
+      icon: Fuel,
+      color: 'text-orange-500',
+      bg: 'bg-orange-500/10',
+    },
+    {
+      title: 'אוכלים בחוץ',
+      amount: averages?.dining || 0,
+      icon: Utensils,
+      color: 'text-amber-500',
+      bg: 'bg-amber-500/10',
+    },
+    {
+      title: 'בגדים והנעלה',
+      amount: averages?.clothes || 0,
+      icon: Shirt,
+      color: 'text-purple-500',
+      bg: 'bg-purple-500/10',
+    },
+    {
+      title: 'משק בית וחשבונות',
+      amount: averages?.household || 0,
+      icon: Home,
+      color: 'text-indigo-500',
+      bg: 'bg-indigo-500/10',
+    },
+  ];
+
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="text-2xl md:text-3xl font-bold tracking-tight mb-1">
-          {t('analytics')}
-        </h1>
-        <p className="text-xs text-dark-text-muted light:text-light-text-muted">
-          {lang === 'he' ? 'ניתוח סטטיסטי מעמיק, מגמות חודשיות ומוכרים מובילים' : 'Deep statistics, monthly trajectories, and merchant breakdowns'}
-        </p>
+      {/* Page Title & Period Filter Bar */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl md:text-3xl font-bold tracking-tight mb-1">
+            סטטיסטיקות ותובנות
+          </h1>
+          <p className="text-xs text-dark-text-muted light:text-light-text-muted">
+            ממוצעים חודשיים, מגמות תקציב, ניתוח הוצאות ומובילי תשלומים
+          </p>
+        </div>
+
+        {/* Practical Period Preset Pills */}
+        <div className="flex items-center gap-2">
+          <div className="flex rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface p-1 text-xs shadow-sm">
+            {PERIOD_PRESETS.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => setPeriod(p.id)}
+                className={`px-3 py-1.5 rounded-xl font-semibold transition-all ${
+                  period === p.id
+                    ? 'bg-brand-primary text-white shadow-sm'
+                    : 'text-dark-text-muted hover:text-dark-text'
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+
+          <button
+            onClick={loadData}
+            disabled={loading}
+            className="p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text-muted hover:text-dark-text shadow-sm transition-colors"
+            title="רענן"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-brand-primary' : ''}`} />
+          </button>
+        </div>
       </div>
 
-      {/* 12-Month Grouped Bar Chart: Income vs Expenses */}
-      <div className="p-5 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface space-y-4">
+      {/* Monthly Category Averages Cards */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-bold flex items-center gap-2 text-dark-text light:text-light-text">
+            <Sparkles className="w-4 h-4 text-amber-400" />
+            <span>ממוצעים חודשיים (על פי נתוני 6 החודשים האחרונים)</span>
+          </h2>
+          <span className="text-[11px] text-dark-text-muted">עוזר להבין את קצב ההוצאה השגרתי</span>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          {categoryAverageCards.map((card, idx) => {
+            const Icon = card.icon;
+            return (
+              <div
+                key={idx}
+                className="p-4 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface shadow-xs space-y-2 hover:border-dark-border-hover transition-colors"
+              >
+                <div className="flex items-center justify-between">
+                  <div className={`p-2 rounded-xl ${card.bg} ${card.color}`}>
+                    <Icon className="w-4 h-4" />
+                  </div>
+                  <span className="text-[10px] text-dark-text-muted font-medium">ממוצע / חודש</span>
+                </div>
+                <div>
+                  <div className="text-xs text-dark-text-muted light:text-light-text-muted font-medium truncate">
+                    {card.title}
+                  </div>
+                  <div className="text-lg font-bold text-dark-text light:text-light-text font-mono mt-0.5" dir="ltr">
+                    {formatILS(card.amount)}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 5 Largest Single Expenses in Selected Period */}
+      <div className="p-5 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface space-y-4 shadow-sm">
+        <div className="flex items-center justify-between">
+          <h3 className="font-semibold text-base flex items-center gap-2">
+            <Receipt className="w-5 h-5 text-rose-500" />
+            <span>5 ההוצאות הגדולות ביותר בתקופה</span>
+          </h3>
+          <span className="text-xs text-dark-text-muted font-medium">עסקאות בודדות בולטות</span>
+        </div>
+
+        {topExpenses.length === 0 ? (
+          <div className="py-6 text-center text-xs text-dark-text-muted">
+            לא נמצאו עסקאות בתקופה זו
+          </div>
+        ) : (
+          <div className="divide-y divide-dark-border/40 light:divide-light-border/40">
+            {topExpenses.map((exp, idx) => (
+              <div key={exp.id || idx} className="py-3 flex items-center justify-between text-xs">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-6 h-6 rounded-lg bg-rose-500/10 text-rose-500 font-bold flex items-center justify-center text-[10px] shrink-0">
+                    {idx + 1}
+                  </div>
+                  <CategoryBadge category={exp.category} size={20} />
+                  <div className="min-w-0">
+                    <div className="font-bold text-sm text-dark-text light:text-light-text truncate">
+                      {exp.userDescription || exp.merchantName || exp.description || 'ללא שם'}
+                    </div>
+                    <div className="text-[11px] text-dark-text-muted flex items-center gap-1.5 mt-0.5">
+                      <span>{formatDate(exp.date, lang)}</span>
+                      <span>•</span>
+                      <span>{exp.accountDisplayName || exp.bankCompany}</span>
+                      <span>•</span>
+                      <span className="px-1.5 py-0.2 rounded bg-dark-surface-elevated text-[10px]">{exp.category || 'ללא סיווג'}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="font-bold text-sm sm:text-base text-rose-500 font-mono shrink-0 pr-3" dir="ltr">
+                  {formatILS(exp.amount)}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Multi-Month Trend Chart */}
+      <div className="p-5 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface space-y-4 shadow-sm">
         <div className="flex items-center justify-between">
           <h3 className="font-semibold text-base flex items-center gap-2">
             <BarChart3 className="w-5 h-5 text-brand-primary" />
-            <span>{lang === 'he' ? 'הכנסות והוצאות שנתיות (12 חודשים)' : 'Annual Income & Expenses (12 Months)'}</span>
+            <span>הכנסות מול הוצאות לאורך זמן</span>
           </h3>
         </div>
 
@@ -114,7 +308,7 @@ export default function AnalyticsPage() {
       {/* Categories Breakdown & Top Merchants */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Category Breakdown Donut */}
-        <div className="p-5 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface space-y-4">
+        <div className="p-5 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface space-y-4 shadow-sm">
           <div className="flex items-center justify-between">
             <h3 className="font-semibold text-base flex items-center gap-2">
               <PieIcon className="w-5 h-5 text-brand-cyan" />
@@ -124,16 +318,16 @@ export default function AnalyticsPage() {
             <div className="flex rounded-lg border border-dark-border light:border-light-border p-0.5 text-xs">
               <button
                 onClick={() => setBreakdownType('expense')}
-                className={`px-2.5 py-1 rounded-md font-medium ${
-                  breakdownType === 'expense' ? 'bg-brand-expense text-white' : 'text-dark-text-muted'
+                className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
+                  breakdownType === 'expense' ? 'bg-brand-expense text-white' : 'text-dark-text-muted hover:text-dark-text'
                 }`}
               >
                 {t('expense')}
               </button>
               <button
                 onClick={() => setBreakdownType('income')}
-                className={`px-2.5 py-1 rounded-md font-medium ${
-                  breakdownType === 'income' ? 'bg-brand-income text-white' : 'text-dark-text-muted'
+                className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
+                  breakdownType === 'income' ? 'bg-brand-income text-white' : 'text-dark-text-muted hover:text-dark-text'
                 }`}
               >
                 {t('income')}
@@ -186,10 +380,10 @@ export default function AnalyticsPage() {
         </div>
 
         {/* Top Merchants Leaderboard */}
-        <div className="p-5 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface space-y-4">
+        <div className="p-5 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface space-y-4 shadow-sm">
           <h3 className="font-semibold text-base flex items-center gap-2">
             <Store className="w-5 h-5 text-brand-amber" />
-            <span>{lang === 'he' ? 'בתי עסק מובילים' : 'Top Merchants'}</span>
+            <span>בתי עסק מובילים</span>
           </h3>
 
           {merchants.length === 0 ? (
@@ -206,10 +400,10 @@ export default function AnalyticsPage() {
                     </div>
                     <div>
                       <div className="font-semibold text-sm">{m.merchant}</div>
-                      <div className="text-dark-text-muted">{m.count} {lang === 'he' ? 'עסקאות' : 'transactions'} • {m.category || 'כללי'}</div>
+                      <div className="text-dark-text-muted">{m.count} עסקאות • {m.category || 'כללי'}</div>
                     </div>
                   </div>
-                  <div className="font-bold text-sm text-brand-expense">
+                  <div className="font-bold text-sm text-brand-expense font-mono" dir="ltr">
                     {formatILS(m.amount)}
                   </div>
                 </div>

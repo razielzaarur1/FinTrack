@@ -241,7 +241,7 @@ export async function reclassifyAllTransactions(userId = '00000000-0000-0000-000
     SELECT t.id, t.merchant_name, t.description, t.amount, t.raw_data->>'category' AS raw_category
     FROM transactions t
     JOIN bank_accounts a ON t.account_id = a.id
-    WHERE a.user_id = $1
+    WHERE a.user_id = $1 AND t.is_manual_category = false
   `;
   const result = await pool.query(txQuery, [userId]);
   let updatedCount = 0;

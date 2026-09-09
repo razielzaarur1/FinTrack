@@ -77,6 +77,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
   const parentAmount = Math.abs(parseFloat(tx.amount));
   const splitsTotal = splits.reduce((acc, s) => acc + (parseFloat(s.amount) || 0), 0);
   const splitsBalanced = Math.abs(parentAmount - splitsTotal) <= 0.01;
+  const remainingAmount = Number((parentAmount - splitsTotal).toFixed(2));
 
   const isAtmWithdrawal = Boolean(
     tx.isCashWithdrawal ||
@@ -88,12 +89,11 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
   const handleSetupAtmSplit = () => {
     setActiveTab('splits');
     const total = Math.abs(parseFloat(tx.amount) || 0);
-    const rentPart = total > 500 ? 500 : Math.round(total * 0.7);
-    const walletPart = Math.round((total - rentPart) * 100) / 100;
-    setSplits([
-      { amount: rentPart, category: 'דמי שכירות', description: 'שכר דירה / הוצאה במזומן' },
-      { amount: walletPart, category: 'ארנק מזומנים', description: 'העברה לארנק מזומנים' },
-    ]);
+    if (splits.length === 0) {
+      setSplits([
+        { amount: total, category: tx.category && tx.category !== 'ללא סיווג' ? tx.category : '', description: '' },
+      ]);
+    }
   };
 
   const handleSaveDetails = async () => {
@@ -131,8 +131,12 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
   };
 
   const handleSaveSplits = async () => {
+    if (splitsTotal > parentAmount + 0.01) {
+      setSplitError(lang === 'he' ? 'סכום הפיצולים אינו יכול לעלות על סכום התנועה המקורית' : 'Total splits cannot exceed the original transaction amount');
+      return;
+    }
     if (!splitsBalanced) {
-      setSplitError(lang === 'he' ? 'סכום הפיצולים חייב להיות שווה במדויק לסכום התנועה המקורית' : 'Total splits must strictly equal the original transaction amount');
+      setSplitError(lang === 'he' ? `סכום הפיצולים חייב להיות שווה במדויק לסכום התנועה המקורית (נותרה יתרה לחלוקה: ${formatILS(remainingAmount)})` : 'Total splits must strictly equal the original transaction amount');
       return;
     }
     setSplitError('');
@@ -265,7 +269,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
         </div>
 
         {/* Tab Body */}
-        <div className="flex-1 p-5 overflow-y-auto space-y-5">
+        <div className="flex-1 min-h-0 p-5 overflow-y-auto overscroll-contain space-y-5 pb-32">
           {/* 1. Details Tab */}
           {activeTab === 'details' && (
             <div className="space-y-4">
@@ -368,15 +372,22 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
           {/* 2. Splits Tab */}
           {activeTab === 'splits' && (
             <div className="space-y-4">
-              <div className="p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-xs space-y-1">
+              <div className="p-3.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-xs space-y-2">
                 <div className="flex justify-between font-semibold">
-                  <span>{lang === 'he' ? 'סכום מקורי:' : 'Original Amount:'}</span>
-                  <span>{formatILS(parentAmount)}</span>
+                  <span className="text-dark-text-muted light:text-light-text-muted">{lang === 'he' ? 'סכום מקורי:' : 'Original Amount:'}</span>
+                  <span className="font-bold text-sm">{formatILS(parentAmount)}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span>{lang === 'he' ? 'סכום פיצולים נוכחי:' : 'Current Splits Sum:'}</span>
-                  <span className={splitsBalanced ? 'text-brand-income font-bold' : 'text-brand-expense font-bold'}>
+                <div className="flex justify-between items-center">
+                  <span className="text-dark-text-muted light:text-light-text-muted">{lang === 'he' ? 'סכום פיצולים נוכחי:' : 'Current Splits Sum:'}</span>
+                  <span className={splitsBalanced ? 'text-brand-income font-bold text-sm' : 'text-brand-expense font-bold text-sm'}>
                     {formatILS(splitsTotal)}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center pt-2 border-t border-dark-border/40 light:border-light-border/40">
+                  <span className="font-semibold text-dark-text light:text-light-text">{lang === 'he' ? 'יתרה לחלוקה:' : 'Remaining to split:'}</span>
+                  <span className={`font-bold text-sm ${Math.abs(remainingAmount) < 0.01 ? 'text-emerald-400' : remainingAmount > 0 ? 'text-amber-400' : 'text-rose-500'}`}>
+                    {formatILS(remainingAmount)}
+                    {remainingAmount < -0.01 && <span className="text-[11px] font-normal mr-1 text-rose-400">({lang === 'he' ? 'חריגה מהסכום המקורי!' : 'Exceeds original!'})</span>}
                   </span>
                 </div>
               </div>
@@ -392,14 +403,17 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
                 {splits.map((s, idx) => (
                   <div key={idx} className="p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated/40 space-y-2">
                     <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={s.amount || ''}
-                        onChange={(e) => handleSplitChange(idx, 'amount', e.target.value)}
-                        placeholder="סכום (₪)"
-                        className="w-28 p-2 rounded-lg border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-xs"
-                      />
+                      <div className="relative">
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={s.amount || ''}
+                          onChange={(e) => handleSplitChange(idx, 'amount', e.target.value)}
+                          placeholder="0.00"
+                          className="w-28 p-2 rounded-lg border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none font-mono text-left rtl:text-right"
+                        />
+                        <span className="absolute left-2 rtl:left-auto rtl:right-2 top-2 text-xs text-dark-text-muted pointer-events-none">₪</span>
+                      </div>
                       <CategoryPicker
                         className="flex-1 min-w-[160px]"
                         value={s.category}
@@ -408,7 +422,8 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
                       />
                       <button
                         onClick={() => handleRemoveSplitRow(idx)}
-                        className="p-2 text-brand-expense hover:bg-dark-surface-elevated rounded-lg"
+                        className="p-2 text-brand-expense hover:bg-dark-surface-elevated rounded-lg transition-colors"
+                        title="הסר שורה"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -424,19 +439,23 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
                 ))}
               </div>
 
-              <div className="flex gap-2">
+              <div className="flex gap-2 pt-2">
                 <button
+                  type="button"
                   onClick={handleAddSplitRow}
-                  className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl border border-dark-border light:border-light-border hover:border-brand-primary text-xs font-semibold"
+                  className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-dark-border light:border-light-border hover:border-brand-primary text-xs font-semibold transition-colors"
                 >
                   <Plus className="w-4 h-4" />
                   <span>{lang === 'he' ? 'הוסף שורת פיצול' : 'Add Split Row'}</span>
                 </button>
                 <button
+                  type="button"
                   onClick={handleSaveSplits}
-                  disabled={savingSplits || splits.length === 0}
-                  className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-white text-xs font-semibold ${
-                    splitsBalanced ? 'bg-brand-primary hover:bg-brand-primary-hover' : 'bg-gray-600 opacity-60 cursor-not-allowed'
+                  disabled={savingSplits || splits.length === 0 || !splitsBalanced || splitsTotal > parentAmount + 0.001}
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-white text-xs font-semibold transition-all ${
+                    splitsBalanced && splitsTotal <= parentAmount + 0.001
+                      ? 'bg-brand-primary hover:bg-brand-primary-hover shadow-md shadow-brand-primary/20'
+                      : 'bg-gray-600 opacity-50 cursor-not-allowed'
                   }`}
                 >
                   <Check className="w-4 h-4" />
