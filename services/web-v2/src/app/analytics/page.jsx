@@ -44,7 +44,7 @@ const PERIOD_PRESETS = [
 ];
 
 export default function AnalyticsPage() {
-  const { lang, t } = useApp();
+  const { lang, t, theme } = useApp();
   const now = new Date();
 
   const [period, setPeriod] = useState('current_month');

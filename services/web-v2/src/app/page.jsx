@@ -23,7 +23,7 @@ import InstitutionLogo from '@/components/common/InstitutionLogo';
 import CategoryBadge from '@/components/common/CategoryBadge';
 
 export default function DashboardPage() {
-  const { t, lang } = useApp();
+  const { t, lang, theme } = useApp();
   const [overview, setOverview] = useState(null);
   const [trend, setTrend] = useState([]);
   const [accounts, setAccounts] = useState([]);

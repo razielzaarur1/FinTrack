@@ -20,11 +20,15 @@ import {
   Wallet,
   Banknote,
   Coins,
-  Copy
+  Copy,
+  Search,
+  Zap,
+  PiggyBank,
+  Utensils
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { formatILS, formatDate, formatRelativeTime } from '@/lib/formatters';
-import { ISRAELI_INSTITUTIONS, getInstitutionById } from '@/lib/institutions';
+import { ISRAELI_INSTITUTIONS, getInstitutionById, INSTITUTION_CATEGORIES } from '@/lib/institutions';
 import InstitutionLogo from '@/components/common/InstitutionLogo';
 import { useApp } from '@/lib/app-context';
 
@@ -38,6 +42,8 @@ export default function AccountsPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [step, setStep] = useState(1); // 1: choose institution, 2: credentials, 3: success
   const [selectedInst, setSelectedInst] = useState(null);
+  const [selectedCategory, setSelectedCategory] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
   const [credentials, setCredentials] = useState({});
   const [displayName, setDisplayName] = useState('');
   const [billingDay, setBillingDay] = useState(10);
@@ -121,6 +127,8 @@ export default function AccountsPage() {
 
   const handleOpenModal = () => {
     setSelectedInst(null);
+    setSelectedCategory('all');
+    setSearchQuery('');
     setCredentials({});
     setDisplayName('');
     setBillingDay(10);
@@ -641,28 +649,136 @@ export default function AccountsPage() {
             </div>
 
             {/* Step 1: Choose Institution */}
-            {step === 1 && (
-              <div className="space-y-4">
-                <p className="text-xs text-dark-text-muted">
-                  {lang === 'he' ? 'בחר בנק או חברת אשראי מרשימת המוסדות הנתמכים:' : 'Choose a bank or credit company from supported institutions:'}
-                </p>
+            {step === 1 && (() => {
+              const filteredInstitutions = ISRAELI_INSTITUTIONS.filter((inst) => {
+                if (selectedCategory !== 'all' && inst.category !== selectedCategory) return false;
+                if (searchQuery.trim()) {
+                  const q = searchQuery.toLowerCase();
+                  const matchName = inst.name.toLowerCase().includes(q);
+                  const matchNameEn = inst.nameEn?.toLowerCase().includes(q);
+                  const matchDesc = inst.description?.toLowerCase().includes(q);
+                  return matchName || matchNameEn || matchDesc;
+                }
+                return true;
+              });
 
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                  {ISRAELI_INSTITUTIONS.filter((inst) => inst.id !== 'wallet').map((inst) => (
-                    <button
-                      key={inst.id}
-                      onClick={() => handleSelectInstitution(inst)}
-                      className="p-3.5 rounded-2xl border border-dark-border light:border-light-border hover:border-brand-primary hover:shadow-md bg-dark-surface-elevated light:bg-light-surface-elevated text-center space-y-2 transition-all group flex flex-col items-center justify-center"
-                    >
-                      <InstitutionLogo bankCompany={inst.id} size={40} />
-                      <div className="font-semibold text-xs group-hover:text-brand-primary truncate">
-                        {lang === 'he' ? inst.name : inst.nameEn}
+              return (
+                <div className="space-y-4">
+                  <div>
+                    <h3 className="font-bold text-base text-dark-text light:text-light-text mb-0.5">
+                      {lang === 'he' ? 'בחר מוסד פיננסי לחיבור' : 'Choose Financial Institution'}
+                    </h3>
+                    <p className="text-xs text-dark-text-muted light:text-light-text-muted">
+                      {lang === 'he' 
+                        ? 'בנקים, כרטיסי אשראי, כרטיסי הסעדה וקופות גמל ופנסיה בישראל' 
+                        : 'Israeli banks, credit cards, food cards, and provident funds'}
+                    </p>
+                  </div>
+
+                  {/* Search Bar */}
+                  <div className="relative">
+                    <Search className="w-4 h-4 absolute start-3 top-1/2 -translate-y-1/2 text-dark-text-muted pointer-events-none" />
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder={lang === 'he' ? 'חיפוש מוסד, בנק, כרטיס או קופה...' : 'Search bank, card, or institution...'}
+                      className="w-full ps-9 pe-8 py-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-xs text-dark-text light:text-light-text placeholder:text-dark-text-muted focus:outline-none focus:border-brand-primary"
+                    />
+                    {searchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setSearchQuery('')}
+                        className="absolute end-2.5 top-1/2 -translate-y-1/2 p-1 rounded-md text-dark-text-muted hover:text-dark-text"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Category Filter Tabs */}
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+                    {INSTITUTION_CATEGORIES.map((cat) => {
+                      const isActive = selectedCategory === cat.id;
+                      return (
+                        <button
+                          key={cat.id}
+                          type="button"
+                          onClick={() => setSelectedCategory(cat.id)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all flex items-center gap-1.5 ${
+                            isActive
+                              ? 'bg-brand-primary text-white shadow-sm'
+                              : 'bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text-muted light:text-light-text-muted hover:text-dark-text hover:bg-dark-border/40'
+                          }`}
+                        >
+                          {cat.id === 'all' && <Landmark className="w-3.5 h-3.5" />}
+                          {cat.id === 'bank' && <Landmark className="w-3.5 h-3.5" />}
+                          {cat.id === 'credit' && <CreditCard className="w-3.5 h-3.5" />}
+                          {cat.id === 'food_perks' && <Utensils className="w-3.5 h-3.5" />}
+                          {cat.id === 'savings' && <PiggyBank className="w-3.5 h-3.5" />}
+                          {cat.id === 'wallet' && <Wallet className="w-3.5 h-3.5" />}
+                          <span>{lang === 'he' ? cat.label : cat.labelEn}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Institutions Grid */}
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 max-h-[380px] overflow-y-auto pe-1">
+                    {filteredInstitutions.map((inst) => (
+                      <button
+                        key={inst.id}
+                        onClick={() => handleSelectInstitution(inst)}
+                        className="p-3 rounded-2xl border border-dark-border/80 light:border-light-border/80 hover:border-brand-primary hover:shadow-md bg-dark-surface-elevated light:bg-light-surface-elevated text-center space-y-1.5 transition-all group flex flex-col items-center justify-between min-h-[110px]"
+                      >
+                        <div className="flex flex-col items-center gap-1.5 w-full pt-1">
+                          <InstitutionLogo bankCompany={inst.id} size={38} />
+                          <div className="font-bold text-xs group-hover:text-brand-primary transition-colors text-center truncate w-full">
+                            {lang === 'he' ? inst.name : inst.nameEn}
+                          </div>
+                          {inst.description && (
+                            <p className="text-[10px] text-dark-text-muted line-clamp-1 text-center w-full px-1">
+                              {inst.description}
+                            </p>
+                          )}
+                        </div>
+                        
+                        <div className="pt-1 w-full flex justify-center">
+                          {inst.isScrapable ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-full">
+                              <Zap className="w-2.5 h-2.5" />
+                              <span>{lang === 'he' ? 'סנכרון אוטומטי' : 'Auto Sync'}</span>
+                            </span>
+                          ) : inst.id === 'wallet' ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-full">
+                              <Wallet className="w-2.5 h-2.5" />
+                              <span>{lang === 'he' ? 'מזומן פיזי' : 'Cash'}</span>
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-medium text-indigo-400 dark:text-indigo-300 bg-indigo-500/10 px-2 py-0.5 rounded-full">
+                              <ShieldCheck className="w-2.5 h-2.5" />
+                              <span>{lang === 'he' ? 'חיסכון והטבות' : 'Perks & Savings'}</span>
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                    {filteredInstitutions.length === 0 && (
+                      <div className="col-span-full py-10 text-center text-xs text-dark-text-muted space-y-1">
+                        <div>לא נמצאו מוסדות תואמים לחיפוש</div>
+                        <button
+                          type="button"
+                          onClick={() => { setSelectedCategory('all'); setSearchQuery(''); }}
+                          className="text-brand-primary underline text-xs"
+                        >
+                          נקה סינונים
+                        </button>
                       </div>
-                    </button>
-                  ))}
+                    )}
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* Step 2: Credentials Form */}
             {step === 2 && selectedInst && (
@@ -932,6 +1048,22 @@ export default function AccountsPage() {
                     />
                   </div>
                 ))}
+
+                {selectedInst.description && (
+                  <div className="p-3 rounded-xl bg-dark-surface-elevated/80 border border-dark-border/60 text-[11px] text-dark-text-secondary light:text-light-text-secondary space-y-1">
+                    <div className="font-semibold text-dark-text light:text-light-text flex items-center gap-1.5">
+                      <ShieldCheck className="w-3.5 h-3.5 text-brand-primary" />
+                      <span>{selectedInst.name}</span>
+                    </div>
+                    <div>{selectedInst.description}</div>
+                  </div>
+                )}
+
+                {selectedInst.fields.length === 0 && (
+                  <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-600 dark:text-emerald-400">
+                    מוסד זה אינו דורש פרטי התחברות. תוכל לעדכן יתרה ולנהל תנועות באופן ידני בכל שלב.
+                  </div>
+                )}
 
                 <div className="p-3 rounded-xl bg-brand-primary/10 border border-brand-primary/20 text-[11px] text-dark-text-muted light:text-light-text-muted flex items-center gap-2">
                   <ShieldCheck className="w-4 h-4 text-brand-primary shrink-0" />
