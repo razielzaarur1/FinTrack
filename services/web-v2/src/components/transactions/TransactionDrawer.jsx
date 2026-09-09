@@ -17,6 +17,7 @@ import { api } from '@/lib/api';
 import { formatILS, formatDate } from '@/lib/formatters';
 import { useApp } from '@/lib/app-context';
 import CategoryBadge from '@/components/common/CategoryBadge';
+import CategoryPicker from '@/components/common/CategoryPicker';
 import { CATEGORIES_DATA } from '@/lib/categories';
 
 export default function TransactionDrawer({ tx, onClose, onUpdate }) {
@@ -77,6 +78,24 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
   const splitsTotal = splits.reduce((acc, s) => acc + (parseFloat(s.amount) || 0), 0);
   const splitsBalanced = Math.abs(parentAmount - splitsTotal) <= 0.01;
 
+  const isAtmWithdrawal = Boolean(
+    tx.isCashWithdrawal ||
+    (tx.merchantName && tx.merchantName.includes('משיכת מזומן')) ||
+    (tx.description && tx.description.includes('משיכת מזומן')) ||
+    (tx.merchantName && tx.merchantName.includes('כספומט'))
+  );
+
+  const handleSetupAtmSplit = () => {
+    setActiveTab('splits');
+    const total = Math.abs(parseFloat(tx.amount) || 0);
+    const rentPart = total > 500 ? 500 : Math.round(total * 0.7);
+    const walletPart = Math.round((total - rentPart) * 100) / 100;
+    setSplits([
+      { amount: rentPart, category: 'דמי שכירות', description: 'שכר דירה / הוצאה במזומן' },
+      { amount: walletPart, category: 'ארנק מזומנים', description: 'העברה לארנק מזומנים' },
+    ]);
+  };
+
   const handleSaveDetails = async () => {
     setSavingTx(true);
     try {
@@ -87,6 +106,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
       });
       if (res.data) {
         onUpdate?.({ ...tx, category, userDescription: userDesc, isIgnored });
+        onClose?.(); // Automatically close drawer on save
       }
     } finally {
       setSavingTx(false);
@@ -123,6 +143,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
         setSplitError(res.error);
       } else {
         onUpdate?.({ ...tx, isSplit: true });
+        onClose?.(); // Automatically close drawer on save
       }
     } finally {
       setSavingSplits(false);
@@ -284,32 +305,39 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
                 />
               </div>
 
-              {/* Category Picker */}
+              {isAtmWithdrawal && (
+                <div className="p-3.5 rounded-2xl border border-amber-500/30 bg-amber-500/10 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-2xl">💵</span>
+                    <div>
+                      <div className="text-xs font-bold text-amber-500 dark:text-amber-400">
+                        זוהתה משיכת מזומן מכספומט
+                      </div>
+                      <div className="text-[11px] text-dark-text-muted light:text-light-text-muted">
+                        אינה נספרת כבית עסק. נדרש סיווג או פיצול לארנק
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleSetupAtmSplit}
+                    className="px-3 py-1.5 rounded-xl bg-amber-500 text-black text-xs font-bold hover:bg-amber-400 transition-colors shrink-0 shadow-sm"
+                  >
+                    פצל לארנק/הוצאה
+                  </button>
+                </div>
+              )}
+
+              {/* Category Picker with Badges & Subcategories */}
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">
                   {t('category')}
                 </label>
-                <select
+                <CategoryPicker
                   value={category}
-                  onChange={(e) => setCategory(e.target.value)}
-                  className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-sm focus:outline-none focus:border-brand-primary cursor-pointer"
-                >
-                  <option value="">{lang === 'he' ? 'בחר קטגוריה...' : 'Select category...'}</option>
-                  <optgroup label="הוצאות">
-                    {CATEGORIES_DATA.expenses.map((c) => (
-                      <option key={c.id} value={c.name}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </optgroup>
-                  <optgroup label="הכנסות">
-                    {CATEGORIES_DATA.incomes.map((c) => (
-                      <option key={c.id} value={c.name}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </optgroup>
-                </select>
+                  onChange={setCategory}
+                  placeholder={lang === 'he' ? 'בחר קטגוריה או תת-קטגוריה...' : 'Select category...'}
+                />
               </div>
 
               {/* Ignore Checkbox */}
@@ -372,15 +400,12 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
                         placeholder="סכום (₪)"
                         className="w-28 p-2 rounded-lg border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-xs"
                       />
-                      <select
+                      <CategoryPicker
+                        className="flex-1 min-w-[160px]"
                         value={s.category}
-                        onChange={(e) => handleSplitChange(idx, 'category', e.target.value)}
-                        className="flex-1 p-2 rounded-lg border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-xs"
-                      >
-                        {categories.map((c) => (
-                          <option key={c.id} value={c.name}>{c.name}</option>
-                        ))}
-                      </select>
+                        onChange={(val) => handleSplitChange(idx, 'category', val)}
+                        placeholder="בחר קטגוריה..."
+                      />
                       <button
                         onClick={() => handleRemoveSplitRow(idx)}
                         className="p-2 text-brand-expense hover:bg-dark-surface-elevated rounded-lg"

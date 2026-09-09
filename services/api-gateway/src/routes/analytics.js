@@ -29,11 +29,12 @@ export default async function analyticsRoutes(fastify, options) {
       const netSavings = income - expense;
       const savingsRate = income > 0 ? Math.max(0, Math.round((netSavings / income) * 100)) : 0;
 
-      // Net worth from all active bank accounts
+      // Net worth strictly from active bank accounts, wallet, and investments (excluding credit cards)
       const accountsRes = await pool.query(`
         SELECT COALESCE(SUM(balance), 0) AS "netWorth"
         FROM bank_accounts
-        WHERE is_active = true
+        WHERE is_active = true 
+          AND bank_company NOT IN ('max', 'cal', 'isracard', 'amex')
       `);
       const netWorth = parseFloat(accountsRes.rows[0].netWorth);
 
@@ -154,7 +155,15 @@ export default async function analyticsRoutes(fastify, options) {
     const limit = Math.min(parseInt(request.query.limit, 10) || 10, 50);
     const { year, month } = request.query;
 
-    const conditions = ['is_ignored = false', 'amount < 0'];
+    const conditions = [
+      'is_ignored = false',
+      'amount < 0',
+      "LOWER(COALESCE(merchant_name, '')) NOT LIKE '%משיכת מזומן%'",
+      "LOWER(COALESCE(description, '')) NOT LIKE '%משיכת מזומן%'",
+      "LOWER(COALESCE(merchant_name, '')) NOT LIKE '%כספומט%'",
+      "LOWER(COALESCE(description, '')) NOT LIKE '%כספומט%'",
+      "LOWER(COALESCE(merchant_name, '')) NOT LIKE '%atm%'",
+    ];
     const values = [];
 
     if (year && month) {

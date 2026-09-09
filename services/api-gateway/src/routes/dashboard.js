@@ -60,7 +60,8 @@ export default async function dashboardRoutes(fastify, options) {
         }
       }
 
-      const netWorth = liquidCash + investments - totalCreditDue;
+      // Net worth strictly from liquid bank accounts, cash wallet, and investments (excluding credit cards)
+      const netWorth = liquidCash + investments;
 
       // 2. Fetch current month income & expenses
       const monthlyRes = await pool.query(

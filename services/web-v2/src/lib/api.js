@@ -48,6 +48,7 @@ export const api = {
     return request(`/api/v2/transactions?${searchParams.toString()}`);
   },
   updateTransaction: (id, data) => request(`/api/v2/transactions/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  bulkUpdateTransactions: (data) => request('/api/v2/transactions/bulk-update', { method: 'POST', body: JSON.stringify(data) }),
 
   // Splits
   getSplits: (txId) => request(`/api/v2/transactions/${txId}/splits`),
@@ -64,11 +65,21 @@ export const api = {
   linkTransaction: (txId, data) => request(`/api/v2/transactions/${txId}/links`, { method: 'POST', body: JSON.stringify(data) }),
   deleteLink: (linkId) => request(`/api/v2/transactions/links/${linkId}`, { method: 'DELETE' }),
 
-  // Categories
-  getCategories: (type) => request(`/api/categories${type ? `?type=${type}` : ''}`),
+  // Categories & Learning
+  getCategories: (type, tree) => {
+    const q = new URLSearchParams();
+    if (type) q.append('type', type);
+    if (tree) q.append('tree', 'true');
+    const qs = q.toString();
+    return request(`/api/categories${qs ? `?${qs}` : ''}`);
+  },
   createCategory: (data) => request('/api/categories', { method: 'POST', body: JSON.stringify(data) }),
   updateCategory: (id, data) => request(`/api/categories/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteCategory: (id) => request(`/api/categories/${id}`, { method: 'DELETE' }),
+  classifyTransaction: (data) => request('/api/categories/classify', { method: 'POST', body: JSON.stringify(data) }),
+  getCategoryRules: () => request('/api/categories/rules'),
+  saveCategoryRule: (data) => request('/api/categories/rules', { method: 'POST', body: JSON.stringify(data) }),
+  reclassifyAllTransactions: () => request('/api/categories/reclassify-all', { method: 'POST' }),
 
   // Analytics
   getAnalyticsOverview: (year, month) => {

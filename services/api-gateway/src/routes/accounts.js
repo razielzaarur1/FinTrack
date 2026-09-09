@@ -16,25 +16,27 @@ const createAccountSchema = z.object({
 const updateAccountSchema = z.object({
   displayName: z.string().optional(),
   billingDay: z.coerce.number().int().min(1).max(31).optional(),
+  balance: z.coerce.number().optional(),
 });
 
-function getCycleDates(billingDay = 10) {
+function getBillingDates(billingDay = 10) {
   const now = new Date();
   const curDay = now.getDate();
   const curMonth = now.getMonth();
   const curYear = now.getFullYear();
 
-  let cycleStart, cycleEnd;
   const day = Math.min(Math.max(parseInt(billingDay, 10) || 10, 1), 28);
 
+  let nextBillingDate, prevBillingDate;
   if (curDay <= day) {
-    cycleEnd = new Date(curYear, curMonth, day, 23, 59, 59, 999);
-    cycleStart = new Date(curYear, curMonth - 1, day, 0, 0, 0, 0);
+    nextBillingDate = new Date(curYear, curMonth, day);
+    prevBillingDate = new Date(curYear, curMonth - 1, day);
   } else {
-    cycleEnd = new Date(curYear, curMonth + 1, day, 23, 59, 59, 999);
-    cycleStart = new Date(curYear, curMonth, day, 0, 0, 0, 0);
+    nextBillingDate = new Date(curYear, curMonth + 1, day);
+    prevBillingDate = new Date(curYear, curMonth, day);
   }
-  return { cycleStart, cycleEnd };
+
+  return { nextBillingDate, prevBillingDate };
 }
 
 export default async function accountsRoutes(fastify, options) {
@@ -60,6 +62,7 @@ export default async function accountsRoutes(fastify, options) {
              ELSE 'idle'
            END AS "scrapeStatus",
            CASE
+             WHEN bank_company = 'wallet' THEN 'wallet'
              WHEN bank_company IN ('max', 'cal', 'isracard', 'amex') THEN 'credit'
              WHEN bank_company LIKE '%inv%' OR bank_company LIKE '%saving%' THEN 'savings'
              ELSE 'checking'
@@ -71,34 +74,85 @@ export default async function accountsRoutes(fastify, options) {
         [DEFAULT_USER_ID]
       );
 
-      // Compute dynamic upcoming cycle charge for credit accounts
+      // Compute dynamic upcoming cycle charge, past billed cycle, and matching bank debits
       const accounts = await Promise.all(
         result.rows.map(async (acc) => {
           if (acc.accountType === 'credit') {
-            const { cycleStart, cycleEnd } = getCycleDates(acc.billingDay);
-            const sumRes = await pool.query(
-              `SELECT -COALESCE(SUM(amount), 0)::FLOAT AS "cycleCharge"
+            const { nextBillingDate, prevBillingDate } = getBillingDates(acc.billingDay);
+            const nextStr = nextBillingDate.toISOString().slice(0, 10);
+            const prevStr = prevBillingDate.toISOString().slice(0, 10);
+
+            // 1. Upcoming Charge (transactions scheduled for next billing date)
+            const upcomingRes = await pool.query(
+              `SELECT -COALESCE(SUM(amount), 0)::FLOAT AS "charge"
                FROM transactions
                WHERE account_id = $1
                  AND is_ignored = false
-                 AND date >= $2::date
-                 AND date <= $3::date`,
-              [acc.id, cycleStart.toISOString().slice(0, 10), cycleEnd.toISOString().slice(0, 10)]
+                 AND (
+                   processed_date = $2::date
+                   OR (processed_date >= CURRENT_DATE AND processed_date <= $2::date)
+                 )`,
+              [acc.id, nextStr]
             );
 
-            const calculated = sumRes.rows[0]?.cycleCharge;
-            // If transactions exist for this cycle, use calculated net charge
-            // Expenses (negative in tx) become positive charges; refunds (positive in tx) become negative credits
-            if (calculated !== null && calculated !== undefined && Math.abs(calculated) > 0) {
-              return {
-                ...acc,
-                balance: calculated,
-                upcomingCharge: calculated,
-                cycleStart: cycleStart.toISOString(),
-                cycleEnd: cycleEnd.toISOString(),
-              };
-            }
+            // 2. Billed in Previous Cycle (transactions that were processed on the previous cycle date)
+            const prevRes = await pool.query(
+              `SELECT -COALESCE(SUM(amount), 0)::FLOAT AS "charge"
+               FROM transactions
+               WHERE account_id = $1
+                 AND is_ignored = false
+                 AND processed_date = $2::date`,
+              [acc.id, prevStr]
+            );
+
+            // 3. Search for actual credit card bank debit in user's checking account
+            const bankKeywords = {
+              max: ['מקס', 'לאומי קארד', 'max'],
+              isracard: ['ישראכרט', 'isracard'],
+              cal: ['ויזה כאל', 'כאל', 'cal'],
+              amex: ['אמריקן אקספרס', 'amex'],
+            }[acc.bankCompany] || [acc.bankCompany];
+
+            const keywordConditions = bankKeywords
+              .map((_, i) => `(LOWER(t.merchant_name) LIKE '%' || $${i + 3} || '%' OR LOWER(t.description) LIKE '%' || $${i + 3} || '%')`)
+              .join(' OR ');
+
+            const debitRes = await pool.query(
+              `SELECT t.date, ABS(t.amount)::FLOAT AS amount, t.description, t.merchant_name
+               FROM transactions t
+               JOIN bank_accounts b ON t.account_id = b.id
+               WHERE b.user_id = $1
+                 AND b.bank_company NOT IN ('max', 'cal', 'isracard', 'amex', 'wallet')
+                 AND t.amount < 0
+                 AND (${keywordConditions})
+                 AND t.date >= ($2::date - INTERVAL '10 days')
+                 AND t.date <= ($2::date + INTERVAL '15 days')
+               ORDER BY t.date DESC
+               LIMIT 1`,
+              [DEFAULT_USER_ID, prevStr, ...bankKeywords]
+            );
+
+            const upcomingCharge = upcomingRes.rows[0]?.charge || 0;
+            const billedLastCycle = prevRes.rows[0]?.charge || 0;
+            const bankDebit = debitRes.rows[0]
+              ? {
+                  date: debitRes.rows[0].date,
+                  amount: debitRes.rows[0].amount,
+                  description: debitRes.rows[0].description || debitRes.rows[0].merchant_name,
+                }
+              : null;
+
+            return {
+              ...acc,
+              balance: upcomingCharge,
+              upcomingCharge,
+              billedLastCycle,
+              bankDebit,
+              nextBillingDate: nextStr,
+              prevBillingDate: prevStr,
+            };
           }
+
           return {
             ...acc,
             upcomingCharge: acc.balance,
@@ -155,15 +209,22 @@ export default async function accountsRoutes(fastify, options) {
       });
     }
 
-    const { displayName, billingDay } = parseResult.data;
+    const { displayName, billingDay, balance } = parseResult.data;
     try {
       const result = await pool.query(
         `UPDATE bank_accounts
          SET display_name = COALESCE($1, display_name),
-             billing_day = COALESCE($2, billing_day)
-         WHERE id = $3 AND user_id = $4
-         RETURNING id, user_id, bank_company, display_name, billing_day AS "billingDay", is_active`,
-        [displayName !== undefined ? displayName : null, billingDay !== undefined ? billingDay : null, id, DEFAULT_USER_ID]
+             billing_day = COALESCE($2, billing_day),
+             balance = COALESCE($3, balance)
+         WHERE id = $4 AND user_id = $5
+         RETURNING id, user_id, bank_company, display_name, billing_day AS "billingDay", balance, is_active`,
+        [
+          displayName !== undefined ? displayName : null,
+          billingDay !== undefined ? billingDay : null,
+          balance !== undefined ? balance : null,
+          id,
+          DEFAULT_USER_ID,
+        ]
       );
 
       if (result.rowCount === 0) {

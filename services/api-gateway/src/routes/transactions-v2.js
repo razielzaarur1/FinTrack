@@ -1,5 +1,12 @@
 import { z } from 'zod';
 import { pool } from '../db.js';
+import { saveUserRule } from '../services/classifier.js';
+
+const bulkUpdateSchema = z.object({
+  transactionIds: z.array(z.string().uuid()).min(1, 'At least one transaction ID is required'),
+  category: z.string().optional(),
+  isIgnored: z.boolean().optional(),
+});
 
 const splitItemSchema = z.object({
   amount: z.number().positive('Amount must be positive'),
@@ -164,6 +171,7 @@ export default async function transactionsV2Routes(fastify, options) {
         b.account_number AS "accountNumber",
         t.external_id AS "externalId",
         t.date,
+        t.processed_date AS "processedDate",
         t.amount,
         t.currency,
         t.description,
@@ -172,6 +180,15 @@ export default async function transactionsV2Routes(fastify, options) {
         t.user_description AS "userDescription",
         t.is_ignored AS "isIgnored",
         t.is_split AS "isSplit",
+        CASE
+          WHEN LOWER(t.merchant_name) LIKE '%משיכת מזומן%' 
+            OR LOWER(t.description) LIKE '%משיכת מזומן%' 
+            OR LOWER(t.merchant_name) LIKE '%כספומט%'
+            OR LOWER(t.description) LIKE '%כספומט%' 
+            OR LOWER(t.merchant_name) LIKE '%atm%'
+          THEN true
+          ELSE false
+        END AS "isCashWithdrawal",
         t.status,
         t.created_at AS "createdAt",
         (SELECT COUNT(*) FROM transaction_notes tn WHERE tn.transaction_id = t.id) > 0 AS "hasNotes",
@@ -246,9 +263,92 @@ export default async function transactionsV2Routes(fastify, options) {
       if (result.rows.length === 0) {
         return reply.code(404).send({ error: 'Transaction not found' });
       }
+
+      // Auto-learn user categorization rule if category was updated
+      if (category) {
+        pool.query('SELECT merchant_name FROM transactions WHERE id = $1', [id])
+          .then((res) => {
+            const m = res.rows[0]?.merchant_name;
+            if (m && m.trim() && m !== 'בית עסק') {
+              saveUserRule({
+                userId: '00000000-0000-0000-0000-000000000001',
+                merchantPattern: m.trim(),
+                category: category,
+                matchType: 'exact',
+              }).catch(() => {});
+            }
+          })
+          .catch(() => {});
+      }
+
       return reply.code(200).send({ success: true, data: result.rows[0] });
     } catch (err) {
       fastify.log.error(err, 'Failed to update transaction');
+      return reply.code(500).send({ error: 'Database error', message: err.message });
+    }
+  });
+
+  // POST /api/v2/transactions/bulk-update - Update multiple transactions category or ignored status
+  fastify.post('/bulk-update', async (request, reply) => {
+    const parseResult = bulkUpdateSchema.safeParse(request.body);
+    if (!parseResult.success) {
+      return reply.code(400).send({ error: 'Validation Error', details: parseResult.error.issues });
+    }
+
+    const { transactionIds, category, isIgnored } = parseResult.data;
+    const setClauses = [];
+    const values = [];
+
+    if (category !== undefined) {
+      values.push(category);
+      setClauses.push(`category = $${values.length}`);
+    }
+    if (isIgnored !== undefined) {
+      values.push(isIgnored);
+      setClauses.push(`is_ignored = $${values.length}`);
+    }
+
+    if (setClauses.length === 0) {
+      return reply.code(400).send({ error: 'Nothing to update' });
+    }
+
+    values.push(transactionIds);
+    const query = `
+      UPDATE transactions
+      SET ${setClauses.join(', ')}
+      WHERE id = ANY($${values.length}::uuid[])
+      RETURNING id, category, is_ignored AS "isIgnored"
+    `;
+
+    try {
+      const result = await pool.query(query, values);
+
+      // Also learn user rule for merchants of updated transactions
+      if (category) {
+        pool.query(
+          `SELECT DISTINCT merchant_name FROM transactions WHERE id = ANY($1::uuid[]) AND merchant_name IS NOT NULL`,
+          [transactionIds]
+        ).then((res) => {
+          for (const row of res.rows) {
+            if (row.merchant_name && row.merchant_name.trim() && row.merchant_name !== 'בית עסק') {
+              saveUserRule({
+                userId: '00000000-0000-0000-0000-000000000001',
+                merchantPattern: row.merchant_name.trim(),
+                category: category,
+                matchType: 'exact',
+              }).catch(() => {});
+            }
+          }
+        }).catch(() => {});
+      }
+
+      return reply.code(200).send({
+        success: true,
+        updatedCount: result.rowCount,
+        data: result.rows,
+      });
+    } catch (err) {
+      fastify.log.error(err, 'Failed to bulk update transactions');
       return reply.code(500).send({ error: 'Database error', message: err.message });
     }
   });
@@ -313,6 +413,21 @@ export default async function transactionsV2Routes(fastify, options) {
       }
 
       await client.query('UPDATE transactions SET is_split = true WHERE id = $1', [id]);
+
+      // Check if any split is allocated to "ארנק" (Cash Wallet)
+      const walletSplit = splits.find(s => 
+        (s.category && s.category.includes('ארנק')) || 
+        (s.description && s.description.includes('ארנק'))
+      );
+      if (walletSplit && walletSplit.amount > 0) {
+        await client.query(
+          `UPDATE bank_accounts 
+           SET balance = balance + $1 
+           WHERE bank_company = 'wallet' AND user_id = '00000000-0000-0000-0000-000000000001'`,
+          [walletSplit.amount]
+        );
+      }
+
       await client.query('COMMIT');
 
       const updated = await pool.query(

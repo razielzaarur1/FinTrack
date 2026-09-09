@@ -215,8 +215,27 @@ async function ensureSchema() {
               CONSTRAINT uq_system_settings_user UNIQUE (user_id)
           );
 
-          -- 11. Alterations & Migrations
+          -- 11. User Category Learning Rules
+          CREATE TABLE IF NOT EXISTS user_category_rules (
+              id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+              user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              merchant_pattern VARCHAR(255) NOT NULL,
+              category VARCHAR(100) NOT NULL,
+              sub_category VARCHAR(100),
+              match_type VARCHAR(20) NOT NULL DEFAULT 'exact',
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              CONSTRAINT uq_user_merchant_pattern UNIQUE (user_id, merchant_pattern)
+          );
+
+          -- 12. Alterations & Migrations
           ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS billing_day INT DEFAULT 10;
+          ALTER TABLE transactions ADD COLUMN IF NOT EXISTS processed_date DATE;
+          ALTER TABLE categories ADD COLUMN IF NOT EXISTS parent_id UUID REFERENCES categories(id) ON DELETE CASCADE;
+          ALTER TABLE categories ADD COLUMN IF NOT EXISTS custom_svg TEXT;
+
+          CREATE INDEX IF NOT EXISTS idx_transactions_processed_date ON transactions(processed_date);
+          CREATE INDEX IF NOT EXISTS idx_user_category_rules_user_pattern ON user_category_rules(user_id, merchant_pattern);
 
           -- Correct past transactions where merchant_name was set to memo instead of actual store description
           UPDATE transactions 
@@ -230,6 +249,29 @@ async function ensureSchema() {
           UPDATE transactions
           SET merchant_name = description
           WHERE (merchant_name IS NULL OR merchant_name = '') AND description IS NOT NULL;
+
+          -- Populate processed_date from raw_data or date
+          UPDATE transactions 
+          SET processed_date = (raw_data->>'processedDate')::date
+          WHERE processed_date IS NULL AND raw_data->>'processedDate' IS NOT NULL;
+
+          UPDATE transactions 
+          SET processed_date = date
+          WHERE processed_date IS NULL;
+
+          -- Ensure default virtual wallet account exists for user
+          INSERT INTO bank_accounts (
+            id, user_id, bank_company, encrypted_credentials, display_name, account_number, balance, is_active
+          ) VALUES (
+            '00000000-0000-0000-0000-000000000002',
+            '00000000-0000-0000-0000-000000000001',
+            'wallet',
+            'none',
+            'ארנק מזומנים',
+            'CASH-01',
+            0.00,
+            true
+          ) ON CONFLICT (id) DO NOTHING;
         `);
 
         await client.query('COMMIT');

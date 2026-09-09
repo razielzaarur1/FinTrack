@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback, Suspense } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { 
   Search, 
@@ -18,12 +18,15 @@ import {
   Tag, 
   RotateCcw,
   Clock,
-  ChevronDown
+  ChevronDown,
+  CheckSquare,
+  Square
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { formatILS, formatDate } from '@/lib/formatters';
 import { useApp } from '@/lib/app-context';
 import CategoryBadge from '@/components/common/CategoryBadge';
+import CategoryPicker from '@/components/common/CategoryPicker';
 import InstitutionLogo from '@/components/common/InstitutionLogo';
 import TransactionDrawer from '@/components/transactions/TransactionDrawer';
 import { CATEGORIES_DATA } from '@/lib/categories';
@@ -54,6 +57,71 @@ function TransactionsContent() {
   // UI State
   const [showFilters, setShowFilters] = useState(false);
   const [selectedTx, setSelectedTx] = useState(null);
+
+  // Multi-selection state & banner
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [bulkCategoryModalOpen, setBulkCategoryModalOpen] = useState(false);
+  const [bulkCategory, setBulkCategory] = useState('');
+  const [savingBulk, setSavingBulk] = useState(false);
+
+  const toggleSelect = (id, e) => {
+    e?.stopPropagation();
+    const next = new Set(selectedIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelectedIds(next);
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === transactions.length && transactions.length > 0) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(transactions.map((t) => t.id)));
+    }
+  };
+
+  const selectedTxs = useMemo(() => {
+    return transactions.filter((t) => selectedIds.has(t.id));
+  }, [transactions, selectedIds]);
+
+  const selectedCount = selectedIds.size;
+
+  const totalSelectedSum = useMemo(() => {
+    return selectedTxs.reduce((acc, t) => acc + (parseFloat(t.amount) || 0), 0);
+  }, [selectedTxs]);
+
+  const totalSelectedExpenses = useMemo(() => {
+    return selectedTxs
+      .filter((t) => parseFloat(t.amount) < 0)
+      .reduce((acc, t) => acc + Math.abs(parseFloat(t.amount) || 0), 0);
+  }, [selectedTxs]);
+
+  const totalSelectedIncomes = useMemo(() => {
+    return selectedTxs
+      .filter((t) => parseFloat(t.amount) > 0)
+      .reduce((acc, t) => acc + (parseFloat(t.amount) || 0), 0);
+  }, [selectedTxs]);
+
+  const handleApplyBulkCategory = async () => {
+    if (!bulkCategory || selectedIds.size === 0) return;
+    setSavingBulk(true);
+    try {
+      const ids = Array.from(selectedIds);
+      const res = await api.bulkUpdateTransactions({
+        transactionIds: ids,
+        category: bulkCategory,
+      });
+      if (res.data) {
+        setTransactions((prev) =>
+          prev.map((t) => (selectedIds.has(t.id) ? { ...t, category: bulkCategory } : t))
+        );
+        setBulkCategoryModalOpen(false);
+        setSelectedIds(new Set());
+      }
+    } finally {
+      setSavingBulk(false);
+    }
+  };
 
   const observer = useRef();
 
@@ -490,6 +558,32 @@ function TransactionsContent() {
 
       {/* Infinite Transaction List */}
       <div className="rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface overflow-hidden shadow-sm">
+        {/* Select All & Multi-select Header Bar */}
+        {transactions.length > 0 && (
+          <div className="px-4 py-2.5 bg-dark-surface-elevated/50 light:bg-light-surface-elevated/50 border-b border-dark-border/60 light:border-light-border/60 flex items-center justify-between text-xs text-dark-text-muted light:text-light-text-muted">
+            <div className="flex items-center gap-2.5">
+              <input
+                type="checkbox"
+                checked={selectedIds.size === transactions.length && transactions.length > 0}
+                onChange={toggleSelectAll}
+                className="w-4 h-4 rounded text-brand-primary focus:ring-brand-primary cursor-pointer"
+                title="סמן את כל התנועות"
+              />
+              <span className="font-medium">
+                {selectedCount > 0 ? `נבחרו ${selectedCount} מתוך ${transactions.length}` : `סמן הכל (${transactions.length})`}
+              </span>
+            </div>
+            {selectedCount > 0 && (
+              <button
+                onClick={() => setSelectedIds(new Set())}
+                className="text-[11px] text-brand-primary hover:underline font-medium"
+              >
+                נקה בחירה
+              </button>
+            )}
+          </div>
+        )}
+
         {transactions.length === 0 && !loading ? (
           <div className="py-16 text-center text-dark-text-muted light:text-light-text-muted text-sm space-y-2">
             <ArrowLeftRight className="w-10 h-10 mx-auto opacity-40" />
@@ -501,24 +595,43 @@ function TransactionsContent() {
             {transactions.map((tx, idx) => {
               const isLast = idx === transactions.length - 1;
               const isIncome = parseFloat(tx.amount) > 0;
+              const isSelected = selectedIds.has(tx.id);
               const merchantTitle = tx.userDescription || tx.merchantName || tx.description;
               const subDescription = tx.description && tx.description !== merchantTitle ? tx.description : null;
+              const isAtm = Boolean(tx.isCashWithdrawal || (tx.merchantName && tx.merchantName.includes('משיכת מזומן')));
 
               return (
                 <div
                   key={tx.id}
                   ref={isLast ? lastTxRef : null}
                   onClick={() => setSelectedTx(tx)}
-                  className="p-4 flex items-center justify-between hover:bg-dark-surface-elevated/70 light:hover:bg-light-surface-elevated/70 transition-colors cursor-pointer group"
+                  className={`p-4 flex items-center justify-between hover:bg-dark-surface-elevated/70 light:hover:bg-light-surface-elevated/70 transition-colors cursor-pointer group ${
+                    isSelected ? 'bg-brand-primary/5 dark:bg-brand-primary/10' : ''
+                  }`}
                 >
-                  {/* Right side (in RTL): Category Icon + Merchant Name + Details */}
+                  {/* Right side (in RTL): Checkbox + Category Icon + Merchant Name + Details */}
                   <div className="flex items-center gap-3.5 min-w-0">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={(e) => toggleSelect(tx.id, e)}
+                      onClick={(e) => e.stopPropagation()}
+                      className="w-4 h-4 rounded text-brand-primary focus:ring-brand-primary cursor-pointer shrink-0"
+                    />
+
                     <CategoryBadge category={tx.category} size={20} />
 
                     <div className="min-w-0">
                       {/* Merchant Store Name (Headline) */}
                       <div className="font-bold text-sm text-dark-text light:text-light-text truncate flex items-center gap-2">
                         <span>{merchantTitle}</span>
+
+                        {isAtm && (
+                          <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-500 dark:text-amber-400 text-[10px] font-bold inline-flex items-center gap-1" title="משיכת מזומן - לא נספר כבית עסק">
+                            <span>💵</span>
+                            <span>מזומן</span>
+                          </span>
+                        )}
 
                         {tx.isSplit && (
                           <span className="px-1.5 py-0.5 rounded bg-brand-primary/20 text-brand-primary text-[10px] font-medium" title="מפוצלת">
@@ -592,6 +705,95 @@ function TransactionsContent() {
           </div>
         )}
       </div>
+
+      {/* Sticky Floating Multi-select Action Bar */}
+      {selectedCount > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 max-w-2xl w-[92%] bg-dark-surface light:bg-light-surface border border-brand-primary/40 rounded-2xl shadow-2xl p-4 flex flex-wrap items-center justify-between gap-4 animate-in fade-in slide-in-from-bottom-5 duration-200">
+          <div className="flex items-center gap-3">
+            <span className="w-9 h-9 rounded-xl bg-brand-primary/15 text-brand-primary font-bold flex items-center justify-center text-sm shadow-xs">
+              {selectedCount}
+            </span>
+            <div>
+              <div className="text-xs text-dark-text-muted light:text-light-text-muted">
+                {selectedCount} תנועות נבחרו • סך הכל:
+              </div>
+              <div className="text-lg font-bold text-brand-primary flex items-center gap-2">
+                <span>{formatILS(totalSelectedSum)}</span>
+                <span className="text-[11px] font-normal text-dark-text-muted light:text-light-text-muted">
+                  (הוצאות: {formatILS(totalSelectedExpenses)}- | הכנסות: {formatILS(totalSelectedIncomes)}+)
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setBulkCategoryModalOpen(true)}
+              className="px-4 py-2 rounded-xl bg-brand-primary text-white text-xs font-bold hover:bg-brand-primary-hover transition-colors flex items-center gap-1.5 shadow-sm"
+            >
+              <Tag className="w-3.5 h-3.5" />
+              <span>שנה קטגוריה במרוכז</span>
+            </button>
+            <button
+              onClick={() => setSelectedIds(new Set())}
+              className="px-3.5 py-2 rounded-xl border border-dark-border light:border-light-border hover:bg-dark-surface-elevated text-xs font-medium transition-colors text-dark-text-muted hover:text-dark-text"
+            >
+              בטל בחירה
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Category Assignment Modal */}
+      {bulkCategoryModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-md bg-dark-surface light:bg-light-surface border border-dark-border light:border-light-border rounded-2xl p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold flex items-center gap-2">
+                <Tag className="w-5 h-5 text-brand-primary" />
+                <span>שינוי קטגוריה במרוכז</span>
+              </h3>
+              <button
+                onClick={() => setBulkCategoryModalOpen(false)}
+                className="p-1 rounded-lg hover:bg-dark-surface-elevated text-dark-text-muted"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-dark-text-muted light:text-light-text-muted">
+              בחר קטגוריה או תת-קטגוריה להחלה על {selectedCount} התנועות שנבחרו. המערכת תלמד את הסיווג עבור בתי עסק אלו.
+            </p>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-dark-text-muted">קטגוריה רצויה</label>
+              <CategoryPicker
+                value={bulkCategory}
+                onChange={setBulkCategory}
+                placeholder="בחר קטגוריה או תת-קטגוריה..."
+              />
+            </div>
+
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setBulkCategoryModalOpen(false)}
+                className="flex-1 py-2.5 rounded-xl border border-dark-border light:border-light-border text-xs font-medium"
+              >
+                ביטול
+              </button>
+              <button
+                type="button"
+                onClick={handleApplyBulkCategory}
+                disabled={!bulkCategory || savingBulk}
+                className="flex-1 py-2.5 rounded-xl bg-brand-primary text-white text-xs font-bold hover:bg-brand-primary-hover disabled:opacity-50 transition-colors"
+              >
+                {savingBulk ? 'מעדכן...' : `החל על ${selectedCount} תנועות`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Slide-over Transaction Drawer */}
       {selectedTx && (

@@ -16,10 +16,13 @@ import {
   Calendar, 
   ArrowLeftRight,
   ExternalLink,
-  CreditCard
+  CreditCard,
+  Wallet,
+  Banknote,
+  Coins
 } from 'lucide-react';
 import { api } from '@/lib/api';
-import { formatILS, formatRelativeTime } from '@/lib/formatters';
+import { formatILS, formatDate, formatRelativeTime } from '@/lib/formatters';
 import { ISRAELI_INSTITUTIONS, getInstitutionById } from '@/lib/institutions';
 import InstitutionLogo from '@/components/common/InstitutionLogo';
 import { useApp } from '@/lib/app-context';
@@ -44,6 +47,7 @@ export default function AccountsPage() {
   const [editingAccount, setEditingAccount] = useState(null);
   const [editName, setEditName] = useState('');
   const [editBillingDay, setEditBillingDay] = useState(10);
+  const [editBalance, setEditBalance] = useState(0);
   const [savingEdit, setSavingEdit] = useState(false);
 
   const loadAccounts = async () => {
@@ -160,6 +164,7 @@ export default function AccountsPage() {
     setEditingAccount(acc);
     setEditName(acc.displayName || '');
     setEditBillingDay(acc.billingDay || 10);
+    setEditBalance(acc.balance !== undefined ? acc.balance : 0);
   };
 
   const handleSaveEdit = async (e) => {
@@ -167,10 +172,17 @@ export default function AccountsPage() {
     if (!editingAccount) return;
     setSavingEdit(true);
     try {
-      await api.updateAccount(editingAccount.id, {
+      const isWallet = editingAccount.bankCompany === 'wallet' || editingAccount.accountType === 'wallet';
+      const payload = {
         displayName: editName.trim() || undefined,
-        billingDay: parseInt(editBillingDay, 10) || 10,
-      });
+      };
+      if (isWallet) {
+        payload.balance = parseFloat(editBalance) || 0;
+      } else {
+        payload.billingDay = parseInt(editBillingDay, 10) || 10;
+      }
+
+      await api.updateAccount(editingAccount.id, payload);
       setEditingAccount(null);
       await loadAccounts();
     } catch (err) {
@@ -223,8 +235,9 @@ export default function AccountsPage() {
           {accounts.map((acc) => {
             const inst = getInstitutionById(acc.bankCompany);
             const isSyncing = syncingId === acc.id;
-            const isCredit = acc.accountType === 'credit' || inst.type === 'credit';
-            const isRefund = isCredit && (acc.balance || 0) < 0;
+            const isWallet = acc.bankCompany === 'wallet' || acc.accountType === 'wallet';
+            const isCredit = !isWallet && (acc.accountType === 'credit' || inst.type === 'credit');
+            const isRefund = isCredit && (acc.upcomingCharge ?? acc.balance ?? 0) < 0;
 
             return (
               <div
@@ -234,7 +247,7 @@ export default function AccountsPage() {
                 {/* Background decorative glow on card hover */}
                 <div 
                   className="absolute -top-12 -left-12 w-32 h-32 rounded-full blur-2xl opacity-15 transition-opacity group-hover:opacity-30 pointer-events-none"
-                  style={{ backgroundColor: inst.color || '#3b82f6' }}
+                  style={{ backgroundColor: isWallet ? '#10b981' : inst.color || '#3b82f6' }}
                 />
 
                 <div className="space-y-4 relative z-10">
@@ -243,13 +256,20 @@ export default function AccountsPage() {
                     <div className="flex items-center gap-3">
                       <InstitutionLogo bankCompany={acc.bankCompany} size={42} />
                       <div>
-                        <div className="text-xs font-bold" style={{ color: inst.color }}>
-                          {inst.name}
+                        <div className="text-xs font-bold" style={{ color: isWallet ? '#10b981' : inst.color }}>
+                          {isWallet ? 'ארנק מזומנים' : inst.name}
                         </div>
-                        <div className="text-[11px] text-dark-text-muted light:text-light-text-muted flex items-center gap-1 font-mono">
-                          <span>••••</span>
-                          <span>{acc.accountNumber || '0000'}</span>
-                        </div>
+                        {!isWallet && (
+                          <div className="text-[11px] text-dark-text-muted light:text-light-text-muted flex items-center gap-1 font-mono">
+                            <span>••••</span>
+                            <span>{acc.accountNumber || '0000'}</span>
+                          </div>
+                        )}
+                        {isWallet && (
+                          <div className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
+                            מזומן פיזי
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -257,12 +277,17 @@ export default function AccountsPage() {
                       <button
                         onClick={() => handleOpenEdit(acc)}
                         className="p-1.5 rounded-lg text-dark-text-muted hover:text-dark-text hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated transition-colors"
-                        title="ערוך שם ומועד חיוב"
+                        title={isWallet ? 'עדכן יתרת מזומן ושם' : 'ערוך שם ומועד חיוב'}
                       >
                         <Edit2 className="w-3.5 h-3.5" />
                       </button>
 
-                      {acc.lastScrapeError ? (
+                      {isWallet ? (
+                        <span className="flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md font-medium">
+                          <Wallet className="w-3 h-3" />
+                          <span>מקומי</span>
+                        </span>
+                      ) : acc.lastScrapeError ? (
                         <span className="flex items-center gap-1 text-[11px] text-brand-expense bg-brand-expense/10 px-2 py-0.5 rounded-md font-medium" title={acc.lastScrapeError}>
                           <AlertTriangle className="w-3 h-3" />
                           <span>{t('error')}</span>
@@ -276,10 +301,10 @@ export default function AccountsPage() {
                     </div>
                   </div>
 
-                  {/* Card Display Name */}
+                  {/* Card Display Name & Billing Cycle Badge */}
                   <div>
                     <h3 className="font-bold text-lg text-dark-text light:text-light-text tracking-tight truncate">
-                      {acc.displayName || inst.name}
+                      {acc.displayName || (isWallet ? 'ארנק מזומנים' : inst.name)}
                     </h3>
                     {isCredit && (
                       <div className="flex items-center gap-1.5 mt-1">
@@ -289,16 +314,28 @@ export default function AccountsPage() {
                         </span>
                       </div>
                     )}
+                    {isWallet && (
+                      <p className="text-[11px] text-dark-text-muted mt-1">
+                        משיכות מזומן שיפוצלו לארנק יתווספו אוטומטית ליתרה זו.
+                      </p>
+                    )}
                   </div>
 
-                  {/* Amount / Balance Display */}
+                  {/* Primary Amount / Balance Box */}
                   <div className="p-3 rounded-xl bg-dark-surface-elevated/70 light:bg-light-surface-elevated/70 border border-dark-border/50 light:border-light-border/50 space-y-1">
                     <div className="text-[11px] font-medium text-dark-text-muted light:text-light-text-muted flex items-center justify-between">
                       <span>
-                        {isCredit 
-                          ? (isRefund ? 'זיכוי צפוי החודש' : 'חיוב חודשי צפוי')
+                        {isWallet 
+                          ? 'יתרת מזומנים נוכחית'
+                          : isCredit 
+                          ? (isRefund ? 'זיכוי צפוי במחזור הקרוב' : 'חיוב צפוי במחזור הקרוב')
                           : (lang === 'he' ? 'יתרה בעו״ש' : 'Current Balance')}
                       </span>
+                      {isCredit && acc.nextBillingDate && (
+                        <span className="text-[10px] font-medium text-dark-text-muted font-mono">
+                          {formatDate(acc.nextBillingDate)}
+                        </span>
+                      )}
                       {isRefund && (
                         <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-500">
                           זיכוי
@@ -308,7 +345,9 @@ export default function AccountsPage() {
 
                     <div 
                       className={`text-2xl md:text-3xl font-bold tracking-tight ${
-                        isRefund 
+                        isWallet
+                          ? 'text-emerald-500 dark:text-emerald-400'
+                          : isRefund 
                           ? 'text-emerald-500 dark:text-emerald-400' 
                           : isCredit 
                           ? 'text-brand-amber' 
@@ -316,9 +355,43 @@ export default function AccountsPage() {
                       }`}
                       dir="ltr"
                     >
-                      {formatILS(acc.balance, { showSign: isRefund || (!isCredit && acc.balance < 0) })}
+                      {formatILS(
+                        isCredit ? (acc.upcomingCharge ?? acc.balance) : acc.balance, 
+                        { showSign: isRefund || (!isCredit && !isWallet && acc.balance < 0) }
+                      )}
                     </div>
                   </div>
+
+                  {/* Credit Card Past Cycle & Checking Debit Status */}
+                  {isCredit && (
+                    <div className="p-3 rounded-xl bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40 border border-dark-border/40 light:border-light-border/40 space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-dark-text-muted text-[11px]">
+                          חויב במחזור קודם {acc.prevBillingDate ? `(${formatDate(acc.prevBillingDate)})` : ''}:
+                        </span>
+                        <span className="font-bold text-dark-text font-mono" dir="ltr">
+                          {formatILS(acc.billedLastCycle || 0)}
+                        </span>
+                      </div>
+
+                      {acc.bankDebit ? (
+                        <div className="flex items-center justify-between text-[11px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-2.5 py-1.5 rounded-lg border border-emerald-500/20">
+                          <span className="flex items-center gap-1.5 font-medium">
+                            <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                            <span>ירד בעו"ש ({formatDate(acc.bankDebit.date)})</span>
+                          </span>
+                          <span className="font-bold font-mono" dir="ltr">
+                            {formatILS(acc.bankDebit.amount)}
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="text-[11px] text-dark-text-muted bg-dark-surface/50 px-2.5 py-1 rounded-lg border border-dark-border/30 flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                          <span>טרם זוהה חיוב מקביל בעו"ש למחזור זה</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {isSyncing && (
                     <div className="p-2.5 rounded-xl bg-brand-primary/10 border border-brand-primary/20 text-[11px] text-brand-primary flex items-center gap-2 animate-pulse">
@@ -327,7 +400,7 @@ export default function AccountsPage() {
                     </div>
                   )}
 
-                  {acc.lastScrapeError && !isSyncing && (
+                  {acc.lastScrapeError && !isSyncing && !isWallet && (
                     <div className="p-2.5 rounded-xl bg-brand-expense/10 border border-brand-expense/20 text-[11px] text-brand-expense flex items-start gap-2">
                       <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
                       <div className="space-y-0.5 overflow-hidden">
@@ -344,26 +417,39 @@ export default function AccountsPage() {
                     href={`/transactions?accountId=${acc.id}`}
                     className="text-xs font-semibold text-brand-primary hover:underline flex items-center gap-1"
                   >
-                    <span>תנועות הכרטיס</span>
+                    <span>{isWallet ? 'תנועות מזומן' : 'תנועות החשבון'}</span>
                     <ExternalLink className="w-3 h-3" />
                   </Link>
 
                   <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => handleSyncAccount(acc.id)}
-                      disabled={isSyncing}
-                      className="p-2 rounded-lg hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-dark-text-muted hover:text-dark-text transition-colors"
-                      title={t('syncNow')}
-                    >
-                      <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin text-brand-primary' : ''}`} />
-                    </button>
-                    <button
-                      onClick={() => handleDeleteAccount(acc.id)}
-                      className="p-2 rounded-lg hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-brand-expense transition-colors"
-                      title={t('delete')}
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    {isWallet ? (
+                      <button
+                        onClick={() => handleOpenEdit(acc)}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 text-xs font-semibold transition-colors"
+                        title="עדכן יתרה"
+                      >
+                        <Banknote className="w-3.5 h-3.5" />
+                        <span>עדכן יתרה</span>
+                      </button>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() => handleSyncAccount(acc.id)}
+                          disabled={isSyncing}
+                          className="p-2 rounded-lg hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-dark-text-muted hover:text-dark-text transition-colors"
+                          title={t('syncNow')}
+                        >
+                          <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin text-brand-primary' : ''}`} />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteAccount(acc.id)}
+                          className="p-2 rounded-lg hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-brand-expense transition-colors"
+                          title={t('delete')}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
               </div>
@@ -372,14 +458,18 @@ export default function AccountsPage() {
         </div>
       )}
 
-      {/* Edit Account / Card Modal */}
+      {/* Edit Account / Card / Wallet Modal */}
       {editingAccount && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="w-full max-w-md bg-dark-surface light:bg-light-surface rounded-2xl border border-dark-border light:border-light-border p-6 shadow-2xl space-y-5">
             <div className="flex items-center justify-between border-b border-dark-border light:border-light-border pb-3">
               <div className="flex items-center gap-2 font-bold text-base">
                 <Edit2 className="w-4 h-4 text-brand-primary" />
-                <span>עריכת כרטיס / חשבון</span>
+                <span>
+                  {editingAccount.bankCompany === 'wallet' || editingAccount.accountType === 'wallet'
+                    ? 'עריכת ארנק מזומנים'
+                    : 'עריכת כרטיס / חשבון'}
+                </span>
               </div>
               <button
                 onClick={() => setEditingAccount(null)}
@@ -392,38 +482,60 @@ export default function AccountsPage() {
             <form onSubmit={handleSaveEdit} className="space-y-4">
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-dark-text-muted">
-                  שם / כינוי הכרטיס
+                  {editingAccount.bankCompany === 'wallet' || editingAccount.accountType === 'wallet'
+                    ? 'שם הארנק'
+                    : 'שם / כינוי הכרטיס'}
                 </label>
                 <input
                   type="text"
                   required
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
-                  placeholder="לדוגמה: מקס אישי, מקס הייטקזון"
+                  placeholder="לדוגמה: ארנק מזומנים אישי"
                   className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-sm focus:outline-none focus:border-brand-primary"
                 />
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-dark-text-muted">
-                  מועד חיוב חודשי
-                </label>
-                <select
-                  value={editBillingDay}
-                  onChange={(e) => setEditBillingDay(e.target.value)}
-                  className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-sm focus:outline-none focus:border-brand-primary cursor-pointer"
-                >
-                  <option value="1">1 לחודש (תחילת חודש קלנדרי)</option>
-                  <option value="2">2 לחודש</option>
-                  <option value="10">10 לחודש (נפוץ באשראי)</option>
-                  <option value="15">15 לחודש</option>
-                  <option value="20">20 לחודש</option>
-                  <option value="25">25 לחודש</option>
-                </select>
-                <p className="text-[11px] text-dark-text-muted">
-                  החיוב החודשי יחושב עבור כל התנועות השייכות למחזור חיוב זה.
-                </p>
-              </div>
+              {editingAccount.bankCompany === 'wallet' || editingAccount.accountType === 'wallet' ? (
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-dark-text-muted">
+                    יתרת מזומן נוכחית בארנק (₪)
+                  </label>
+                  <input
+                    type="number"
+                    step="any"
+                    required
+                    value={editBalance}
+                    onChange={(e) => setEditBalance(e.target.value)}
+                    placeholder="0.00"
+                    className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-sm font-mono focus:outline-none focus:border-brand-primary"
+                  />
+                  <p className="text-[11px] text-dark-text-muted">
+                    סכום המזומנים הפיזי שבידך. פיצול משיכות מזומן לארנק יעלה יתרה זו אוטומטית.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-dark-text-muted">
+                    מועד חיוב חודשי
+                  </label>
+                  <select
+                    value={editBillingDay}
+                    onChange={(e) => setEditBillingDay(e.target.value)}
+                    className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-sm focus:outline-none focus:border-brand-primary cursor-pointer"
+                  >
+                    <option value="1">1 לחודש (תחילת חודש קלנדרי)</option>
+                    <option value="2">2 לחודש</option>
+                    <option value="10">10 לחודש (נפוץ באשראי)</option>
+                    <option value="15">15 לחודש</option>
+                    <option value="20">20 לחודש</option>
+                    <option value="25">25 לחודש</option>
+                  </select>
+                  <p className="text-[11px] text-dark-text-muted">
+                    החיוב החודשי יחושב עבור כל התנועות השייכות למחזור חיוב זה.
+                  </p>
+                </div>
+              )}
 
               <div className="flex gap-2 pt-2">
                 <button
@@ -472,7 +584,7 @@ export default function AccountsPage() {
                 </p>
 
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                  {ISRAELI_INSTITUTIONS.map((inst) => (
+                  {ISRAELI_INSTITUTIONS.filter((inst) => inst.id !== 'wallet').map((inst) => (
                     <button
                       key={inst.id}
                       onClick={() => handleSelectInstitution(inst)}

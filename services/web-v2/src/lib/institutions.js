@@ -1,5 +1,16 @@
 export const ISRAELI_INSTITUTIONS = [
   {
+    id: 'wallet',
+    name: 'ארנק מזומנים',
+    nameEn: 'Cash Wallet',
+    type: 'wallet',
+    color: '#10b981',
+    badgeBg: 'rgba(16, 185, 129, 0.15)',
+    logoText: 'ארנק',
+    fields: [],
+    labels: {},
+  },
+  {
     id: 'hapoalim',
     name: 'בנק הפועלים',
     nameEn: 'Bank Hapoalim',

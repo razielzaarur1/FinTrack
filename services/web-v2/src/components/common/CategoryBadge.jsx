@@ -12,7 +12,7 @@ import {
   Utensils, Pizza, Coffee,
   Plane, Bed,
   Mail, FileText, Printer, Lightbulb,
-  Percent, TrendingDown, Tag, HelpCircle
+  Percent, TrendingDown, Tag, HelpCircle, Banknote
 } from 'lucide-react';
 import { getCategoryDetails } from '@/lib/categories';
 
@@ -27,21 +27,54 @@ const ICON_MAP = {
   Utensils, Pizza, Coffee,
   Plane, Bed,
   Mail, FileText, Printer, Lightbulb,
-  Percent, TrendingDown, Tag, HelpCircle
+  Percent, TrendingDown, Tag, HelpCircle, Banknote
 };
 
-export default function CategoryBadge({ category, size = 20, className = '', showLabel = false }) {
+export default function CategoryBadge({
+  category,
+  customSvg = null,
+  size = 20,
+  className = '',
+  showLabel = false,
+}) {
+  // Special ATM / Cash withdrawal badge
+  if (category === 'משיכת מזומן') {
+    return (
+      <div className={`flex items-center gap-2 ${className}`}>
+        <div
+          className="w-10 h-10 rounded-xl inline-flex items-center justify-center shrink-0 shadow-sm border border-amber-500/20 bg-amber-500/15 text-amber-500 dark:text-amber-400 transition-transform hover:scale-105"
+          title="משיכת מזומן (נדרש פיצול/סיווג)"
+        >
+          <Banknote size={size} strokeWidth={2} />
+        </div>
+        {showLabel && (
+          <span className="text-xs font-semibold text-amber-600 dark:text-amber-400 truncate">
+            משיכת מזומן
+          </span>
+        )}
+      </div>
+    );
+  }
+
   const { mainCat, subCat } = getCategoryDetails(category);
+  const activeSvg = customSvg || subCat?.customSvg || mainCat?.customSvg;
   const iconName = subCat?.icon || mainCat?.icon || 'Tag';
   const IconComponent = ICON_MAP[iconName] || Tag;
 
   return (
     <div className={`flex items-center gap-2 ${className}`}>
-      <div 
+      <div
         className={`w-10 h-10 rounded-xl inline-flex items-center justify-center shrink-0 shadow-sm border border-black/5 dark:border-white/5 transition-transform hover:scale-105 ${mainCat.bg} ${mainCat.color}`}
-        title={subCat?.name !== mainCat?.name ? `${mainCat.name} • ${subCat?.name}` : mainCat.name}
+        title={subCat?.name && subCat.name !== mainCat.name ? `${mainCat.name} • ${subCat.name}` : mainCat.name}
       >
-        <IconComponent size={size} strokeWidth={2} />
+        {activeSvg ? (
+          <div
+            className="flex items-center justify-center shrink-0 [&>svg]:w-5 [&>svg]:h-5 [&>svg]:stroke-current"
+            dangerouslySetInnerHTML={{ __html: activeSvg }}
+          />
+        ) : (
+          <IconComponent size={size} strokeWidth={2} />
+        )}
       </div>
       {showLabel && (
         <span className="text-xs font-medium text-dark-text-muted light:text-light-text-muted truncate">

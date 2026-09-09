@@ -7,13 +7,20 @@ import {
   Trash2, 
   Check, 
   Download, 
-  Palette, 
-  ShieldAlert, 
   Settings as SettingsIcon,
-  RefreshCw
+  RefreshCw,
+  ChevronDown,
+  Upload,
+  FileCode,
+  Sparkles,
+  X,
+  Layers
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useApp } from '@/lib/app-context';
+import CategoryBadge from '@/components/common/CategoryBadge';
+import { CATEGORIES_DATA } from '@/lib/categories';
+import { generateDesignSystemPrompt } from '@/lib/designSystemPrompt';
 
 export default function SettingsPage() {
   const { lang, t, theme, toggleTheme, toggleLanguage } = useApp();
@@ -29,12 +36,23 @@ export default function SettingsPage() {
   const [monthStartDay, setMonthStartDay] = useState(10);
   const [monthSaved, setMonthSaved] = useState(false);
 
-  // New Category form
-  const [name, setName] = useState('');
-  const [nameEn, setNameEn] = useState('');
-  const [type, setType] = useState('expense');
-  const [color, setColor] = useState('#6366f1');
-  const [submitting, setSubmitting] = useState(false);
+  // Category Tree UI State
+  const [activeTab, setActiveTab] = useState('expense'); // 'expense' | 'income'
+  const [expandedCats, setExpandedCats] = useState(new Set(['exp_household', 'exp_shopping']));
+
+  // Add/Edit Category Modal State
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [modalParentId, setModalParentId] = useState(null);
+  const [modalParentName, setModalParentName] = useState('');
+  const [formName, setFormName] = useState('');
+  const [formNameEn, setFormNameEn] = useState('');
+  const [formType, setFormType] = useState('expense');
+  const [formColor, setFormColor] = useState('#6366f1');
+  const [formIcon, setFormIcon] = useState('tag');
+  const [formSvg, setFormSvg] = useState('');
+  const [submittingCat, setSubmittingCat] = useState(false);
+  const [reclassifying, setReclassifying] = useState(false);
+  const [reclassifyResult, setReclassifyResult] = useState(null);
 
   const loadSettings = async () => {
     try {
@@ -45,7 +63,9 @@ export default function SettingsPage() {
       if (res.data?.settings?.monthStartDay) {
         setMonthStartDay(parseInt(res.data.settings.monthStartDay, 10) || 10);
       }
-    } catch (_) {}
+    } catch (err) {
+      console.error('Failed to load system settings:', err);
+    }
   };
 
   const loadCategories = async () => {
@@ -96,42 +116,116 @@ export default function SettingsPage() {
     }
   };
 
-  const handleCreateCategory = async (e) => {
+  // Download Design System Prompt Guide
+  const handleDownloadDesignPrompt = () => {
+    const content = generateDesignSystemPrompt();
+    const blob = new Blob([content], { type: 'text/markdown;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', 'fintrack-svg-design-prompt.md');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Toggle Category Accordion
+  const toggleExpand = (catId) => {
+    const next = new Set(expandedCats);
+    if (next.has(catId)) next.delete(catId);
+    else next.add(catId);
+    setExpandedCats(next);
+  };
+
+  // Open modal for adding subcategory
+  const handleOpenAddSub = (parent) => {
+    setModalParentId(parent.id);
+    setModalParentName(parent.name);
+    setFormType(parent.type || 'expense');
+    setFormColor(parent.color?.includes('#') ? parent.color : '#6366f1');
+    setFormName('');
+    setFormNameEn('');
+    setFormSvg('');
+    setIsModalOpen(true);
+  };
+
+  // Open modal for adding main category
+  const handleOpenAddMain = () => {
+    setModalParentId(null);
+    setModalParentName('');
+    setFormType(activeTab);
+    setFormColor(activeTab === 'expense' ? '#ec4899' : '#10b981');
+    setFormName('');
+    setFormNameEn('');
+    setFormSvg('');
+    setIsModalOpen(true);
+  };
+
+  // Handle SVG file upload
+  const handleSvgFileUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target?.result;
+      if (typeof text === 'string') {
+        setFormSvg(text.trim());
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  // Submit Category / Subcategory
+  const handleSubmitCategory = async (e) => {
     e.preventDefault();
-    if (!name.trim()) return;
-    setSubmitting(true);
+    if (!formName.trim()) return;
+    setSubmittingCat(true);
+
     try {
       const res = await api.createCategory({
-        name: name.trim(),
-        nameEn: nameEn.trim() || undefined,
-        type,
-        color,
+        name: formName.trim(),
+        nameEn: formNameEn.trim() || undefined,
+        type: formType,
+        color: formColor,
+        icon: formIcon,
+        parentId: modalParentId || undefined,
+        customSvg: formSvg.trim() || undefined,
       });
+
       if (res.data) {
-        setName('');
-        setNameEn('');
+        setIsModalOpen(false);
         loadCategories();
       }
     } finally {
-      setSubmitting(false);
+      setSubmittingCat(false);
     }
   };
 
-  const handleDeleteCategory = async (id) => {
-    const res = await api.deleteCategory(id);
-    if (res.data) {
-      setCategories(categories.filter((c) => c.id !== id));
+  // Trigger Re-classification
+  const handleReclassifyAll = async () => {
+    setReclassifying(true);
+    setReclassifyResult(null);
+    try {
+      const res = await api.reclassifyAllTransactions();
+      if (res.data) {
+        setReclassifyResult(res.data);
+      }
+    } finally {
+      setReclassifying(false);
     }
   };
+
+  // Active Category List based on tab
+  const categoryTree = activeTab === 'expense' ? CATEGORIES_DATA.expenses : CATEGORIES_DATA.incomes;
 
   return (
-    <div className="space-y-8 max-w-4xl">
+    <div className="space-y-8 max-w-5xl">
       <div>
         <h1 className="text-2xl md:text-3xl font-bold tracking-tight mb-1">
           {t('settings')}
         </h1>
         <p className="text-xs text-dark-text-muted light:text-light-text-muted">
-          {lang === 'he' ? 'ניהול קטגוריות מותאמות אישית, שפה, תצוגה ומערכת' : 'Custom category management, localization, and system display'}
+          {lang === 'he' ? 'ניהול קטגוריות מתקדם, עיצובי SVG, שפה, תצוגה והגדרות מערכת' : 'Advanced categories, SVG customization, localization and system settings'}
         </p>
       </div>
 
@@ -262,100 +356,305 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      {/* Category Manager */}
-      <div className="p-5 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface space-y-6">
-        <div>
-          <h3 className="font-semibold text-base flex items-center gap-2">
-            <Tag className="w-5 h-5 text-brand-cyan" />
-            <span>{lang === 'he' ? 'ניהול קטגוריות (הכנסות והוצאות)' : 'Category Manager (Income & Expense)'}</span>
-          </h3>
-          <p className="text-xs text-dark-text-muted mt-0.5">
-            {lang === 'he' ? 'הוסף קטגוריות מותאמות אישית עם הפרדה ברורה בין הכנסה להוצאה' : 'Define custom categories with clear income/expense separation'}
-          </p>
+      {/* Modern Categories & Custom SVG Design Hub */}
+      <div className="p-6 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface space-y-6 shadow-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h3 className="font-bold text-lg flex items-center gap-2">
+              <Tag className="w-5 h-5 text-brand-primary" />
+              <span>{lang === 'he' ? 'ניהול קטגוריות, תתי-קטגוריות ועיצובי SVG' : 'Categories, Subcategories & SVG Design Hub'}</span>
+            </h3>
+            <p className="text-xs text-dark-text-muted mt-0.5">
+              {lang === 'he'
+                ? 'עץ קטגוריות מלא עם עיצובי סקווירקל צבעוניים. ניתן להוריד מפרט פרומפט ל-AI ולהעלות קובצי SVG מותאמים אישית.'
+                : 'Complete category tree with colored squircle badges. Download AI prompt specs and upload custom SVGs.'}
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handleDownloadDesignPrompt}
+              className="px-3.5 py-2 rounded-xl border border-brand-primary/40 bg-brand-primary/10 text-brand-primary hover:bg-brand-primary/20 transition-colors text-xs font-semibold flex items-center gap-1.5 shadow-xs"
+              title="הורד קובץ מפרט עיצוב להעתקה ל-AI ליצירת SVG תואם"
+            >
+              <Download className="w-4 h-4" />
+              <span>הורד מפרט ופרומפט SVG</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleOpenAddMain}
+              className="px-3.5 py-2 rounded-xl bg-brand-primary text-white hover:bg-brand-primary-hover transition-colors text-xs font-bold flex items-center gap-1.5 shadow-sm"
+            >
+              <Plus className="w-4 h-4" />
+              <span>הוסף קטגוריה ראשית</span>
+            </button>
+          </div>
         </div>
 
-        {/* Create Category Form */}
-        <form onSubmit={handleCreateCategory} className="p-4 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated space-y-3">
-          <div className="text-xs font-semibold">{lang === 'he' ? '+ הוסף קטגוריה חדשה' : '+ Add New Category'}</div>
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 text-xs">
-            <input
-              type="text"
-              required
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder={lang === 'he' ? 'שם בעברית (למשל: חשמל)' : 'Name in Hebrew'}
-              className="p-2.5 rounded-lg border border-dark-border bg-dark-surface light:bg-light-surface"
-            />
-            <input
-              type="text"
-              value={nameEn}
-              onChange={(e) => setNameEn(e.target.value)}
-              placeholder={lang === 'he' ? 'שם באנגלית (אופציונלי)' : 'English Name (Optional)'}
-              className="p-2.5 rounded-lg border border-dark-border bg-dark-surface light:bg-light-surface"
-            />
-            <select
-              value={type}
-              onChange={(e) => setType(e.target.value)}
-              className="p-2.5 rounded-lg border border-dark-border bg-dark-surface light:bg-light-surface"
+        {/* Tabs: Expenses vs Incomes */}
+        <div className="flex items-center justify-between border-b border-dark-border light:border-light-border pb-3">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setActiveTab('expense')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+                activeTab === 'expense'
+                  ? 'bg-rose-500/15 text-rose-500 border border-rose-500/30'
+                  : 'text-dark-text-muted hover:text-dark-text'
+              }`}
             >
-              <option value="expense">{t('expense')}</option>
-              <option value="income">{t('income')}</option>
-              <option value="both">{t('both')}</option>
-            </select>
-            <div className="flex gap-2">
-              <input
-                type="color"
-                value={color}
-                onChange={(e) => setColor(e.target.value)}
-                className="w-10 h-9 p-0.5 rounded-lg border border-dark-border bg-dark-surface cursor-pointer"
-              />
-              <button
-                type="submit"
-                disabled={submitting}
-                className="flex-1 py-2 rounded-lg bg-brand-primary text-white font-semibold shadow-md"
+              הוצאות ({CATEGORIES_DATA.expenses.length})
+            </button>
+            <button
+              onClick={() => setActiveTab('income')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+                activeTab === 'income'
+                  ? 'bg-emerald-500/15 text-emerald-500 border border-emerald-500/30'
+                  : 'text-dark-text-muted hover:text-dark-text'
+              }`}
+            >
+              הכנסות ({CATEGORIES_DATA.incomes.length})
+            </button>
+          </div>
+
+          <button
+            onClick={handleReclassifyAll}
+            disabled={reclassifying}
+            className="text-[11px] text-brand-cyan hover:underline flex items-center gap-1 font-medium disabled:opacity-50"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>{reclassifying ? 'מסווג מחדש...' : 'סווג מחדש את כל התנועות'}</span>
+          </button>
+        </div>
+
+        {reclassifyResult && (
+          <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-500 font-medium">
+            סווגו מחדש בהצלחה {reclassifyResult.updated} מתוך {reclassifyResult.total} תנועות לפי עץ הקטגוריות ומאגר העסקים!
+          </div>
+        )}
+
+        {/* Categories Tree Cards */}
+        <div className="space-y-3">
+          {categoryTree.map((cat) => {
+            const isExpanded = expandedCats.has(cat.id);
+            const subs = cat.subs || [];
+
+            return (
+              <div
+                key={cat.id}
+                className="rounded-2xl border border-dark-border light:border-light-border bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40 overflow-hidden transition-all"
               >
-                {submitting ? '...' : (lang === 'he' ? 'הוסף' : 'Add')}
+                {/* Main Category Header Row */}
+                <div className="p-4 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <CategoryBadge category={cat.name} size={22} />
+                    <div>
+                      <div className="font-bold text-sm text-dark-text light:text-light-text flex items-center gap-2">
+                        <span>{cat.name}</span>
+                        <span className="text-[11px] font-normal text-dark-text-muted light:text-light-text-muted">
+                          ({subs.length} תתי-קטגוריות)
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-dark-text-muted flex items-center gap-2 mt-0.5">
+                        <span className={`px-1.5 py-0.5 rounded font-medium ${
+                          cat.type === 'income' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-rose-500/10 text-rose-500'
+                        }`}>
+                          {cat.type === 'income' ? 'הכנסה' : 'הוצאה'}
+                        </span>
+                        <span>•</span>
+                        <span className="font-mono text-[10px] opacity-75">{cat.id}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleOpenAddSub(cat)}
+                      className="px-2.5 py-1.5 rounded-lg border border-dark-border light:border-light-border hover:border-brand-primary text-[11px] font-semibold flex items-center gap-1 transition-colors"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>הוסף תת-קטגוריה</span>
+                    </button>
+
+                    {subs.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => toggleExpand(cat.id)}
+                        className="p-1.5 rounded-lg hover:bg-dark-surface text-dark-text-muted transition-transform"
+                        title={isExpanded ? 'סגור תתי-קטגוריות' : 'הצג תתי-קטגוריות'}
+                      >
+                        <ChevronDown className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Subcategories Grid */}
+                {isExpanded && subs.length > 0 && (
+                  <div className="p-4 pt-0 border-t border-dark-border/40 light:border-light-border/40 bg-dark-surface/50 light:bg-light-surface/50">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5 mt-3">
+                      {subs.map((sub) => (
+                        <div
+                          key={sub.id}
+                          className="p-2.5 rounded-xl border border-dark-border/60 light:border-light-border/60 bg-dark-surface light:bg-light-surface flex items-center justify-between gap-2 shadow-2xs hover:border-brand-primary/40 transition-colors"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <CategoryBadge category={sub.name} size={16} className="scale-90" />
+                            <span className="text-xs font-semibold truncate text-dark-text light:text-light-text">
+                              {sub.name}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Add / Edit Category & SVG Modal */}
+      {isModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-lg bg-dark-surface light:bg-light-surface border border-dark-border light:border-light-border rounded-2xl p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold flex items-center gap-2">
+                <Tag className="w-5 h-5 text-brand-primary" />
+                <span>{modalParentId ? `הוספת תת-קטגוריה תחת "${modalParentName}"` : 'הוספת קטגוריה ראשית'}</span>
+              </h3>
+              <button onClick={() => setIsModalOpen(false)} className="p-1 rounded-lg hover:bg-dark-surface-elevated text-dark-text-muted">
+                <X className="w-4 h-4" />
               </button>
             </div>
-          </div>
-        </form>
 
-        {/* Existing Categories Table */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
-          {categories.map((cat) => (
-            <div
-              key={cat.id}
-              className="p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated flex items-center justify-between text-xs"
-            >
-              <div className="flex items-center gap-2.5 min-w-0">
-                <div className="w-3.5 h-3.5 rounded-full shrink-0" style={{ backgroundColor: cat.color }} />
-                <div className="truncate">
-                  <span className="font-semibold">{cat.name}</span>
-                  {cat.nameEn && <span className="text-dark-text-muted text-[10px] ml-1">({cat.nameEn})</span>}
+            <form onSubmit={handleSubmitCategory} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-dark-text-muted">שם הקטגוריה (בעברית) *</label>
+                  <input
+                    type="text"
+                    required
+                    value={formName}
+                    onChange={(e) => setFormName(e.target.value)}
+                    placeholder="למשל: ספורט וכושר"
+                    className="w-full p-2.5 rounded-xl border border-dark-border bg-dark-surface-elevated text-xs focus:border-brand-primary focus:outline-none"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-dark-text-muted">שם באנגלית (אופציונלי)</label>
+                  <input
+                    type="text"
+                    value={formNameEn}
+                    onChange={(e) => setFormNameEn(e.target.value)}
+                    placeholder="e.g. Fitness"
+                    className="w-full p-2.5 rounded-xl border border-dark-border bg-dark-surface-elevated text-xs focus:border-brand-primary focus:outline-none"
+                  />
                 </div>
               </div>
 
-              <div className="flex items-center gap-1.5 shrink-0">
-                <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
-                  cat.type === 'income' ? 'bg-brand-income/20 text-brand-income' : cat.type === 'expense' ? 'bg-brand-expense/20 text-brand-expense' : 'bg-gray-500/20 text-gray-400'
-                }`}>
-                  {cat.type === 'income' ? t('income') : cat.type === 'expense' ? t('expense') : t('both')}
-                </span>
-
-                {!cat.isSystem && (
-                  <button
-                    onClick={() => handleDeleteCategory(cat.id)}
-                    className="p-1 hover:bg-dark-surface text-brand-expense rounded"
-                    title={t('delete')}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-dark-text-muted">סוג תנועה</label>
+                  <select
+                    value={formType}
+                    onChange={(e) => setFormType(e.target.value)}
+                    className="w-full p-2.5 rounded-xl border border-dark-border bg-dark-surface-elevated text-xs focus:border-brand-primary focus:outline-none"
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
+                    <option value="expense">הוצאה (Expense)</option>
+                    <option value="income">הכנסה (Income)</option>
+                    <option value="both">הכנסה והוצאה (Both)</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-dark-text-muted">צבע נושא</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={formColor}
+                      onChange={(e) => setFormColor(e.target.value)}
+                      className="w-10 h-10 p-0.5 rounded-xl border border-dark-border bg-dark-surface-elevated cursor-pointer shrink-0"
+                    />
+                    <input
+                      type="text"
+                      value={formColor}
+                      onChange={(e) => setFormColor(e.target.value)}
+                      className="flex-1 p-2 rounded-xl border border-dark-border bg-dark-surface-elevated text-xs font-mono"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Custom SVG Section */}
+              <div className="p-3.5 rounded-xl border border-dark-border/80 bg-dark-surface-elevated/60 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-bold flex items-center gap-1.5">
+                    <FileCode className="w-4 h-4 text-brand-cyan" />
+                    <span>עיצוב SVG מותאם אישית (אופציונלי)</span>
+                  </div>
+
+                  <label className="cursor-pointer px-2.5 py-1 rounded-lg bg-brand-cyan/10 hover:bg-brand-cyan/20 text-brand-cyan text-[11px] font-semibold flex items-center gap-1 transition-colors">
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>העלה קובץ .svg</span>
+                    <input
+                      type="file"
+                      accept=".svg"
+                      onChange={handleSvgFileUpload}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
+
+                <p className="text-[11px] text-dark-text-muted">
+                  הדבק קוד SVG (תקני עם viewBox 0 0 24 24) או העלה קובץ. לחץ על "הורד מפרט ופרומפט SVG" לקבלת הנחיות מדויקות ליצירה עם AI.
+                </p>
+
+                <textarea
+                  rows={3}
+                  value={formSvg}
+                  onChange={(e) => setFormSvg(e.target.value)}
+                  placeholder="<svg viewBox='0 0 24 24' stroke='currentColor' fill='none' stroke-width='2'>...</svg>"
+                  className="w-full p-2.5 rounded-xl border border-dark-border bg-dark-surface font-mono text-[11px] focus:border-brand-primary focus:outline-none"
+                  dir="ltr"
+                />
+
+                {/* Live Preview */}
+                {formSvg && (
+                  <div className="flex items-center gap-3 pt-1">
+                    <span className="text-[11px] text-dark-text-muted">תצוגה מקדימה:</span>
+                    <div
+                      className="w-10 h-10 rounded-xl bg-brand-primary/10 text-brand-primary flex items-center justify-center p-2 border border-brand-primary/30 [&>svg]:w-full [&>svg]:h-full [&>svg]:stroke-current"
+                      dangerouslySetInnerHTML={{ __html: formSvg }}
+                    />
+                  </div>
                 )}
               </div>
-            </div>
-          ))}
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsModalOpen(false)}
+                  className="flex-1 py-2.5 rounded-xl border border-dark-border text-xs font-medium"
+                >
+                  ביטול
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingCat || !formName.trim()}
+                  className="flex-1 py-2.5 rounded-xl bg-brand-primary text-white text-xs font-bold hover:bg-brand-primary-hover disabled:opacity-50 transition-colors"
+                >
+                  {submittingCat ? 'שומר...' : 'שמור קטגוריה'}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

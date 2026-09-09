@@ -4,6 +4,7 @@ import israeliBankScrapersPkg from 'israeli-bank-scrapers';
 import { logger } from './logger.js';
 import { decryptCredentials } from './crypto.js';
 import { requestOtp } from './notifier-client.js';
+import { classifyScrapedTx } from './classifier.js';
 
 // Support both ESM and CJS exports from israeli-bank-scrapers
 const scrapersModule =
@@ -132,7 +133,7 @@ export function calculateEffectiveBalance(card, bankCompany, billingDay = 10) {
   return typeof card?.balance === 'number' ? card.balance : 0.0;
 }
 
-async function saveTransactionsList(client, accountId, transactions) {
+async function saveTransactionsList(client, accountId, transactions, userId = '00000000-0000-0000-0000-000000000001') {
   if (!transactions || transactions.length === 0) {
     return { inserted: 0, total: 0 };
   }
@@ -143,6 +144,7 @@ async function saveTransactionsList(client, accountId, transactions) {
       tx.identifier || tx.id || `${tx.date}_${tx.chargedAmount || tx.originalAmount}_${tx.description}`;
     const currency = tx.originalCurrency || tx.chargedCurrency || 'ILS';
     const txDate = tx.date ? new Date(tx.date) : new Date();
+    const processedDate = tx.processedDate ? new Date(tx.processedDate) : txDate;
     const amount =
       typeof tx.chargedAmount === 'number'
         ? tx.chargedAmount
@@ -155,15 +157,24 @@ async function saveTransactionsList(client, accountId, transactions) {
     // tx.memo is the comments / transaction details (e.g. "עסקה רגילה בארץ")
     const merchantName = (tx.description || tx.memo || '').trim() || 'בית עסק';
     const description = (tx.memo && tx.memo !== tx.description ? tx.memo : tx.description) || '';
-    const category = tx.category || null;
+
+    // Auto-classify using the 3-tier hierarchy: User rules -> Scraper Category -> Israeli Merchant KB
+    const category = await classifyScrapedTx(client, {
+      userId,
+      merchantName,
+      description,
+      rawCategory: tx.category,
+      amount,
+    });
+
     const status = tx.status || 'completed';
     const rawData = JSON.stringify(tx);
 
     const insertQuery = `
       INSERT INTO transactions (
-        account_id, external_id, date, amount, currency, description,
+        account_id, external_id, date, processed_date, amount, currency, description,
         merchant_name, category, status, raw_data, is_notified, created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, false, NOW())
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, false, NOW())
       ON CONFLICT (account_id, external_id) DO NOTHING
       RETURNING id;
     `;
@@ -172,6 +183,7 @@ async function saveTransactionsList(client, accountId, transactions) {
       accountId,
       externalId,
       txDate,
+      processedDate,
       amount,
       currency,
       description,
@@ -282,8 +294,8 @@ async function persistScrapedAccounts(pool, primaryAccountId, scrapedAccounts, t
         }
       }
 
-      // Save transactions for targetDbAccountId
-      const saveRes = await saveTransactionsList(client, targetDbAccountId, cardTxns);
+      // Save transactions for targetDbAccountId with auto-classification
+      const saveRes = await saveTransactionsList(client, targetDbAccountId, cardTxns, user_id);
       results.push({
         accountId: targetDbAccountId,
         cardLast4,
