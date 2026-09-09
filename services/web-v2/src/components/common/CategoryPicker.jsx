@@ -77,10 +77,10 @@ export default function CategoryPicker({
         onClick={() => setIsOpen(!isOpen)}
         className="w-full flex items-center justify-between p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated hover:border-brand-primary/50 transition-colors text-right cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
       >
-        <div className="flex items-center gap-2.5 overflow-hidden">
+        <div className="flex items-center gap-3 overflow-hidden">
           {value ? (
             <>
-              <CategoryBadge category={value} size={16} />
+              <CategoryBadge category={value} size={18} />
               <div className="text-right min-w-0">
                 <div className="text-sm font-semibold text-dark-text-primary light:text-light-text-primary truncate">
                   {selectedDetails?.subCat?.name || value}
@@ -93,8 +93,8 @@ export default function CategoryPicker({
               </div>
             </>
           ) : (
-            <div className="flex items-center gap-2 text-dark-text-muted light:text-light-text-muted text-sm py-0.5">
-              <span className="w-7 h-7 rounded-lg bg-dark-border/40 light:bg-light-border/40 flex items-center justify-center text-xs">
+            <div className="flex items-center gap-2 text-dark-text-muted light:text-light-text-muted text-sm py-1">
+              <span className="w-8 h-8 rounded-lg bg-dark-border/40 light:bg-light-border/40 flex items-center justify-center text-xs">
                 🏷️
               </span>
               <span>{placeholder}</span>
@@ -105,54 +105,52 @@ export default function CategoryPicker({
         <ChevronDown className={`w-4 h-4 text-dark-text-muted transition-transform duration-200 shrink-0 ${isOpen ? 'rotate-180' : ''}`} />
       </button>
 
-      {/* Dropdown Modal / Popover */}
+      {/* Dropdown Modal / Popover with extended long container */}
       {isOpen && (
-        <div className="absolute top-full mt-2 left-0 right-0 z-50 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface shadow-2xl overflow-hidden flex flex-col max-h-[85vh] sm:max-h-[560px] animate-in fade-in zoom-in-95 duration-150">
+        <div className="absolute top-full mt-2 left-0 right-0 z-50 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface shadow-2xl overflow-hidden flex flex-col max-h-[85vh] sm:max-h-[580px] animate-in fade-in zoom-in-95 duration-150">
           {/* Header: Tabs & Search */}
-          <div className="p-2.5 border-b border-dark-border light:border-light-border space-y-2 bg-dark-surface-elevated/60 light:bg-light-surface-elevated/60 backdrop-blur-xs shrink-0">
+          <div className="p-3 border-b border-dark-border light:border-light-border space-y-2 bg-dark-surface-elevated/50 light:bg-light-surface-elevated/50 shrink-0">
             {/* Type Switcher */}
-            <div className="grid grid-cols-2 gap-1 p-0.5 bg-dark-surface light:bg-light-surface rounded-xl border border-dark-border light:border-light-border text-xs font-medium">
+            <div className="grid grid-cols-2 gap-1 p-1 bg-dark-surface light:bg-light-surface rounded-xl border border-dark-border light:border-light-border text-xs font-medium">
               <button
                 type="button"
                 onClick={() => { setActiveTab('expense'); setSearch(''); }}
-                className={`py-1 rounded-lg transition-all text-xs font-semibold flex items-center justify-center gap-1.5 ${
+                className={`py-1.5 rounded-lg transition-all font-semibold ${
                   activeTab === 'expense'
                     ? 'bg-rose-500/15 text-rose-500 shadow-xs'
                     : 'text-dark-text-muted hover:text-dark-text-primary'
                 }`}
               >
-                <span>📉</span>
-                <span>הוצאות</span>
+                הוצאות
               </button>
               <button
                 type="button"
                 onClick={() => { setActiveTab('income'); setSearch(''); }}
-                className={`py-1 rounded-lg transition-all text-xs font-semibold flex items-center justify-center gap-1.5 ${
+                className={`py-1.5 rounded-lg transition-all font-semibold ${
                   activeTab === 'income'
                     ? 'bg-emerald-500/15 text-emerald-500 shadow-xs'
                     : 'text-dark-text-muted hover:text-dark-text-primary'
                 }`}
               >
-                <span>📈</span>
-                <span>הכנסות</span>
+                הכנסות
               </button>
             </div>
 
             {/* Search input */}
             <div className="relative">
-              <Search className="w-3.5 h-3.5 absolute right-3 top-1/2 -translate-y-1/2 text-dark-text-muted pointer-events-none" />
+              <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-dark-text-muted pointer-events-none" />
               <input
                 type="text"
-                placeholder="חיפוש מהיר של קטגוריה או תת-קטגוריה..."
+                placeholder="חיפוש קטגוריה או תת-קטגוריה..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="w-full pr-8 pl-3 py-1.5 text-xs rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface focus:outline-none focus:border-brand-primary placeholder:text-dark-text-muted/60"
+                className="w-full pr-9 pl-3 py-1.5 text-xs rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface focus:outline-none focus:border-brand-primary"
               />
             </div>
           </div>
 
-          {/* Categories & Subcategories List */}
-          <div className="flex-1 overflow-y-auto p-1.5 space-y-1 divide-y divide-dark-border/20 light:divide-light-border/20 overscroll-contain">
+          {/* Categories & Subcategories List (Long, Spacious, Smooth Scrolling) */}
+          <div className="flex-1 overflow-y-auto p-2 space-y-1.5 divide-y divide-dark-border/20 light:divide-light-border/20">
             {filteredCategories.length === 0 ? (
               <div className="py-8 text-center text-xs text-dark-text-muted">
                 לא נמצאו קטגוריות מתאימות
@@ -164,13 +162,9 @@ export default function CategoryPicker({
                 const isSelectedMain = value === cat.name;
 
                 return (
-                  <div key={cat.id} className="pt-1 first:pt-0">
+                  <div key={cat.id} className="pt-1.5 first:pt-0">
                     {/* Main Category Row */}
-                    <div className={`flex items-center justify-between px-2.5 py-1.5 rounded-xl transition-colors group cursor-pointer ${
-                      isSelectedMain 
-                        ? 'bg-brand-primary/10 border border-brand-primary/30' 
-                        : 'hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated border border-transparent'
-                    }`}>
+                    <div className="flex items-center justify-between p-2 rounded-xl hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated transition-colors group">
                       <button
                         type="button"
                         onClick={() => {
@@ -180,16 +174,17 @@ export default function CategoryPicker({
                             handleSelect(cat.name);
                           }
                         }}
-                        className="flex items-center gap-2.5 flex-1 text-right min-w-0"
+                        className="flex items-center gap-3 flex-1 text-right cursor-pointer min-w-0"
                       >
-                        <CategoryBadge category={cat.name} size={15} />
-                        <div className="min-w-0 flex-1 flex items-center justify-between gap-2">
-                          <span className="text-xs sm:text-sm font-semibold text-dark-text-primary light:text-light-text-primary truncate">
-                            {cat.name}
-                          </span>
+                        <CategoryBadge category={cat.name} size={18} />
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold text-dark-text-primary light:text-light-text-primary flex items-center gap-1.5">
+                            <span>{cat.name}</span>
+                            {isSelectedMain && <Check className="w-4 h-4 text-brand-primary" />}
+                          </div>
                           {hasSubs && (
-                            <span className="text-[10px] text-dark-text-muted light:text-light-text-muted shrink-0 bg-dark-surface-elevated light:bg-light-surface-elevated px-1.5 py-0.5 rounded-md border border-dark-border/40 light:border-light-border/40">
-                              {cat.subs.length}
+                            <span className="text-[11px] text-dark-text-muted light:text-light-text-muted">
+                              {cat.subs.length} תתי-קטגוריות • לחץ לפתיחה
                             </span>
                           )}
                         </div>
@@ -203,58 +198,55 @@ export default function CategoryPicker({
                             e.stopPropagation();
                             setExpandedCatId(isExpanded ? null : cat.id);
                           }}
-                          className="p-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-dark-text-muted transition-transform ml-1"
+                          className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-dark-text-muted transition-transform cursor-pointer"
                           title={isExpanded ? 'סגור תתי-קטגוריות' : 'פתח תתי-קטגוריות'}
                         >
-                          <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isExpanded ? 'rotate-180 text-brand-primary' : ''}`} />
+                          <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${isExpanded ? 'rotate-180 text-brand-primary' : ''}`} />
                         </button>
                       )}
                     </div>
 
-                    {/* Subcategories Grid / List */}
+                    {/* Subcategories Vertical List */}
                     {hasSubs && isExpanded && (
-                      <div className="mr-4 ml-1 mt-1 mb-1.5 pr-2 pl-1 border-r-2 border-brand-primary/40 space-y-1">
+                      <div className="mr-6 ml-2 mt-1 mb-2 pl-2 border-r-2 border-dark-border/60 light:border-light-border/60 space-y-1">
                         {/* Option to select the main parent category */}
                         <button
                           type="button"
                           onClick={() => handleSelect(cat.name)}
-                          className={`w-full flex items-center justify-between px-2 py-1 rounded-lg text-xs transition-colors text-right ${
+                          className={`w-full flex items-center justify-between p-1.5 rounded-lg text-xs transition-colors text-right ${
                             isSelectedMain
                               ? 'bg-brand-primary/15 text-brand-primary font-bold'
                               : 'hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-dark-text-muted'
                           }`}
                         >
-                          <div className="flex items-center gap-1.5 font-medium text-xs">
+                          <div className="flex items-center gap-2 font-medium">
                             <span>📌</span>
-                            <span>בחר כללי: "{cat.name}"</span>
+                            <span>בחר "{cat.name}" (קטגוריית אב)</span>
                           </div>
                           {isSelectedMain && <Check className="w-3.5 h-3.5 text-brand-primary" />}
                         </button>
 
-                        {/* Subcategories Grid - 2 columns for quick access and density */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 pt-0.5">
-                          {cat.subs.map((sub) => {
-                            const isSelectedSub = value === sub.name;
-                            return (
-                              <button
-                                key={sub.id}
-                                type="button"
-                                onClick={() => handleSelect(sub.name)}
-                                className={`flex items-center justify-between px-2 py-1 rounded-lg text-xs transition-colors text-right ${
-                                  isSelectedSub
-                                    ? 'bg-brand-primary/15 text-brand-primary font-bold border border-brand-primary/30'
-                                    : 'hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-dark-text-primary light:text-light-text-primary'
-                                }`}
-                              >
-                                <div className="flex items-center gap-1.5 min-w-0">
-                                  <CategoryBadge category={sub.name} size={12} className="shrink-0" />
-                                  <span className="truncate">{sub.name}</span>
-                                </div>
-                                {isSelectedSub && <Check className="w-3 h-3 text-brand-primary shrink-0 mr-1" />}
-                              </button>
-                            );
-                          })}
-                        </div>
+                        {cat.subs.map((sub) => {
+                          const isSelectedSub = value === sub.name;
+                          return (
+                            <button
+                              key={sub.id}
+                              type="button"
+                              onClick={() => handleSelect(sub.name)}
+                              className={`w-full flex items-center justify-between p-1.5 rounded-lg text-xs transition-colors text-right ${
+                                isSelectedSub
+                                  ? 'bg-brand-primary/15 text-brand-primary font-bold'
+                                  : 'hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-dark-text-primary light:text-light-text-primary'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <CategoryBadge category={sub.name} size={14} className="scale-75 -my-1" />
+                                <span className="truncate">{sub.name}</span>
+                              </div>
+                              {isSelectedSub && <Check className="w-3.5 h-3.5 text-brand-primary shrink-0" />}
+                            </button>
+                          );
+                        })}
                       </div>
                     )}
                   </div>

@@ -347,7 +347,7 @@ export default async function analyticsRoutes(fastify, options) {
         },
       ];
 
-      // Query historical transactions in the last 12 months (non-ignored expenses)
+      // Query historical transactions in the last 12-13 months (non-ignored expenses, capturing both positive & negative amount expense records)
       const historicalRes = await pool.query(`
         SELECT 
           t.id,
@@ -364,8 +364,14 @@ export default async function analyticsRoutes(fastify, options) {
         FROM transactions t
         LEFT JOIN accounts a ON t.account_id = a.id
         WHERE t.is_ignored = false 
-          AND t.amount < 0 
-          AND t.date >= (DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '11 months')
+          AND (
+            t.amount < 0 
+            OR (
+              t.amount > 0 
+              AND COALESCE(t.category, '') NOT IN ('משכורת', 'הכנסה', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות', 'הכנסות', 'Salary', 'Income')
+            )
+          )
+          AND t.date >= (CURRENT_DATE - INTERVAL '13 months')
         ORDER BY t.date DESC
       `);
 
@@ -438,14 +444,9 @@ export default async function analyticsRoutes(fastify, options) {
         };
       });
 
-      // Filter and sort by monthly average descending
-      const activeAverages = results
-        .filter((r) => r.monthlyAverage > 0 || r.currentMonth > 0)
-        .sort((a, b) => b.monthlyAverage - a.monthlyAverage);
-
       return reply.code(200).send({
         distinctMonths: 12,
-        data: activeAverages.length > 0 ? activeAverages : results,
+        data: results,
       });
     } catch (err) {
       fastify.log.error(err, 'Failed to compute category averages');

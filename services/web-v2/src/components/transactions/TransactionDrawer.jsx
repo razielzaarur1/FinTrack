@@ -409,21 +409,34 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
               </div>
 
               {/* Apply to All Similar Transactions */}
-              <div className="p-3.5 rounded-2xl border border-brand-primary/30 bg-brand-primary/5 space-y-1.5 transition-colors">
-                <label className="flex items-center gap-2.5 cursor-pointer">
+              <div 
+                onClick={() => setApplyToSimilar(!applyToSimilar)}
+                className={`p-3.5 rounded-2xl border transition-all cursor-pointer select-none space-y-1 ${
+                  applyToSimilar 
+                    ? 'border-brand-primary bg-brand-primary/15 shadow-sm ring-1 ring-brand-primary/30' 
+                    : 'border-brand-primary/30 bg-brand-primary/5 hover:bg-brand-primary/10'
+                }`}
+              >
+                <div className="flex items-center gap-2.5">
                   <input
                     type="checkbox"
                     checked={applyToSimilar}
                     onChange={(e) => setApplyToSimilar(e.target.checked)}
-                    className="w-4 h-4 rounded text-brand-primary focus:ring-brand-primary cursor-pointer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="w-4 h-4 rounded text-brand-primary focus:ring-brand-primary cursor-pointer shrink-0"
                   />
-                  <div className="text-xs font-bold text-dark-text light:text-light-text flex items-center gap-1.5">
+                  <div className="text-xs font-bold text-dark-text light:text-light-text flex items-center gap-1.5 flex-1">
                     <span>⚡</span>
-                    <span>החל שינויים אלו על כל התנועות הדומות</span>
+                    <span>החל את השינויים על כל התנועות הדומות</span>
+                    {applyToSimilar && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-brand-primary text-white font-bold mr-auto">
+                        פעיל
+                      </span>
+                    )}
                   </div>
-                </label>
+                </div>
                 <p className="text-[11px] text-dark-text-muted light:text-light-text-muted mr-6 leading-relaxed">
-                  הקטגוריה, הכינוי וההתעלמות יוחלו אוטומטית על כל התנועות של &quot;{tx.merchantName || tx.description}&quot; ויילמדו לתנועות הבאות.
+                  הקטגוריה, הכינוי וההתעלמות יוחלו על כל התנועות של &quot;{tx.merchantName || tx.description}&quot; ויילמדו לתנועות הבאות.
                 </p>
               </div>
 

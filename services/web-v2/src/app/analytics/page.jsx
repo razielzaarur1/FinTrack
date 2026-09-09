@@ -213,14 +213,21 @@ export default function AnalyticsPage() {
         </div>
 
         {(() => {
-          const avgList = Array.isArray(averages) ? averages : (averages?.data && Array.isArray(averages.data) ? averages.data : []);
-          if (avgList.length === 0) {
-            return (
-              <div className="p-8 text-center rounded-2xl border border-dark-border/60 light:border-light-border/60 bg-dark-surface light:bg-light-surface text-xs text-dark-text-muted light:text-light-text-muted">
-                טרם נצברו מספיק עסקאות לחישוב ממוצעים חודשיים. הממוצעים יחושבו אוטומטית ככל שיצטברו תנועות.
-              </div>
-            );
-          }
+          const DEFAULT_FALLBACK_AVERAGES = [
+            { key: 'dining', category: 'אוכל בחוץ', name: 'אוכל בחוץ', monthlyAverage: 0, currentMonth: 0, totalHistorical: 0, transactions: [], distribution: [] },
+            { key: 'groceries', category: 'סופר ומכולת', name: 'סופר ומכולת', monthlyAverage: 0, currentMonth: 0, totalHistorical: 0, transactions: [], distribution: [] },
+            { key: 'fuel', category: 'דלק ותחבורה', name: 'דלק ותחבורה', monthlyAverage: 0, currentMonth: 0, totalHistorical: 0, transactions: [], distribution: [] },
+            { key: 'shopping', category: 'קניות וביגוד', name: 'קניות וביגוד', monthlyAverage: 0, currentMonth: 0, totalHistorical: 0, transactions: [], distribution: [] },
+            { key: 'bills', category: 'משק בית וחשבונות', name: 'משק בית וחשבונות', monthlyAverage: 0, currentMonth: 0, totalHistorical: 0, transactions: [], distribution: [] },
+            { key: 'pharmacy', category: 'בריאות ופארם', name: 'בריאות ופארם', monthlyAverage: 0, currentMonth: 0, totalHistorical: 0, transactions: [], distribution: [] },
+            { key: 'leisure', category: 'פנאי ובילויים', name: 'פנאי ובילויים', monthlyAverage: 0, currentMonth: 0, totalHistorical: 0, transactions: [], distribution: [] },
+          ];
+
+          const avgList = (Array.isArray(averages) && averages.length > 0)
+            ? averages
+            : (averages?.data && Array.isArray(averages.data) && averages.data.length > 0)
+            ? averages.data
+            : DEFAULT_FALLBACK_AVERAGES;
 
           return (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3">
