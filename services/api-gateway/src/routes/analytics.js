@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { pool } from '../db.js';
+import { cleanSpacedHebrew } from './transactions-v2.js';
 
 export default async function analyticsRoutes(fastify, options) {
   // GET /api/analytics/overview - Overall KPI summaries for current month or selected date range
@@ -117,22 +118,28 @@ export default async function analyticsRoutes(fastify, options) {
     }
   });
 
-  // GET /api/analytics/category-breakdown - Expenses or Income categorized distribution
+  // GET /api/analytics/category-breakdown - Expenses or Income categorized distribution with split transaction support
   fastify.get('/category-breakdown', async (request, reply) => {
-    const { year, month, type = 'expense', accountId, accountIds } = request.query;
-    const now = new Date();
-    const targetYear = parseInt(year, 10) || now.getFullYear();
-    const targetMonth = parseInt(month, 10) || (now.getMonth() + 1);
+    const { year, month, startDate: queryStartDate, endDate: queryEndDate, type = 'expense', accountId, accountIds } = request.query;
+    let startDate = queryStartDate;
+    let endDate = queryEndDate;
 
-    const startDate = `${targetYear}-${String(targetMonth).padStart(2, '0')}-01`;
-    const lastDay = new Date(targetYear, targetMonth, 0).getDate();
-    const endDate = `${targetYear}-${String(targetMonth).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+    if (!startDate || !endDate) {
+      const now = new Date();
+      const targetYear = parseInt(year, 10) || now.getFullYear();
+      const targetMonth = parseInt(month, 10) || (now.getMonth() + 1);
+      startDate = `${targetYear}-${String(targetMonth).padStart(2, '0')}-01`;
+      const lastDay = new Date(targetYear, targetMonth, 0).getDate();
+      endDate = `${targetYear}-${String(targetMonth).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+    }
 
     const conditions = [
       't.date >= $1',
       't.date <= $2',
       't.is_ignored = false',
-      type === 'income' ? 't.amount > 0' : 't.amount < 0',
+      type === 'income' 
+        ? 't.amount > 0' 
+        : '(t.amount < 0 OR (t.amount > 0 AND COALESCE(t.category, \'\') NOT IN (\'משכורת\', \'הכנסה\', \'קצבה או מלגה\', \'הכנסה מנכס\', \'הכנסה מעסק\', \'דיווידנדים ורווחים\', \'הכנסות שונות\', \'הכנסות\', \'Salary\', \'Income\')))',
     ];
     const values = [startDate, endDate];
 
@@ -147,33 +154,81 @@ export default async function analyticsRoutes(fastify, options) {
       conditions.push(`t.account_id = $${values.length}`);
     }
 
+    const whereClause = conditions.join(' AND ');
+
     const query = `
+      WITH itemized AS (
+        -- 1. Standard non-split transactions
+        SELECT 
+          t.id,
+          t.category,
+          ABS(t.amount) AS amount
+        FROM transactions t
+        WHERE ${whereClause} AND (t.is_split = false OR t.is_split IS NULL)
+
+        UNION ALL
+
+        -- 2. Split transaction itemized rows
+        SELECT 
+          t.id,
+          ts.category,
+          ABS(ts.amount) AS amount
+        FROM transaction_splits ts
+        JOIN transactions t ON ts.transaction_id = t.id
+        WHERE ${whereClause} AND t.is_split = true
+      )
       SELECT 
-        COALESCE(c.name, t.category, 'אחר') AS "name",
+        COALESCE(c.name, i.category, 'שונות') AS "name",
         COALESCE(c.color, '#6366f1') AS "color",
         COALESCE(c.icon, 'tag') AS "icon",
-        SUM(ABS(t.amount)) AS "amount",
-        COUNT(t.id) AS "count"
-      FROM transactions t
-      LEFT JOIN categories c ON (t.category = c.name OR t.category = c.name_en)
-      WHERE ${conditions.join(' AND ')}
-      GROUP BY COALESCE(c.name, t.category, 'אחר'), c.color, c.icon
+        SUM(i.amount) AS "amount",
+        COUNT(i.id) AS "count"
+      FROM itemized i
+      LEFT JOIN categories c ON (i.category = c.name OR i.category = c.name_en)
+      WHERE ${type === 'expense' ? "COALESCE(c.type, 'expense') != 'income' AND i.category NOT IN ('משכורת', 'הכנסה', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות', 'הכנסות', 'Salary', 'Income')" : "1=1"}
+      GROUP BY COALESCE(c.name, i.category, 'שונות'), c.color, c.icon
       ORDER BY "amount" DESC
     `;
 
     try {
       const result = await pool.query(query, values);
-      const total = result.rows.reduce((acc, r) => acc + parseFloat(r.amount), 0);
-      const data = result.rows.map((r) => ({
-        name: r.name,
-        color: r.color,
-        icon: r.icon,
-        amount: parseFloat(r.amount),
-        count: parseInt(r.count, 10),
-        percentage: total > 0 ? Math.round((parseFloat(r.amount) / total) * 100) : 0,
-      }));
-      return reply.code(200).send({ total, data });
+      const categoryMap = new Map();
+
+      for (const r of result.rows) {
+        let cleanName = cleanSpacedHebrew(r.name).trim();
+        if (!cleanName || cleanName === 'אחר') cleanName = 'שונות';
+        if (type === 'expense' && (cleanName === 'משכורת' || cleanName === 'הכנסה' || cleanName === 'הכנסות שונות')) continue;
+        if (type === 'income' && cleanName === 'הוצאות שונות') continue;
+
+        const amt = parseFloat(r.amount) || 0;
+        const cnt = parseInt(r.count, 10) || 0;
+        if (categoryMap.has(cleanName)) {
+          const existing = categoryMap.get(cleanName);
+          existing.amount += amt;
+          existing.count += cnt;
+        } else {
+          categoryMap.set(cleanName, {
+            name: cleanName,
+            color: r.color,
+            icon: r.icon,
+            amount: amt,
+            count: cnt,
+          });
+        }
+      }
+
+      const total = Array.from(categoryMap.values()).reduce((acc, r) => acc + r.amount, 0);
+      const data = Array.from(categoryMap.values())
+        .map((r) => ({
+          ...r,
+          amount: Math.round(r.amount * 100) / 100,
+          percentage: total > 0 ? Math.round((r.amount / total) * 100) : 0,
+        }))
+        .sort((a, b) => b.amount - a.amount);
+
+      return reply.code(200).send({ total: Math.round(total * 100) / 100, data });
     } catch (err) {
+      fastify.log.error(err, 'Failed to fetch category breakdown');
       return reply.code(500).send({ error: 'Database error', message: err.message });
     }
   });
@@ -348,38 +403,75 @@ export default async function analyticsRoutes(fastify, options) {
       ];
 
       // Query historical transactions in the last 12-13 months (non-ignored expenses, capturing both positive & negative amount expense records)
+      // Including split transactions itemized by split category & split amount
       const historicalRes = await pool.query(`
-        SELECT 
-          t.id,
-          t.date,
-          TO_CHAR(t.date, 'YYYY-MM') AS "monthKey",
-          t.amount,
-          COALESCE(t.category, '') AS "category",
-          COALESCE(t.user_description, '') AS "userDescription",
-          COALESCE(t.merchant_name, '') AS "merchantName",
-          COALESCE(t.description, '') AS "description",
-          t.account_id AS "accountId",
-          a.display_name AS "accountDisplayName",
-          a.bank_company AS "bankCompany"
-        FROM transactions t
-        LEFT JOIN accounts a ON t.account_id = a.id
-        WHERE t.is_ignored = false 
-          AND (
-            t.amount < 0 
-            OR (
-              t.amount > 0 
-              AND COALESCE(t.category, '') NOT IN ('משכורת', 'הכנסה', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות', 'הכנסות', 'Salary', 'Income')
+        WITH itemized AS (
+          SELECT 
+            t.id,
+            t.date,
+            TO_CHAR(t.date, 'YYYY-MM') AS "monthKey",
+            t.amount,
+            COALESCE(t.category, '') AS "category",
+            COALESCE(t.user_description, '') AS "userDescription",
+            COALESCE(t.merchant_name, '') AS "merchantName",
+            COALESCE(t.description, '') AS "description",
+            t.account_id AS "accountId",
+            a.display_name AS "accountDisplayName",
+            a.bank_company AS "bankCompany"
+          FROM transactions t
+          LEFT JOIN bank_accounts a ON t.account_id = a.id
+          WHERE t.is_ignored = false 
+            AND (t.is_split = false OR t.is_split IS NULL)
+            AND (
+              t.amount < 0 
+              OR (
+                t.amount > 0 
+                AND COALESCE(t.category, '') NOT IN ('משכורת', 'הכנסה', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות', 'הכנסות', 'Salary', 'Income')
+              )
             )
-          )
-          AND t.date >= (CURRENT_DATE - INTERVAL '13 months')
-        ORDER BY t.date DESC
+            AND t.date >= (CURRENT_DATE - INTERVAL '13 months')
+
+          UNION ALL
+
+          SELECT 
+            t.id,
+            t.date,
+            TO_CHAR(t.date, 'YYYY-MM') AS "monthKey",
+            ts.amount,
+            COALESCE(ts.category, '') AS "category",
+            COALESCE(ts.description, t.user_description, '') AS "userDescription",
+            COALESCE(t.merchant_name, '') AS "merchantName",
+            COALESCE(t.description, '') AS "description",
+            t.account_id AS "accountId",
+            a.display_name AS "accountDisplayName",
+            a.bank_company AS "bankCompany"
+          FROM transaction_splits ts
+          JOIN transactions t ON ts.transaction_id = t.id
+          LEFT JOIN bank_accounts a ON t.account_id = a.id
+          WHERE t.is_ignored = false 
+            AND t.is_split = true
+            AND (
+              ts.amount < 0 
+              OR (
+                ts.amount > 0 
+                AND COALESCE(ts.category, '') NOT IN ('משכורת', 'הכנסה', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות', 'הכנסות', 'Salary', 'Income')
+              )
+            )
+            AND t.date >= (CURRENT_DATE - INTERVAL '13 months')
+        )
+        SELECT * FROM itemized
+        ORDER BY date DESC
       `);
 
       const currentMonthKey = monthLabels[monthLabels.length - 1].key;
 
       const results = FOCUSED_CATEGORIES.map((catDef) => {
         const matchesItem = (row) => {
-          const text = `${row.category} ${row.merchantName} ${row.description} ${row.userDescription}`.toLowerCase();
+          const cleanDesc = cleanSpacedHebrew(row.description);
+          const cleanMerchant = cleanSpacedHebrew(row.merchantName);
+          const cleanUserDesc = cleanSpacedHebrew(row.userDescription);
+          const cleanCat = cleanSpacedHebrew(row.category);
+          const text = `${row.category} ${cleanCat} ${row.merchantName} ${cleanMerchant} ${row.description} ${cleanDesc} ${row.userDescription} ${cleanUserDesc}`.toLowerCase();
           return catDef.matchTerms.some((term) => text.includes(term.toLowerCase()));
         };
 
@@ -434,10 +526,10 @@ export default async function analyticsRoutes(fastify, options) {
             id: tx.id,
             date: tx.date,
             amount: tx.amount,
-            category: tx.category,
-            userDescription: tx.userDescription,
-            merchantName: tx.merchantName,
-            description: tx.description,
+            category: cleanSpacedHebrew(tx.category),
+            userDescription: cleanSpacedHebrew(tx.userDescription),
+            merchantName: cleanSpacedHebrew(tx.merchantName),
+            description: cleanSpacedHebrew(tx.description),
             accountDisplayName: tx.accountDisplayName,
             bankCompany: tx.bankCompany,
           })),

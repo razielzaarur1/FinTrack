@@ -24,7 +24,7 @@ import {
   Check
 } from 'lucide-react';
 import { api } from '@/lib/api';
-import { formatILS, formatDate } from '@/lib/formatters';
+import { formatILS, formatDate, cleanSpacedHebrew } from '@/lib/formatters';
 import { useApp } from '@/lib/app-context';
 import CategoryBadge from '@/components/common/CategoryBadge';
 import CategoryPicker from '@/components/common/CategoryPicker';
@@ -120,6 +120,9 @@ function TransactionsContent() {
         );
         setBulkCategoryModalOpen(false);
         setSelectedIds(new Set());
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new Event('fintrack_tx_updated'));
+        }
       }
     } finally {
       setSavingBulk(false);
@@ -135,14 +138,35 @@ function TransactionsContent() {
     });
   }, []);
 
-  // Update account filter if URL param changes
+  // Update filters if URL params change (accountId or month)
   useEffect(() => {
     const accParam = searchParams?.get('accountId');
     if (accParam) {
       setSelectedAccountIds([accParam]);
       setShowFilters(true);
     }
+    const monthParam = searchParams?.get('month');
+    if (monthParam && /^\d{4}-\d{2}$/.test(monthParam)) {
+      const [y, m] = monthParam.split('-').map(Number);
+      const start = new Date(y, m - 1, 1).toISOString().slice(0, 10);
+      const end = new Date(y, m, 0).toISOString().slice(0, 10);
+      setDatePreset('custom');
+      setStartDate(start);
+      setEndDate(end);
+      setShowFilters(true);
+    }
   }, [searchParams]);
+
+  // Real-time listener for transaction updates
+  useEffect(() => {
+    const handleSync = () => {
+      loadTransactions(null, null, true);
+    };
+    window.addEventListener('fintrack_tx_updated', handleSync);
+    return () => {
+      window.removeEventListener('fintrack_tx_updated', handleSync);
+    };
+  }, [type, selectedAccountIds, selectedCategories, datePreset, startDate, endDate]);
 
   // Options for Account Multi-Select
   const accountOptions = useMemo(() => {
@@ -175,6 +199,60 @@ function TransactionsContent() {
     });
     return list;
   }, []);
+
+  // Quick month selector helper options (last 24 months)
+  const monthOptions = useMemo(() => {
+    const opts = [];
+    const now = new Date();
+    const MONTH_HEBREW = [
+      'ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני',
+      'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר'
+    ];
+    for (let i = 0; i < 24; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const y = d.getFullYear();
+      const m = d.getMonth() + 1;
+      const val = `${y}-${String(m).padStart(2, '0')}`;
+      opts.push({
+        value: val,
+        label: `${MONTH_HEBREW[m - 1]} ${y}`,
+      });
+    }
+    return opts;
+  }, []);
+
+  const selectedMonthValue = useMemo(() => {
+    if (datePreset === 'all' && !startDate && !endDate) return 'all';
+    if (startDate && endDate && startDate.slice(0, 7) === endDate.slice(0, 7)) {
+      return startDate.slice(0, 7);
+    }
+    if (datePreset === 'current_month') {
+      const now = new Date();
+      return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    }
+    if (datePreset === 'last_month') {
+      const d = new Date();
+      d.setMonth(d.getMonth() - 1);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    }
+    return 'all';
+  }, [datePreset, startDate, endDate]);
+
+  const handleQuickMonthChange = (val) => {
+    if (val === 'all') {
+      setDatePreset('all');
+      setStartDate('');
+      setEndDate('');
+    } else {
+      const [y, m] = val.split('-').map(Number);
+      const start = `${y}-${String(m).padStart(2, '0')}-01`;
+      const lastDay = new Date(y, m, 0).getDate();
+      const end = `${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+      setDatePreset('custom');
+      setStartDate(start);
+      setEndDate(end);
+    }
+  };
 
   // Compute active filters count
   const activeFiltersCount = [
@@ -378,7 +456,22 @@ function TransactionsContent() {
           </form>
 
           {/* Action Row on Mobile / Inline on Desktop */}
-          <div className="flex items-center gap-2 w-full sm:w-auto shrink-0">
+          <div className="flex items-center gap-2 w-full sm:w-auto shrink-0 flex-wrap">
+            {/* Quick Month Selector Dropdown */}
+            <select
+              value={selectedMonthValue}
+              onChange={(e) => handleQuickMonthChange(e.target.value)}
+              className="px-3 py-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs font-semibold focus:outline-none focus:border-brand-primary cursor-pointer shadow-2xs"
+              title="סינון מהיר לפי חודש"
+            >
+              <option value="all">כל החודשים</option>
+              {monthOptions.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+
             {/* Type Toggle Buttons */}
             <div className="flex-1 sm:flex-initial flex rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated p-1 text-xs justify-center">
               <button
@@ -653,7 +746,7 @@ function TransactionsContent() {
               const isLast = idx === transactions.length - 1;
               const isIncome = parseFloat(tx.amount) > 0;
               const isSelected = selectedIds.has(tx.id);
-              const merchantTitle = tx.userDescription || tx.merchantName || tx.description || 'ללא תיאור';
+              const merchantTitle = cleanSpacedHebrew(tx.userDescription || tx.merchantName || tx.description || 'ללא תיאור');
               const isAtm = Boolean(tx.isCashWithdrawal || (tx.merchantName && tx.merchantName.includes('משיכת מזומן')));
 
               const catDetails = getCategoryDetails(tx.category);

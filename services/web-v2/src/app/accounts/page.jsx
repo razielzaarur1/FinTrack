@@ -24,7 +24,8 @@ import {
   Search,
   Zap,
   PiggyBank,
-  Utensils
+  Utensils,
+  Clock
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { formatILS, formatDate, formatRelativeTime } from '@/lib/formatters';
@@ -32,11 +33,154 @@ import { ISRAELI_INSTITUTIONS, getInstitutionById, INSTITUTION_CATEGORIES } from
 import InstitutionLogo from '@/components/common/InstitutionLogo';
 import { useApp } from '@/lib/app-context';
 
+function SyncProgressModal({ syncState, onClose }) {
+  if (!syncState || !syncState.isOpen) return null;
+
+  const {
+    totalAccounts = 1,
+    currentAccountIndex = 1,
+    accountName = '',
+    bankCompany = '',
+    currentStep = 1,
+    isComplete = false,
+    error = null,
+  } = syncState;
+
+  const steps = [
+    { id: 1, title: 'התחברות לשרת הסריקה המאובטח' },
+    { id: 2, title: 'אימות פרטי זיהוי מול המוסד הפיננסי' },
+    { id: 3, title: 'משיכת נתוני עו״ש, עסקאות ויתרות' },
+    { id: 4, title: 'קליטה וסיווג אוטומטי של התנועות' },
+    { id: 5, title: 'הסנכרון הושלם בהצלחה' },
+  ];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
+      <div className="w-full max-w-md rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface p-6 shadow-2xl space-y-5">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-dark-border/60 pb-4">
+          <div className="flex items-center gap-3">
+            {bankCompany && <InstitutionLogo bankCompany={bankCompany} size={36} />}
+            <div>
+              <h3 className="font-bold text-base text-dark-text light:text-light-text">
+                {isComplete ? 'הסנכרון הושלם בהצלחה!' : 'סנכרון חשבונות פעיל'}
+              </h3>
+              <p className="text-xs text-dark-text-muted light:text-light-text-muted mt-0.5">
+                {totalAccounts > 1 ? `חשבון ${currentAccountIndex} מתוך ${totalAccounts}: ${accountName}` : accountName}
+              </p>
+            </div>
+          </div>
+
+          {(isComplete || error) && (
+            <button
+              onClick={onClose}
+              className="p-1.5 rounded-lg hover:bg-dark-surface-elevated text-dark-text-muted hover:text-dark-text cursor-pointer transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+
+        {/* Multi-account overall progress bar */}
+        {totalAccounts > 1 && (
+          <div className="space-y-1.5">
+            <div className="flex justify-between text-xs font-semibold text-dark-text-muted">
+              <span>התקדמות כוללת</span>
+              <span className="font-mono">
+                {isComplete ? '100%' : `${Math.round(((currentAccountIndex - 1 + (currentStep / 5)) / totalAccounts) * 100)}%`}
+              </span>
+            </div>
+            <div className="w-full h-2 rounded-full bg-dark-surface-elevated overflow-hidden">
+              <div
+                className="h-full bg-brand-primary rounded-full transition-all duration-500"
+                style={{
+                  width: isComplete ? '100%' : `${Math.max(5, Math.round(((currentAccountIndex - 1 + (currentStep / 5)) / totalAccounts) * 100))}%`,
+                }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Steps Checklist */}
+        <div className="space-y-2.5 py-1">
+          {steps.map((s) => {
+            const isDone = isComplete || currentStep > s.id;
+            const isCurrent = !isComplete && !error && currentStep === s.id;
+
+            return (
+              <div
+                key={s.id}
+                className={`flex items-center gap-3 p-3 rounded-xl border transition-all ${
+                  isCurrent
+                    ? 'border-brand-primary/40 bg-brand-primary/5 text-brand-primary font-bold'
+                    : isDone
+                    ? 'border-emerald-500/20 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400 font-medium'
+                    : 'border-transparent text-dark-text-muted/60 opacity-60'
+                }`}
+              >
+                <div className="shrink-0">
+                  {isDone ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                  ) : isCurrent ? (
+                    <RefreshCw className="w-4 h-4 animate-spin text-brand-primary" />
+                  ) : (
+                    <div className="w-4 h-4 rounded-full border border-dark-border flex items-center justify-center text-[10px]">
+                      {s.id}
+                    </div>
+                  )}
+                </div>
+                <span className="text-xs">{s.title}</span>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Error notification if any */}
+        {error && (
+          <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <div className="font-bold">התרחשה שגיאה במהלך הסנכרון:</div>
+              <div className="opacity-90">{error}</div>
+            </div>
+          </div>
+        )}
+
+        {/* Footer Action */}
+        <div className="pt-2">
+          {isComplete || error ? (
+            <button
+              onClick={onClose}
+              className="w-full py-2.5 rounded-xl bg-brand-primary text-white text-xs font-semibold hover:bg-brand-primary-hover shadow-md transition-colors cursor-pointer"
+            >
+              סגור ורענן
+            </button>
+          ) : (
+            <p className="text-[11px] text-center text-dark-text-muted">
+              התהליך מתבצע בצורה מוצפנת ומאובטחת ברקע, אנא המתן...
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function AccountsPage() {
   const { lang, t } = useApp();
   const [accounts, setAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [syncingId, setSyncingId] = useState(null);
+  const [syncModal, setSyncModal] = useState({
+    isOpen: false,
+    totalAccounts: 1,
+    currentAccountIndex: 1,
+    accountName: '',
+    bankCompany: '',
+    currentStep: 1,
+    isComplete: false,
+    error: null,
+  });
 
   // Add Account Flow
   const [modalOpen, setModalOpen] = useState(false);
@@ -59,6 +203,7 @@ export default function AccountsPage() {
   // Edit Account Flow
   const [editingAccount, setEditingAccount] = useState(null);
   const [editName, setEditName] = useState('');
+  const [editAccountNumber, setEditAccountNumber] = useState('');
   const [editBillingDay, setEditBillingDay] = useState(10);
   const [editBalance, setEditBalance] = useState(0);
   const [savingEdit, setSavingEdit] = useState(false);
@@ -80,43 +225,122 @@ export default function AccountsPage() {
   }, []);
 
   const handleSyncAccount = async (id) => {
+    const acc = accounts.find((a) => a.id === id);
+    if (!acc) return;
     setSyncingId(id);
+    setSyncModal({
+      isOpen: true,
+      totalAccounts: 1,
+      currentAccountIndex: 1,
+      accountName: acc.displayName || acc.bankCompany,
+      bankCompany: acc.bankCompany,
+      currentStep: 1,
+      isComplete: false,
+      error: null,
+    });
+
     try {
       const triggerRes = await api.triggerScrape(id);
       if (triggerRes.error) {
-        console.warn('הפעלת הסריקה ברקע:', triggerRes.error);
-        setSyncingId(null);
-        return;
+        throw new Error(triggerRes.error || 'שגיאה בהפעלת הסריקה');
       }
 
-      const targetAccount = accounts.find((a) => a.id === id);
-      const initialScrapedAt = targetAccount?.lastScrapedAt || null;
+      setSyncModal((prev) => ({ ...prev, currentStep: 2 }));
+      const initialScrapedAt = acc.lastScrapedAt || null;
 
       let attempts = 0;
-      const interval = setInterval(async () => {
+      let finished = false;
+      while (attempts < 30 && !finished) {
+        await new Promise((r) => setTimeout(r, 2500));
         attempts++;
-        try {
+        if (attempts === 3) setSyncModal((prev) => ({ ...prev, currentStep: 3 }));
+        if (attempts === 6) setSyncModal((prev) => ({ ...prev, currentStep: 4 }));
+
+        const res = await api.getAccounts();
+        if (res.data) {
+          setAccounts(res.data);
+          const current = res.data.find((a) => a.id === id);
+          if (current) {
+            if (current.lastScrapedAt && current.lastScrapedAt !== initialScrapedAt) {
+              finished = true;
+              break;
+            }
+            if (current.lastScrapeError) {
+              throw new Error(current.lastScrapeError);
+            }
+          }
+        }
+      }
+
+      setSyncModal((prev) => ({ ...prev, currentStep: 5, isComplete: true }));
+      window.dispatchEvent(new CustomEvent('fintrack_tx_updated'));
+      await loadAccounts();
+    } catch (err) {
+      setSyncModal((prev) => ({ ...prev, error: err.message || 'שגיאה בסנכרון' }));
+    } finally {
+      setSyncingId(null);
+    }
+  };
+
+  const handleSyncAllAccounts = async () => {
+    const scannable = accounts.filter(
+      (a) => a.bankCompany !== 'wallet' && a.accountType !== 'wallet' && a.isActive !== false
+    );
+    if (scannable.length === 0) return;
+
+    setSyncModal({
+      isOpen: true,
+      totalAccounts: scannable.length,
+      currentAccountIndex: 1,
+      accountName: scannable[0].displayName || scannable[0].bankCompany,
+      bankCompany: scannable[0].bankCompany,
+      currentStep: 1,
+      isComplete: false,
+      error: null,
+    });
+
+    for (let i = 0; i < scannable.length; i++) {
+      const acc = scannable[i];
+      setSyncingId(acc.id);
+      setSyncModal((prev) => ({
+        ...prev,
+        currentAccountIndex: i + 1,
+        accountName: acc.displayName || acc.bankCompany,
+        bankCompany: acc.bankCompany,
+        currentStep: 1,
+      }));
+
+      try {
+        await api.triggerScrape(acc.id);
+        setSyncModal((prev) => ({ ...prev, currentStep: 2 }));
+        const initialScrapedAt = acc.lastScrapedAt || null;
+
+        let attempts = 0;
+        let finished = false;
+        while (attempts < 25 && !finished) {
+          await new Promise((r) => setTimeout(r, 2500));
+          attempts++;
+          if (attempts === 3) setSyncModal((prev) => ({ ...prev, currentStep: 3 }));
+          if (attempts === 6) setSyncModal((prev) => ({ ...prev, currentStep: 4 }));
+
           const res = await api.getAccounts();
           if (res.data) {
             setAccounts(res.data);
-            const current = res.data.find((a) => a.id === id);
-            if (
-              current &&
-              (
-                (current.lastScrapedAt && current.lastScrapedAt !== initialScrapedAt) ||
-                current.lastScrapeError ||
-                attempts >= 30
-              )
-            ) {
-              clearInterval(interval);
-              setSyncingId(null);
+            const current = res.data.find((a) => a.id === acc.id);
+            if (current && ((current.lastScrapedAt && current.lastScrapedAt !== initialScrapedAt) || current.lastScrapeError)) {
+              finished = true;
             }
           }
-        } catch (_) {}
-      }, 3000);
-    } catch (_) {
-      setSyncingId(null);
+        }
+      } catch (e) {
+        console.warn('Sync step error for account', acc.id, e);
+      }
     }
+
+    setSyncingId(null);
+    setSyncModal((prev) => ({ ...prev, currentStep: 5, isComplete: true }));
+    window.dispatchEvent(new CustomEvent('fintrack_tx_updated'));
+    await loadAccounts();
   };
 
   const handleDeleteAccount = async (id) => {
@@ -241,6 +465,7 @@ export default function AccountsPage() {
   const handleOpenEdit = (acc) => {
     setEditingAccount(acc);
     setEditName(acc.displayName || '');
+    setEditAccountNumber(acc.accountNumber || '');
     setEditBillingDay(acc.billingDay || 10);
     setEditBalance(acc.balance !== undefined ? acc.balance : 0);
   };
@@ -258,6 +483,7 @@ export default function AccountsPage() {
         payload.balance = parseFloat(editBalance) || 0;
       } else {
         payload.billingDay = parseInt(editBillingDay, 10) || 10;
+        payload.accountNumber = editAccountNumber.trim() || undefined;
       }
 
       await api.updateAccount(editingAccount.id, payload);
@@ -283,13 +509,24 @@ export default function AccountsPage() {
           </p>
         </div>
 
-        <button
-          onClick={handleOpenModal}
-          className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-brand-primary text-white font-semibold text-xs shadow-md shadow-brand-primary/25 hover:bg-brand-primary-hover transition-all shrink-0"
-        >
-          <Plus className="w-4 h-4" />
-          <span>{t('addAccount')}</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleSyncAllAccounts}
+            disabled={!!syncingId || syncModal.isOpen}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text font-semibold text-xs hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated transition-all disabled:opacity-50 cursor-pointer shrink-0 shadow-xs"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${syncingId ? 'animate-spin text-brand-primary' : ''}`} />
+            <span>סנכרן את כל החשבונות</span>
+          </button>
+
+          <button
+            onClick={handleOpenModal}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-brand-primary text-white font-semibold text-xs shadow-md shadow-brand-primary/25 hover:bg-brand-primary-hover transition-all shrink-0 cursor-pointer"
+          >
+            <Plus className="w-4 h-4" />
+            <span>{t('addAccount')}</span>
+          </button>
+        </div>
       </div>
 
       {/* Accounts Grid */}
@@ -472,6 +709,17 @@ export default function AccountsPage() {
                     </div>
                   )}
 
+                  {!isSyncing && !isWallet && (
+                    <div className="flex items-center gap-1.5 pt-1 text-[11px] text-dark-text-muted light:text-light-text-muted">
+                      <Clock className="w-3 h-3 opacity-60 shrink-0" />
+                      <span>
+                        {acc.lastScrapedAt
+                          ? `נסרק לאחרונה: ${formatRelativeTime(acc.lastScrapedAt)}`
+                          : 'טרם סונכרן'}
+                      </span>
+                    </div>
+                  )}
+
                   {acc.lastScrapeError && !isSyncing && !isWallet && (
                     <div className="p-2.5 rounded-xl bg-brand-expense/10 border border-brand-expense/20 text-[11px] text-brand-expense flex items-start gap-2">
                       <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
@@ -587,26 +835,45 @@ export default function AccountsPage() {
                   </p>
                 </div>
               ) : (
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">
-                    מועד חיוב חודשי
-                  </label>
-                  <select
-                    value={editBillingDay}
-                    onChange={(e) => setEditBillingDay(e.target.value)}
-                    className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-sm focus:outline-none focus:border-brand-primary cursor-pointer"
-                  >
-                    <option value="1">1 לחודש (תחילת חודש קלנדרי)</option>
-                    <option value="2">2 לחודש</option>
-                    <option value="10">10 לחודש (נפוץ באשראי)</option>
-                    <option value="15">15 לחודש</option>
-                    <option value="20">20 לחודש</option>
-                    <option value="25">25 לחודש</option>
-                  </select>
-                  <p className="text-[11px] text-dark-text-muted light:text-light-text-muted">
-                    החיוב החודשי יחושב עבור כל התנועות השייכות למחזור חיוב זה.
-                  </p>
-                </div>
+                <>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">
+                      4 ספרות אחרונות של הכרטיס / מספר חשבון
+                    </label>
+                    <input
+                      type="text"
+                      maxLength={10}
+                      value={editAccountNumber}
+                      onChange={(e) => setEditAccountNumber(e.target.value)}
+                      placeholder="2623"
+                      className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-sm font-mono focus:outline-none focus:border-brand-primary"
+                    />
+                    <p className="text-[11px] text-dark-text-muted light:text-light-text-muted">
+                      מאפשר זיהוי והפרדה מדויקת בין מספר כרטיסים תחת אותו חשבון.
+                    </p>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">
+                      מועד חיוב חודשי
+                    </label>
+                    <select
+                      value={editBillingDay}
+                      onChange={(e) => setEditBillingDay(e.target.value)}
+                      className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-sm focus:outline-none focus:border-brand-primary cursor-pointer"
+                    >
+                      <option value="1">1 לחודש (תחילת חודש קלנדרי)</option>
+                      <option value="2">2 לחודש</option>
+                      <option value="10">10 לחודש (נפוץ באשראי)</option>
+                      <option value="15">15 לחודש</option>
+                      <option value="20">20 לחודש</option>
+                      <option value="25">25 לחודש</option>
+                    </select>
+                    <p className="text-[11px] text-dark-text-muted light:text-light-text-muted">
+                      החיוב החודשי יחושב עבור כל התנועות השייכות למחזור חיוב זה.
+                    </p>
+                  </div>
+                </>
               )}
 
               <div className="flex gap-2 pt-2">
@@ -1118,6 +1385,12 @@ export default function AccountsPage() {
           </div>
         </div>
       )}
+
+      {/* Interactive Step-by-step Sync Progress Modal */}
+      <SyncProgressModal
+        syncState={syncModal}
+        onClose={() => setSyncModal((prev) => ({ ...prev, isOpen: false }))}
+      />
     </div>
   );
 }

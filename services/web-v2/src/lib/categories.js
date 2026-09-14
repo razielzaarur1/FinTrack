@@ -137,7 +137,7 @@ export const CATEGORIES_DATA = {
         { id: "misc_religion", name: "דת ותרומות", icon: "HandHeart" }, 
         { id: "misc_gambling", name: "הימורים", icon: "Trophy" }, 
         { id: "misc_uncategorized", name: "ללא סיווג", icon: "MoreHorizontal" }, 
-        { id: "misc_other", name: "שונות", icon: "MoreHorizontal" }
+        { id: "misc_other", name: "הוצאות שונות", icon: "MoreHorizontal" }
       ] 
     }
   ]

@@ -52,3 +52,29 @@ export const formatRelativeTime = (dateInput, locale = 'he') => {
   const days = Math.floor(diffSec / 86400);
   return locale === 'he' ? `לפני ${days} ימים` : `${days}d ago`;
 };
+
+/**
+ * Collapses spaced-out Hebrew characters commonly returned in card statement PDFs/tables.
+ * Example: "ב י  ד ר א ג ס ט ו ר ס  א ר י א ל" -> "בי דראגסטורס אריאל"
+ */
+export const cleanSpacedHebrew = (str) => {
+  if (!str || typeof str !== 'string') return str || '';
+  const hebrewLetterRegex = /^[\u0590-\u05FF]$/;
+  // Split by double or more whitespace (word boundaries in spaced text)
+  const parts = str.split(/\s{2,}/);
+  const cleaned = parts.map((part) => {
+    const tokens = part.trim().split(/\s+/);
+    if (tokens.length >= 2 && tokens.every((t) => hebrewLetterRegex.test(t) || /^[0-9]$/.test(t))) {
+      return tokens.join('');
+    }
+    // Also handle single space separated sequence of single Hebrew letters
+    let res = part;
+    let prev;
+    do {
+      prev = res;
+      res = res.replace(/(^|[\s])([\u0590-\u05FF])\s([\u0590-\u05FF])(?=[\s]|$)/g, '$1$2$3');
+    } while (res !== prev);
+    return res;
+  });
+  return cleaned.join(' ').replace(/\s+/g, ' ').trim();
+};

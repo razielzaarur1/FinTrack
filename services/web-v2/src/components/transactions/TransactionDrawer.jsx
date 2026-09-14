@@ -18,10 +18,13 @@ import {
   Layers,
   Calendar,
   CreditCard,
-  Hash
+  Hash,
+  Search,
+  Unlink,
+  CheckCircle2
 } from 'lucide-react';
 import { api } from '@/lib/api';
-import { formatILS, formatDate } from '@/lib/formatters';
+import { formatILS, formatDate, cleanSpacedHebrew } from '@/lib/formatters';
 import { useApp } from '@/lib/app-context';
 import CategoryBadge from '@/components/common/CategoryBadge';
 import CategoryPicker from '@/components/common/CategoryPicker';
@@ -60,7 +63,10 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
 
   // Links state
   const [links, setLinks] = useState([]);
-  const [linkCandidateId, setLinkCandidateId] = useState('');
+  const [candidateSearch, setCandidateSearch] = useState('');
+  const [candidateTxs, setCandidateTxs] = useState([]);
+  const [loadingCandidates, setLoadingCandidates] = useState(false);
+  const [linkType, setLinkType] = useState('refund'); // 'refund' | 'related' | 'correction'
 
   useEffect(() => {
     if (!tx) return;
@@ -90,6 +96,28 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
       if (res.data) setLinks(res.data.data || []);
     });
   }, [tx]);
+
+  // Fetch candidate transactions for linking
+  useEffect(() => {
+    if (activeTab !== 'links' || !tx) return;
+    setLoadingCandidates(true);
+    const timeoutId = setTimeout(() => {
+      api.getTransactionsV2({
+        search: candidateSearch.trim() || undefined,
+        limit: 25,
+      }).then((res) => {
+        if (res.data) {
+          const linkedIds = new Set(links.map((l) => l.id));
+          const list = (res.data.data || []).filter((t) => t.id !== tx.id && !linkedIds.has(t.id));
+          setCandidateTxs(list);
+        }
+      }).finally(() => {
+        setLoadingCandidates(false);
+      });
+    }, candidateSearch ? 300 : 0);
+
+    return () => clearTimeout(timeoutId);
+  }, [activeTab, candidateSearch, links, tx]);
 
   if (!tx) return null;
 
@@ -195,17 +223,33 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
     setNotes(notes.filter((n) => n.id !== noteId));
   };
 
-  const handleLinkTransaction = async (e) => {
-    e.preventDefault();
-    if (!linkCandidateId.trim()) return;
-    const res = await api.linkTransaction(tx.id, {
-      targetTransactionId: linkCandidateId.trim(),
-      linkType: 'refund',
-    });
-    if (res.data) {
-      const updated = await api.getLinks(tx.id);
-      if (updated.data) setLinks(updated.data.data || []);
-      setLinkCandidateId('');
+  const handleLinkDirect = async (targetTxId) => {
+    try {
+      const res = await api.linkTransaction(tx.id, {
+        targetTransactionId: targetTxId,
+        linkType,
+      });
+      if (res.data) {
+        const updated = await api.getLinks(tx.id);
+        if (updated.data) setLinks(updated.data.data || []);
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new Event('fintrack_tx_updated'));
+        }
+      }
+    } catch (err) {
+      console.error('Failed to link transaction:', err);
+    }
+  };
+
+  const handleUnlink = async (linkId) => {
+    try {
+      await api.deleteLink(linkId);
+      setLinks((prev) => prev.filter((l) => l.linkId !== linkId));
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('fintrack_tx_updated'));
+      }
+    } catch (err) {
+      console.error('Failed to unlink transaction:', err);
     }
   };
 
@@ -228,7 +272,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
                 )}
               </div>
               <div className="text-lg font-bold mt-0.5 truncate max-w-sm text-dark-text light:text-light-text">
-                {userDesc || tx.merchantName || tx.description}
+                {userDesc || cleanSpacedHebrew(tx.merchantName || tx.description)}
               </div>
               <div className="text-xs text-dark-text-muted light:text-light-text-muted">
                 {formatDate(tx.date, lang)} • {formatILS(tx.amount, { showSign: true })}
@@ -317,7 +361,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
                   שם בית העסק
                 </label>
                 <div className="p-2.5 rounded-xl border border-dark-border/60 light:border-light-border/60 bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text font-semibold text-sm">
-                  {tx.merchantName || tx.description || 'ללא שם'}
+                  {cleanSpacedHebrew(tx.merchantName || tx.description) || 'ללא שם'}
                 </div>
               </div>
 
@@ -328,7 +372,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
                     פירוט עסקה (מתוך חברת האשראי/הבנק)
                   </label>
                   <div className="p-2.5 rounded-xl border border-dark-border/60 light:border-light-border/60 bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs opacity-90 font-mono">
-                    {tx.description}
+                    {cleanSpacedHebrew(tx.description)}
                   </div>
                 </div>
               )}
@@ -342,7 +386,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
                   type="text"
                   value={userDesc}
                   onChange={(e) => setUserDesc(e.target.value)}
-                  placeholder={tx.merchantName || tx.description}
+                  placeholder={cleanSpacedHebrew(tx.merchantName || tx.description)}
                   className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-sm focus:outline-none focus:border-brand-primary"
                 />
               </div>
@@ -436,7 +480,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
                   </div>
                 </div>
                 <p className="text-[11px] text-dark-text-muted light:text-light-text-muted mr-6 leading-relaxed">
-                  הקטגוריה, הכינוי וההתעלמות יוחלו על כל התנועות של &quot;{tx.merchantName || tx.description}&quot; ויילמדו לתנועות הבאות.
+                  הקטגוריה, הכינוי וההתעלמות יוחלו על כל התנועות של &quot;{cleanSpacedHebrew(tx.merchantName || tx.description)}&quot; ויילמדו לתנועות הבאות.
                 </p>
               </div>
 
@@ -553,39 +597,164 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
           {/* 3. Links Tab */}
           {activeTab === 'links' && (
             <div className="space-y-4">
-              <form onSubmit={handleLinkTransaction} className="flex gap-2">
-                <input
-                  type="text"
-                  placeholder="UUID תנועה לקישור (זיכוי/חיוב מקביל)"
-                  value={linkCandidateId}
-                  onChange={(e) => setLinkCandidateId(e.target.value)}
-                  className="flex-1 p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs focus:outline-none focus:border-brand-primary"
-                />
-                <button
-                  type="submit"
-                  className="px-4 py-2.5 rounded-xl bg-brand-primary text-white text-xs font-semibold"
-                >
-                  קשר
-                </button>
-              </form>
-
+              {/* Currently Linked Transactions */}
               <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs font-semibold text-dark-text-muted light:text-light-text-muted px-1">
+                  <span>תנועות מקושרות ({links.length})</span>
+                </div>
                 {links.length === 0 ? (
-                  <div className="text-center py-8 text-xs text-dark-text-muted light:text-light-text-muted">
-                    אין תנועות מקושרות לתנועה זו
+                  <div className="p-4 rounded-xl border border-dashed border-dark-border light:border-light-border text-center text-xs text-dark-text-muted light:text-light-text-muted bg-dark-surface-elevated/30 light:bg-light-surface-elevated/30">
+                    אין תנועות מקושרות כרגע. בחר תנועה מהרשימה מטה כדי לקשר.
                   </div>
                 ) : (
-                  links.map((lnk) => (
-                    <div key={lnk.linkId} className="p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated flex items-center justify-between text-xs">
-                      <div>
-                        <div className="font-semibold text-dark-text light:text-light-text">{lnk.description}</div>
-                        <div className="text-dark-text-muted light:text-light-text-muted">{formatDate(lnk.date, lang)} • {formatILS(lnk.amount)}</div>
+                  <div className="space-y-2">
+                    {links.map((lnk) => (
+                      <div key={lnk.linkId} className="p-3 rounded-xl border border-brand-primary/30 bg-brand-primary/5 flex items-center justify-between gap-3 text-xs">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <Link2 className="w-4 h-4 text-brand-primary shrink-0" />
+                          <div className="min-w-0">
+                            <div className="font-semibold text-dark-text light:text-light-text truncate">
+                              {cleanSpacedHebrew(lnk.description || 'ללא תיאור')}
+                            </div>
+                            <div className="text-[11px] text-dark-text-muted light:text-light-text-muted flex items-center gap-2">
+                              <span>{formatDate(lnk.date, lang)}</span>
+                              <span>•</span>
+                              <span className={Number(lnk.amount) < 0 ? 'text-brand-expense' : 'text-brand-income font-medium'}>
+                                {formatILS(lnk.amount)}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="px-2 py-0.5 rounded-full bg-brand-primary/20 text-brand-primary font-medium text-[10px]">
+                            {lnk.linkType === 'refund' ? 'זיכוי' : lnk.linkType === 'correction' ? 'תיקון' : 'קשורה'}
+                          </span>
+                          <button
+                            onClick={() => handleUnlink(lnk.linkId)}
+                            className="p-1.5 text-rose-400 hover:text-rose-500 hover:bg-rose-500/10 rounded-lg transition-colors"
+                            title="בטל קישור"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
-                      <span className="px-2 py-0.5 rounded bg-brand-cyan/20 text-brand-cyan text-[10px]">
-                        {lnk.linkType}
-                      </span>
-                    </div>
-                  ))
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Link Type & Search Controls */}
+              <div className="pt-2 space-y-2.5 border-t border-dark-border/40 light:border-light-border/40">
+                <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted block px-1">
+                  קשר תנועה חדשה
+                </label>
+
+                {/* Link Type Selector */}
+                <div className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-dark-surface-elevated light:bg-light-surface-elevated border border-dark-border light:border-light-border text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setLinkType('refund')}
+                    className={`py-1.5 px-2 rounded-lg font-medium transition-all ${
+                      linkType === 'refund'
+                        ? 'bg-brand-primary text-white shadow-sm'
+                        : 'text-dark-text-muted light:text-light-text-muted hover:text-dark-text'
+                    }`}
+                  >
+                    זיכוי / ביטול
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLinkType('related')}
+                    className={`py-1.5 px-2 rounded-lg font-medium transition-all ${
+                      linkType === 'related'
+                        ? 'bg-brand-primary text-white shadow-sm'
+                        : 'text-dark-text-muted light:text-light-text-muted hover:text-dark-text'
+                    }`}
+                  >
+                    תנועה קשורה
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLinkType('correction')}
+                    className={`py-1.5 px-2 rounded-lg font-medium transition-all ${
+                      linkType === 'correction'
+                        ? 'bg-brand-primary text-white shadow-sm'
+                        : 'text-dark-text-muted light:text-light-text-muted hover:text-dark-text'
+                    }`}
+                  >
+                    תיקון / התאמה
+                  </button>
+                </div>
+
+                {/* Search candidate transactions */}
+                <div className="relative">
+                  <Search className="w-4 h-4 absolute right-3 rtl:right-3 ltr:left-3 top-2.5 text-dark-text-muted light:text-light-text-muted pointer-events-none" />
+                  <input
+                    type="text"
+                    placeholder="חפש לפי שם בית עסק, פירוט, או סכום..."
+                    value={candidateSearch}
+                    onChange={(e) => setCandidateSearch(e.target.value)}
+                    className="w-full py-2 pr-9 pl-3 rtl:pr-9 rtl:pl-3 ltr:pl-9 ltr:pr-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs focus:outline-none focus:border-brand-primary"
+                  />
+                </div>
+              </div>
+
+              {/* Candidate Transactions Scrollable List */}
+              <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
+                {loadingCandidates ? (
+                  <div className="text-center py-6 text-xs text-dark-text-muted light:text-light-text-muted">
+                    מחפש תנועות...
+                  </div>
+                ) : candidateTxs.length === 0 ? (
+                  <div className="text-center py-6 text-xs text-dark-text-muted light:text-light-text-muted">
+                    לא נמצאו תנועות מתאימות לקישור
+                  </div>
+                ) : (
+                  candidateTxs.map((c) => {
+                    const cAmount = parseFloat(c.amount);
+                    return (
+                      <div
+                        key={c.id}
+                        className="p-2.5 rounded-xl border border-dark-border/70 light:border-light-border/70 bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40 hover:border-brand-primary/50 hover:bg-dark-surface-elevated transition-all flex items-center justify-between gap-3 text-xs"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-semibold text-dark-text light:text-light-text truncate">
+                              {cleanSpacedHebrew(c.userDescription || c.merchantName || c.description || 'ללא תיאור')}
+                            </span>
+                            {c.accountDisplayName && (
+                              <span className="text-[10px] px-1.5 py-0.2 rounded bg-dark-surface light:bg-light-surface text-dark-text-muted light:text-light-text-muted shrink-0">
+                                {c.accountDisplayName}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[11px] text-dark-text-muted light:text-light-text-muted flex items-center gap-2 mt-0.5">
+                            <span>{formatDate(c.date, lang)}</span>
+                            <span>•</span>
+                            <span className={cAmount < 0 ? 'text-brand-expense font-medium' : 'text-brand-income font-medium'}>
+                              {formatILS(c.amount, { showSign: true })}
+                            </span>
+                            {c.category && (
+                              <>
+                                <span>•</span>
+                                <span className="truncate">{c.category}</span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleLinkDirect(c.id)}
+                          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-brand-primary/10 hover:bg-brand-primary text-brand-primary hover:text-white font-medium text-[11px] transition-all shrink-0"
+                          title="קשר לתנועה זו"
+                        >
+                          <Link2 className="w-3 h-3" />
+                          <span>קשר</span>
+                        </button>
+                      </div>
+                    );
+                  })
                 )}
               </div>
             </div>

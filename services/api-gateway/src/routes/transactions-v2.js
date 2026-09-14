@@ -35,6 +35,26 @@ const updateTransactionSchema = z.object({
   applyToSimilar: z.boolean().optional(),
 });
 
+export function cleanSpacedHebrew(str) {
+  if (!str || typeof str !== 'string') return str || '';
+  const hebrewLetterRegex = /^[\u0590-\u05FF]$/;
+  const parts = str.split(/\s{2,}/);
+  const cleaned = parts.map((part) => {
+    const tokens = part.trim().split(/\s+/);
+    if (tokens.length >= 2 && tokens.every((t) => hebrewLetterRegex.test(t) || /^[0-9]$/.test(t))) {
+      return tokens.join('');
+    }
+    let res = part;
+    let prev;
+    do {
+      prev = res;
+      res = res.replace(/(^|[\s])([\u0590-\u05FF])\s([\u0590-\u05FF])(?=[\s]|$)/g, '$1$2$3');
+    } while (res !== prev);
+    return res;
+  });
+  return cleaned.join(' ').replace(/\s+/g, ' ').trim();
+}
+
 let hasRepaired0Amount = false;
 async function repair0AmountTransactions() {
   if (hasRepaired0Amount) return;
@@ -263,7 +283,22 @@ export default async function transactionsV2Routes(fastify, options) {
         t.status,
         t.created_at AS "createdAt",
         (SELECT COUNT(*) FROM transaction_notes tn WHERE tn.transaction_id = t.id) > 0 AS "hasNotes",
-        (SELECT COUNT(*) FROM transaction_links tl WHERE tl.transaction_id_a = t.id OR tl.transaction_id_b = t.id) > 0 AS "hasLinks"
+        (SELECT COUNT(*) FROM transaction_links tl WHERE tl.transaction_id_a = t.id OR tl.transaction_id_b = t.id) > 0 AS "hasLinks",
+        (
+          SELECT COALESCE(
+            json_agg(
+              json_build_object(
+                'id', ts.id,
+                'category', ts.category,
+                'amount', ts.amount,
+                'description', ts.description
+              )
+            ),
+            '[]'::json
+          )
+          FROM transaction_splits ts
+          WHERE ts.transaction_id = t.id
+        ) AS "splits"
       FROM transactions t
       JOIN bank_accounts b ON t.account_id = b.id
       ${whereClause}
@@ -275,7 +310,14 @@ export default async function transactionsV2Routes(fastify, options) {
       const result = await pool.query(query, values);
       const rows = result.rows;
       const hasNextPage = rows.length > limit;
-      const data = hasNextPage ? rows.slice(0, limit) : rows;
+      const rawData = hasNextPage ? rows.slice(0, limit) : rows;
+
+      const data = rawData.map((tx) => ({
+        ...tx,
+        merchantName: cleanSpacedHebrew(tx.merchantName),
+        description: cleanSpacedHebrew(tx.description),
+        userDescription: cleanSpacedHebrew(tx.userDescription),
+      }));
 
       const nextCursor = data.length > 0 ? data[data.length - 1].date : null;
       const nextCursorId = data.length > 0 ? data[data.length - 1].id : null;
@@ -687,7 +729,11 @@ export default async function transactionsV2Routes(fastify, options) {
     `;
     try {
       const result = await pool.query(query, [id]);
-      return reply.code(200).send({ data: result.rows });
+      const data = result.rows.map((l) => ({
+        ...l,
+        description: cleanSpacedHebrew(l.description),
+      }));
+      return reply.code(200).send({ data });
     } catch (err) {
       return reply.code(500).send({ error: 'Database error', message: err.message });
     }
@@ -776,7 +822,13 @@ export default async function transactionsV2Routes(fastify, options) {
     `;
     try {
       const res = await pool.query(query);
-      return reply.code(200).send({ data: res.rows });
+      const data = res.rows.map((tx) => ({
+        ...tx,
+        merchantName: cleanSpacedHebrew(tx.merchantName),
+        description: cleanSpacedHebrew(tx.description),
+        userDescription: cleanSpacedHebrew(tx.userDescription),
+      }));
+      return reply.code(200).send({ data });
     } catch (err) {
       return reply.code(500).send({ error: 'Database error', message: err.message });
     }

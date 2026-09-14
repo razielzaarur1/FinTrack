@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { 
   TrendingUp, 
   TrendingDown, 
@@ -17,12 +18,13 @@ import {
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, PieChart, Pie, Cell } from 'recharts';
 import { useApp } from '@/lib/app-context';
 import { api } from '@/lib/api';
-import { formatILS, formatDate } from '@/lib/formatters';
+import { formatILS, formatDate, cleanSpacedHebrew } from '@/lib/formatters';
 import { getInstitutionById } from '@/lib/institutions';
 import InstitutionLogo from '@/components/common/InstitutionLogo';
 import CategoryBadge from '@/components/common/CategoryBadge';
 
 export default function DashboardPage() {
+  const router = useRouter();
   const { t, lang, theme } = useApp();
   const [overview, setOverview] = useState(null);
   const [trend, setTrend] = useState([]);
@@ -30,29 +32,39 @@ export default function DashboardPage() {
   const [recentTx, setRecentTx] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    async function loadDashboard() {
-      try {
-        setLoading(true);
-        const [overviewRes, trendRes, accountsRes, txRes] = await Promise.all([
-          api.getAnalyticsOverview(),
-          api.getMonthlyTrend(6),
-          api.getAccounts(),
-          api.getTransactionsV2({ limit: 5 }),
-        ]);
+  const loadDashboard = async () => {
+    try {
+      setLoading(true);
+      const [overviewRes, trendRes, accountsRes, txRes] = await Promise.all([
+        api.getAnalyticsOverview(),
+        api.getMonthlyTrend(6),
+        api.getAccounts(),
+        api.getTransactionsV2({ limit: 5 }),
+      ]);
 
-        if (overviewRes.data) setOverview(overviewRes.data);
-        if (trendRes.data) setTrend(trendRes.data.data || []);
-        if (accountsRes.data) setAccounts(accountsRes.data || []);
-        if (txRes.data) setRecentTx(txRes.data.data || []);
-      } catch (err) {
-        console.error('Error loading dashboard:', err);
-      } finally {
-        setLoading(false);
-      }
+      if (overviewRes.data) setOverview(overviewRes.data);
+      if (trendRes.data) setTrend(trendRes.data.data || []);
+      if (accountsRes.data) setAccounts(accountsRes.data || []);
+      if (txRes.data) setRecentTx(txRes.data.data || []);
+    } catch (err) {
+      console.error('Error loading dashboard:', err);
+    } finally {
+      setLoading(false);
     }
+  };
 
+  useEffect(() => {
     loadDashboard();
+  }, []);
+
+  useEffect(() => {
+    const handleSync = () => {
+      loadDashboard();
+    };
+    window.addEventListener('fintrack_tx_updated', handleSync);
+    return () => {
+      window.removeEventListener('fintrack_tx_updated', handleSync);
+    };
   }, []);
 
   return (
@@ -224,9 +236,18 @@ export default function DashboardPage() {
               <span>{t('noData')}</span>
             </div>
           ) : (
-            <div className="h-64 w-full">
+            <div className="h-64 w-full cursor-pointer" title="לחץ על חודש כדי לצפות בתנועות">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={trend} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                <AreaChart 
+                  data={trend} 
+                  margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
+                  onClick={(e) => {
+                    const monthVal = e?.activePayload?.[0]?.payload?.month;
+                    if (monthVal) {
+                      router.push(`/transactions?month=${encodeURIComponent(monthVal)}`);
+                    }
+                  }}
+                >
                   <defs>
                     <linearGradient id="colorInc" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
@@ -280,8 +301,8 @@ export default function DashboardPage() {
               <div className="space-y-3">
                 {recentTx.map((tx) => {
                   const isPositive = parseFloat(tx.amount) > 0;
-                  const merchantTitle = tx.userDescription || tx.merchantName || tx.description;
-                  const subDescription = tx.description && tx.description !== merchantTitle ? tx.description : null;
+                  const merchantTitle = cleanSpacedHebrew(tx.userDescription || tx.merchantName || tx.description);
+                  const subDescription = tx.description && tx.description !== (tx.userDescription || tx.merchantName) ? cleanSpacedHebrew(tx.description) : null;
 
                   return (
                     <div

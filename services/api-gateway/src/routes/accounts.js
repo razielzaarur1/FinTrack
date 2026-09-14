@@ -54,6 +54,23 @@ async function cleanDuplicateAccountsAndNames() {
         await pool.query(`UPDATE bank_accounts SET is_active = false WHERE id = $1`, [dupId]);
       }
     }
+
+    // 3. Deduplicate exact duplicate transactions across cards of same institution
+    await pool.query(`
+      DELETE FROM transactions t1
+      USING transactions t2, bank_accounts b1, bank_accounts b2
+      WHERE t1.id > t2.id
+        AND t1.account_id = b1.id
+        AND t2.account_id = b2.id
+        AND b1.user_id = b2.user_id
+        AND b1.bank_company = b2.bank_company
+        AND t1.date = t2.date
+        AND t1.amount = t2.amount
+        AND COALESCE(t1.merchant_name, '') = COALESCE(t2.merchant_name, '')
+        AND COALESCE(t1.description, '') = COALESCE(t2.description, '')
+        AND (t1.is_split = false OR t1.is_split IS NULL)
+        AND (t2.is_split = false OR t2.is_split IS NULL)
+    `);
   } catch (err) {
     console.warn('[Accounts Cleanup] Non-critical warning:', err.message);
   }
@@ -70,6 +87,7 @@ const updateAccountSchema = z.object({
   displayName: z.string().optional(),
   billingDay: z.coerce.number().int().min(1).max(31).optional(),
   balance: z.coerce.number().optional(),
+  accountNumber: z.string().optional(),
 });
 
 function formatLocalYMD(d) {
@@ -616,19 +634,21 @@ export default async function accountsRoutes(fastify, options) {
       });
     }
 
-    const { displayName, billingDay, balance } = parseResult.data;
+    const { displayName, billingDay, balance, accountNumber } = parseResult.data;
     try {
       const result = await pool.query(
         `UPDATE bank_accounts
          SET display_name = COALESCE($1, display_name),
              billing_day = COALESCE($2, billing_day),
-             balance = COALESCE($3, balance)
-         WHERE id = $4 AND user_id = $5
-         RETURNING id, user_id, bank_company, display_name, billing_day AS "billingDay", balance, is_active`,
+             balance = COALESCE($3, balance),
+             account_number = COALESCE($4, account_number)
+         WHERE id = $5 AND user_id = $6
+         RETURNING id, user_id, bank_company, display_name, account_number AS "accountNumber", billing_day AS "billingDay", balance, is_active`,
         [
           displayName !== undefined ? displayName : null,
           billingDay !== undefined ? billingDay : null,
           balance !== undefined ? balance : null,
+          accountNumber !== undefined ? (accountNumber.trim() || null) : null,
           id,
           DEFAULT_USER_ID,
         ]

@@ -135,6 +135,29 @@ export function calculateEffectiveBalance(card, bankCompany, billingDay = 10) {
 }
 
 /**
+ * Collapses spaced-out Hebrew characters commonly returned in card statement PDFs/tables.
+ */
+export function cleanSpacedHebrew(str) {
+  if (!str || typeof str !== 'string') return str || '';
+  const hebrewLetterRegex = /^[\u0590-\u05FF]$/;
+  const parts = str.split(/\s{2,}/);
+  const cleaned = parts.map((part) => {
+    const tokens = part.trim().split(/\s+/);
+    if (tokens.length >= 2 && tokens.every((t) => hebrewLetterRegex.test(t) || /^[0-9]$/.test(t))) {
+      return tokens.join('');
+    }
+    let res = part;
+    let prev;
+    do {
+      prev = res;
+      res = res.replace(/(^|[\s])([\u0590-\u05FF])\s([\u0590-\u05FF])(?=[\s]|$)/g, '$1$2$3');
+    } while (res !== prev);
+    return res;
+  });
+  return cleaned.join(' ').replace(/\s+/g, ' ').trim();
+}
+
+/**
  * Generates a globally unique, deterministic external_id for each transaction.
  * Solves the critical Israeli bank scrapers bug where checking accounts (e.g. Otsar HaHayal / FIBI)
  * return sequential numeric row indices (1, 2, 3...) that collide and overwrite across months.
@@ -165,8 +188,8 @@ export function generateTransactionExternalId(accountId, tx, occurrenceIndex = 0
     amount = origNum;
   }
 
-  const merchantName = (tx.description || tx.memo || '').trim();
-  const description = (tx.memo && tx.memo !== tx.description ? tx.memo : tx.description || '').trim();
+  const merchantName = cleanSpacedHebrew((tx.description || tx.memo || '').trim());
+  const description = cleanSpacedHebrew((tx.memo && tx.memo !== tx.description ? tx.memo : tx.description || '').trim());
 
   // If tx has a genuinely unique external identifier provided by the financial institution (e.g. long voucher string > 7 chars and not a generic row index):
   const rawId = tx.identifier != null ? String(tx.identifier).trim() : (tx.id != null ? String(tx.id).trim() : '');
@@ -209,8 +232,8 @@ async function saveTransactionsList(client, accountId, transactions, userId = '0
       amount = origNum;
     }
     
-    const merchantName = (tx.description || tx.memo || '').trim() || 'בית עסק';
-    const description = (tx.memo && tx.memo !== tx.description ? tx.memo : tx.description) || '';
+    const merchantName = cleanSpacedHebrew((tx.description || tx.memo || '').trim()) || 'בית עסק';
+    const description = cleanSpacedHebrew((tx.memo && tx.memo !== tx.description ? tx.memo : tx.description) || '');
     const currency = tx.originalCurrency || tx.chargedCurrency || 'ILS';
 
     // Track occurrences of identical transactions on the same day to maintain uniqueness
@@ -280,7 +303,7 @@ async function persistScrapedAccounts(pool, primaryAccountId, scrapedAccounts, t
   const client = await pool.connect();
   try {
     const accRes = await client.query(
-      `SELECT user_id, bank_company, encrypted_credentials, display_name, COALESCE(billing_day, 10)::INT AS billing_day
+      `SELECT user_id, bank_company, encrypted_credentials, display_name, account_number, COALESCE(billing_day, 10)::INT AS billing_day
        FROM bank_accounts
        WHERE id = $1`,
       [primaryAccountId]
@@ -290,24 +313,63 @@ async function persistScrapedAccounts(pool, primaryAccountId, scrapedAccounts, t
       throw new Error(`Primary account ${primaryAccountId} not found in database`);
     }
 
-    const { user_id, bank_company, encrypted_credentials, display_name, billing_day } = accRes.rows[0];
+    const { user_id, bank_company, encrypted_credentials, display_name, account_number: primaryAccountNum, billing_day } = accRes.rows[0];
     const results = [];
     const accountsToProcess = scrapedAccounts.length > 0 ? scrapedAccounts : [{ txns: [], balance: null }];
 
+    // Fetch all existing active accounts for this user and institution to enable smart matching
+    const existingAccountsRes = await client.query(
+      `SELECT id, display_name, account_number, is_active FROM bank_accounts
+       WHERE user_id = $1 AND bank_company = $2
+       ORDER BY created_at ASC`,
+      [user_id, bank_company]
+    );
+    const existingAccounts = existingAccountsRes.rows;
+
     await client.query('BEGIN');
+
+    const usedAccountIds = new Set();
 
     for (let i = 0; i < accountsToProcess.length; i++) {
       const card = accountsToProcess[i];
       const rawCardNum = card.accountNumber ? String(card.accountNumber).trim() : '';
-      const cardLast4 = rawCardNum ? rawCardNum.slice(-4) : (i === 0 ? null : `000${i}`);
+      const cardLast4 = rawCardNum ? rawCardNum.slice(-4) : (i === 0 ? primaryAccountNum : `000${i}`);
       const effectiveBalance = calculateEffectiveBalance(card, targetBank || bank_company, billing_day || 10);
       const cardTxns = Array.isArray(card.txns) ? card.txns : [];
 
-      let targetDbAccountId;
+      let targetDbAccountId = null;
 
-      if (i === 0) {
-        // Primary account row
+      // 1. Try to match an existing active account with the exact same last 4 digits
+      if (cardLast4) {
+        const exactMatch = existingAccounts.find(
+          (a) => a.account_number && a.account_number.slice(-4) === cardLast4 && !usedAccountIds.has(a.id)
+        );
+        if (exactMatch) {
+          if (exactMatch.is_active === false) {
+            logger.info({ cardLast4, bank_company }, 'Card was previously deactivated by user, skipping re-insertion');
+            continue;
+          }
+          targetDbAccountId = exactMatch.id;
+        }
+      }
+
+      // 2. If no card-number match, match primary account on first iteration if unused
+      if (!targetDbAccountId && i === 0 && !usedAccountIds.has(primaryAccountId)) {
         targetDbAccountId = primaryAccountId;
+      }
+
+      // 3. If still no match, check if any unused account without card number exists
+      if (!targetDbAccountId) {
+        const unassignedAcc = existingAccounts.find(
+          (a) => (!a.account_number || a.account_number === '') && !usedAccountIds.has(a.id) && a.is_active === true
+        );
+        if (unassignedAcc) {
+          targetDbAccountId = unassignedAcc.id;
+        }
+      }
+
+      if (targetDbAccountId) {
+        usedAccountIds.add(targetDbAccountId);
         await client.query(
           `UPDATE bank_accounts
            SET account_number = COALESCE($2, account_number),
@@ -317,63 +379,30 @@ async function persistScrapedAccounts(pool, primaryAccountId, scrapedAccounts, t
            WHERE id = $1`,
           [targetDbAccountId, cardLast4, effectiveBalance]
         );
-
-        // Clean up legacy corrupted row-number external IDs on primary checking account
-        await client.query(
-          `DELETE FROM transactions
-           WHERE account_id = $1 AND (external_id ~ '^[0-9]{1,4}$' OR external_id LIKE 'undefined_%')`,
-          [primaryAccountId]
-        );
       } else {
-        // Secondary card under the same login credentials
-        const existingRes = await client.query(
-          `SELECT id, is_active FROM bank_accounts
-           WHERE user_id = $1 AND bank_company = $2 AND account_number = $3
-           ORDER BY created_at ASC`,
-          [user_id, bank_company, cardLast4]
+        // Create new record for this secondary card
+        const rawBase = (display_name || bank_company || '').replace(/\s*\((כרטיס|card).*?\)/gi, '').trim();
+        const cleanBase = rawBase || bank_company;
+        const secondaryDisplayName = cardLast4 ? `${cleanBase} (כרטיס ${cardLast4})` : `${cleanBase} (כרטיס נוסף)`;
+        const insertRes = await client.query(
+          `INSERT INTO bank_accounts (
+             user_id, bank_company, encrypted_credentials, display_name, account_number, balance, billing_day, is_active, last_scraped_at
+           ) VALUES (
+             $1, $2, $3, $4, $5, $6, $7, true, NOW()
+           ) RETURNING id`,
+          [user_id, bank_company, encrypted_credentials, secondaryDisplayName, cardLast4, effectiveBalance, billing_day || 10]
         );
-
-        if (existingRes.rows.length > 0) {
-          const matchedCard = existingRes.rows[0];
-          // If user previously deactivated/deleted this card, respect their decision and skip it!
-          if (matchedCard.is_active === false) {
-            logger.info({ cardLast4, bank_company }, 'Card was previously deactivated by user, skipping re-insertion');
-            continue;
-          }
-
-          targetDbAccountId = matchedCard.id;
-          await client.query(
-            `UPDATE bank_accounts
-             SET balance = $2,
-                 last_scraped_at = NOW(),
-                 last_scrape_error = NULL
-             WHERE id = $1`,
-            [targetDbAccountId, effectiveBalance]
-          );
-        } else {
-          // Create new record for this secondary card without duplicate suffixes
-          const rawBase = (display_name || bank_company || '').replace(/\s*\((כרטיס|card).*?\)/gi, '').trim();
-          const cleanBase = rawBase || bank_company;
-          const secondaryDisplayName = cardLast4 ? `${cleanBase} (כרטיס ${cardLast4})` : `${cleanBase} (כרטיס נוסף)`;
-          const insertRes = await client.query(
-            `INSERT INTO bank_accounts (
-               user_id, bank_company, encrypted_credentials, display_name, account_number, balance, billing_day, is_active, last_scraped_at
-             ) VALUES (
-               $1, $2, $3, $4, $5, $6, $7, true, NOW()
-             ) RETURNING id`,
-            [user_id, bank_company, encrypted_credentials, secondaryDisplayName, cardLast4, effectiveBalance, billing_day || 10]
-          );
-          targetDbAccountId = insertRes.rows[0].id;
-          logger.info({ targetDbAccountId, cardLast4, secondaryDisplayName }, 'Created separate account row for secondary card');
-        }
-
-        // Clean up legacy corrupted row-number external IDs from previous scraper versions
-        await client.query(
-          `DELETE FROM transactions
-           WHERE account_id = $1 AND (external_id ~ '^[0-9]{1,4}$' OR external_id LIKE 'undefined_%')`,
-          [targetDbAccountId]
-        );
+        targetDbAccountId = insertRes.rows[0].id;
+        usedAccountIds.add(targetDbAccountId);
+        logger.info({ targetDbAccountId, cardLast4, secondaryDisplayName }, 'Created separate account row for secondary card');
       }
+
+      // Clean up legacy corrupted row-number external IDs from previous scraper versions
+      await client.query(
+        `DELETE FROM transactions
+         WHERE account_id = $1 AND (external_id ~ '^[0-9]{1,4}$' OR external_id LIKE 'undefined_%')`,
+        [targetDbAccountId]
+      );
 
       // Save transactions for targetDbAccountId with auto-classification
       const saveRes = await saveTransactionsList(client, targetDbAccountId, cardTxns, user_id);

@@ -14,7 +14,7 @@ import {
   ChevronDown
 } from 'lucide-react';
 import { api } from '@/lib/api';
-import { formatILS, formatDate } from '@/lib/formatters';
+import { formatILS, formatDate, cleanSpacedHebrew } from '@/lib/formatters';
 import { useApp } from '@/lib/app-context';
 import CategoryBadge from '@/components/common/CategoryBadge';
 import CategoryPicker from '@/components/common/CategoryPicker';
@@ -55,10 +55,15 @@ export default function ReviewPage() {
   }, [activeTab]);
 
   useEffect(() => {
+    const handleSync = () => {
+      loadReviewQueue(activeTab);
+    };
+    window.addEventListener('fintrack_tx_updated', handleSync);
     return () => {
+      window.removeEventListener('fintrack_tx_updated', handleSync);
       if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current);
     };
-  }, []);
+  }, [activeTab]);
 
   const handleAction = async (tx, action, category = null) => {
     setActionLoadingId(tx.id);
@@ -85,6 +90,9 @@ export default function ReviewPage() {
         action,
         category: category || tx.category,
       });
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('fintrack_tx_updated'));
+      }
     } catch (err) {
       console.error('Failed to submit review action:', err);
       // Rollback if error
@@ -110,6 +118,9 @@ export default function ReviewPage() {
         action: 'unflag',
         category: tx.category,
       });
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('fintrack_tx_updated'));
+      }
     } catch (err) {
       console.error('Failed to undo transaction review:', err);
     }
@@ -117,7 +128,6 @@ export default function ReviewPage() {
 
   const handleApproveAll = async () => {
     if (queue.length === 0) return;
-    const count = queue.length;
     const currentQueue = [...queue];
     setQueue([]);
 
@@ -125,6 +135,9 @@ export default function ReviewPage() {
       await Promise.all(
         currentQueue.map((tx) => api.reviewTransaction(tx.id, { action: 'approve' }))
       );
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('fintrack_tx_updated'));
+      }
     } catch (err) {
       console.error('Failed to approve all:', err);
       loadReviewQueue();
@@ -273,7 +286,7 @@ export default function ReviewPage() {
                   <div className="min-w-0 flex-1 space-y-1">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="font-bold text-xs sm:text-sm text-dark-text light:text-light-text truncate max-w-[180px] sm:max-w-xs">
-                        {tx.userDescription || tx.merchantName || tx.description || 'ללא תיאור'}
+                        {cleanSpacedHebrew(tx.userDescription || tx.merchantName || tx.description || 'ללא תיאור')}
                       </span>
 
                       {isAtm && (
@@ -413,7 +426,7 @@ export default function ReviewPage() {
           <div className="flex items-center gap-2 text-xs font-medium min-w-0">
             <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
             <span className="truncate">
-              תנועה <b>"{undoItem.tx.userDescription || undoItem.tx.merchantName || undoItem.tx.description}"</b> {undoItem.actionName}.
+              תנועה <b>"{cleanSpacedHebrew(undoItem.tx.userDescription || undoItem.tx.merchantName || undoItem.tx.description)}"</b> {undoItem.actionName}.
             </span>
           </div>
 

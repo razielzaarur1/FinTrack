@@ -20,7 +20,7 @@ import {
   Tag
 } from 'lucide-react';
 import { api } from '@/lib/api';
-import { formatILS, formatDate } from '@/lib/formatters';
+import { formatILS, formatDate, cleanSpacedHebrew } from '@/lib/formatters';
 import { useApp } from '@/lib/app-context';
 import CategoryBadge from '@/components/common/CategoryBadge';
 import InstitutionLogo from '@/components/common/InstitutionLogo';
@@ -29,7 +29,7 @@ import TransactionDrawer from '@/components/transactions/TransactionDrawer';
 import { CATEGORIES_DATA } from '@/lib/categories';
 
 // Component for in-page category transaction drilldown drawer
-function CategoryTransactionsDrawer({ categoryName, year, month, accountIds, onClose, onTxUpdated }) {
+function CategoryTransactionsDrawer({ categoryName, startDate, endDate, dateRangeLabel, accountIds, onClose, onTxUpdated }) {
   const { lang } = useApp();
   const [txs, setTxs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -46,10 +46,6 @@ function CategoryTransactionsDrawer({ categoryName, year, month, accountIds, onC
   useEffect(() => {
     if (!categoryName) return;
     setLoading(true);
-    const mStr = String(month).padStart(2, '0');
-    const startDate = `${year}-${mStr}-01`;
-    const lastDay = new Date(year, month, 0).getDate();
-    const endDate = `${year}-${mStr}-${String(lastDay).padStart(2, '0')}`;
 
     // If categoryName is a main category, gather all its subcategories too
     const allMain = [...CATEGORIES_DATA.expenses, ...CATEGORIES_DATA.incomes];
@@ -77,26 +73,49 @@ function CategoryTransactionsDrawer({ categoryName, year, month, accountIds, onC
     }).finally(() => {
       setLoading(false);
     });
-  }, [categoryName, year, month, accountIds]);
+  }, [categoryName, startDate, endDate, accountIds]);
 
   const totalSum = useMemo(() => {
     return txs.reduce((acc, t) => acc + (parseFloat(t.amount) || 0), 0);
   }, [txs]);
 
-  // Group transactions by category name
+  // Group transactions by category name (unrolling splits so split items appear under their respective categories)
   const groupedTxs = useMemo(() => {
     const groups = {};
     txs.forEach((t) => {
-      const cat = t.category || 'אחר / שונות';
-      if (!groups[cat]) {
-        groups[cat] = {
-          name: cat,
-          items: [],
-          total: 0,
-        };
+      if (t.isSplit && Array.isArray(t.splits) && t.splits.length > 0) {
+        t.splits.forEach((s) => {
+          const cat = cleanSpacedHebrew(s.category || t.category || 'אחר / שונות').trim();
+          if (!groups[cat]) {
+            groups[cat] = {
+              name: cat,
+              items: [],
+              total: 0,
+            };
+          }
+          groups[cat].items.push({
+            ...t,
+            id: `${t.id}-split-${s.id}`,
+            category: s.category,
+            amount: s.amount,
+            userDescription: s.description ? cleanSpacedHebrew(s.description) : cleanSpacedHebrew(t.userDescription),
+            rawTx: t,
+            isSplitItem: true,
+          });
+          groups[cat].total += parseFloat(s.amount) || 0;
+        });
+      } else {
+        const cat = cleanSpacedHebrew(t.category || 'אחר / שונות').trim();
+        if (!groups[cat]) {
+          groups[cat] = {
+            name: cat,
+            items: [],
+            total: 0,
+          };
+        }
+        groups[cat].items.push(t);
+        groups[cat].total += parseFloat(t.amount) || 0;
       }
-      groups[cat].items.push(t);
-      groups[cat].total += parseFloat(t.amount) || 0;
     });
 
     // Sort transactions inside each group by date descending
@@ -120,7 +139,7 @@ function CategoryTransactionsDrawer({ categoryName, year, month, accountIds, onC
                 {categoryName}
               </h2>
               <div className="text-xs text-dark-text-muted light:text-light-text-muted mt-0.5">
-                {MONTH_NAMES[month - 1]} {year} • {txs.length} תנועות • <span className="font-bold text-brand-primary font-mono">{formatILS(totalSum)}</span>
+                {dateRangeLabel || 'הטווח הנבחר'} • {txs.length} תנועות • <span className="font-bold text-brand-primary font-mono">{formatILS(totalSum)}</span>
               </div>
             </div>
           </div>
@@ -169,12 +188,17 @@ function CategoryTransactionsDrawer({ categoryName, year, month, accountIds, onC
                       return (
                         <div
                           key={t.id}
-                          onClick={() => setSelectedTx(t)}
+                          onClick={() => setSelectedTx(t.rawTx || t)}
                           className="p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated/50 light:bg-light-surface-elevated/50 hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated transition-colors cursor-pointer flex items-center justify-between gap-3 shadow-2xs"
                         >
                           <div className="min-w-0 flex-1">
-                            <div className="font-semibold text-xs sm:text-sm text-dark-text light:text-light-text truncate">
-                              {t.userDescription || t.merchantName || t.description || 'ללא תיאור'}
+                            <div className="font-semibold text-xs sm:text-sm text-dark-text light:text-light-text truncate flex items-center gap-1.5">
+                              <span>{cleanSpacedHebrew(t.userDescription || t.merchantName || t.description || 'ללא תיאור')}</span>
+                              {t.isSplitItem && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-brand-primary/15 text-brand-primary font-medium shrink-0">
+                                  פיצול
+                                </span>
+                              )}
                             </div>
                             <div className="text-[11px] text-dark-text-muted light:text-light-text-muted mt-0.5 flex items-center gap-1.5 truncate">
                               <span>{formatDate(t.date, lang)}</span>
@@ -235,6 +259,9 @@ function CategoriesContent() {
   // Period State
   const [selectedYear, setSelectedYear] = useState(now.getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1);
+  const [periodPreset, setPeriodPreset] = useState('month'); // 'month' | 'last_month' | '3months' | '6months' | 'year' | 'all' | 'custom'
+  const [customStartDate, setCustomStartDate] = useState('');
+  const [customEndDate, setCustomEndDate] = useState('');
   const [categoryType, setCategoryType] = useState('expense'); // 'expense' | 'income'
 
   // Accounts & Multi-Select
@@ -265,13 +292,59 @@ function CategoriesContent() {
     }));
   }, [accounts]);
 
+  // Compute active date range from periodPreset
+  const activeDateRange = useMemo(() => {
+    const today = new Date();
+    if (periodPreset === 'last_month') {
+      const lm = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+      const y = lm.getFullYear();
+      const m = lm.getMonth() + 1;
+      const lastDay = new Date(y, m, 0).getDate();
+      return {
+        startDate: `${y}-${String(m).padStart(2, '0')}-01`,
+        endDate: `${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`,
+        label: `${MONTH_NAMES[m - 1]} ${y}`,
+      };
+    } else if (periodPreset === '3months') {
+      const d = new Date(today.getFullYear(), today.getMonth() - 2, 1);
+      const startStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+      const endStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+      return { startDate: startStr, endDate: endStr, label: '3 חודשים אחרונים' };
+    } else if (periodPreset === '6months') {
+      const d = new Date(today.getFullYear(), today.getMonth() - 5, 1);
+      const startStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+      const endStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+      return { startDate: startStr, endDate: endStr, label: '6 חודשים אחרונים' };
+    } else if (periodPreset === 'year') {
+      const d = new Date(today.getFullYear() - 1, today.getMonth() + 1, 1);
+      const startStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+      const endStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+      return { startDate: startStr, endDate: endStr, label: 'שנה אחרונה' };
+    } else if (periodPreset === 'all') {
+      return { startDate: '2020-01-01', endDate: '2030-12-31', label: 'כל הזמנים' };
+    } else if (periodPreset === 'custom') {
+      const s = customStartDate || `${today.getFullYear()}-01-01`;
+      const e = customEndDate || `${today.getFullYear()}-12-31`;
+      return { startDate: s, endDate: e, label: `${s} - ${e}` };
+    }
+
+    // Default 'month'
+    const mStr = String(selectedMonth).padStart(2, '0');
+    const lastDay = new Date(selectedYear, selectedMonth, 0).getDate();
+    return {
+      startDate: `${selectedYear}-${mStr}-01`,
+      endDate: `${selectedYear}-${mStr}-${String(lastDay).padStart(2, '0')}`,
+      label: `${MONTH_NAMES[selectedMonth - 1]} ${selectedYear}`,
+    };
+  }, [periodPreset, selectedYear, selectedMonth, customStartDate, customEndDate]);
+
   // Load Breakdown Data
   const loadData = async () => {
     setLoading(true);
     try {
       const res = await api.getCategoryBreakdown({
-        year: selectedYear,
-        month: selectedMonth,
+        startDate: activeDateRange.startDate,
+        endDate: activeDateRange.endDate,
         type: categoryType,
         accountIds: selectedAccountIds.length > 0 ? selectedAccountIds : undefined,
       });
@@ -289,10 +362,20 @@ function CategoriesContent() {
 
   useEffect(() => {
     loadData();
-  }, [selectedYear, selectedMonth, categoryType, selectedAccountIds]);
+  }, [activeDateRange, categoryType, selectedAccountIds]);
+
+  // Real-time listener for instant updates across tabs/drawers
+  useEffect(() => {
+    const handleTxUpdated = () => {
+      loadData();
+    };
+    window.addEventListener('fintrack_tx_updated', handleTxUpdated);
+    return () => window.removeEventListener('fintrack_tx_updated', handleTxUpdated);
+  }, [activeDateRange, categoryType, selectedAccountIds]);
 
   // Month navigation helpers
   const handlePrevMonth = () => {
+    setPeriodPreset('month');
     if (selectedMonth === 1) {
       setSelectedMonth(12);
       setSelectedYear((prev) => prev - 1);
@@ -302,6 +385,7 @@ function CategoriesContent() {
   };
 
   const handleNextMonth = () => {
+    setPeriodPreset('month');
     if (selectedMonth === 12) {
       setSelectedMonth(1);
       setSelectedYear((prev) => prev + 1);
@@ -311,11 +395,12 @@ function CategoriesContent() {
   };
 
   const handleCurrentMonth = () => {
+    setPeriodPreset('month');
     setSelectedYear(now.getFullYear());
     setSelectedMonth(now.getMonth() + 1);
   };
 
-  const isCurrentMonth = selectedYear === now.getFullYear() && selectedMonth === now.getMonth() + 1;
+  const isCurrentMonth = periodPreset === 'month' && selectedYear === now.getFullYear() && selectedMonth === now.getMonth() + 1;
 
   // Build tree of categories with subcategories and amounts
   const treeData = useMemo(() => {
@@ -324,11 +409,19 @@ function CategoriesContent() {
     // Map of raw category name from backend -> amount & count
     const backendCategoryMap = new Map();
     breakdownData.forEach((item) => {
-      backendCategoryMap.set(item.name, {
-        amount: item.amount,
-        count: item.count,
-        color: item.color,
-      });
+      const cleanName = cleanSpacedHebrew(item.name).trim();
+      if (!cleanName) return;
+      if (backendCategoryMap.has(cleanName)) {
+        const existing = backendCategoryMap.get(cleanName);
+        existing.amount += item.amount;
+        existing.count += item.count;
+      } else {
+        backendCategoryMap.set(cleanName, {
+          amount: item.amount,
+          count: item.count,
+          color: item.color,
+        });
+      }
     });
 
     const result = [];
@@ -355,6 +448,7 @@ function CategoriesContent() {
       // Check subcategories
       if (mainCat.subs && mainCat.subs.length > 0) {
         mainCat.subs.forEach((sub) => {
+          if (sub.name === mainCat.name) return; // Prevent double-counting same-named subcategory
           if (backendCategoryMap.has(sub.name)) {
             const subData = backendCategoryMap.get(sub.name);
             mainSum += subData.amount;
@@ -386,10 +480,18 @@ function CategoriesContent() {
     });
 
     // Capture any legacy or custom categories not in schema
+    const incomeNames = new Set(CATEGORIES_DATA.incomes.map((i) => i.name));
+    const expenseNames = new Set(CATEGORIES_DATA.expenses.map((e) => e.name));
+
     backendCategoryMap.forEach((val, name) => {
-      if (!matchedCategoryNames.has(name) && name !== 'אחר') {
+      // If viewing expenses, ignore any category that is an income type (e.g. משכורת)
+      if (categoryType === 'expense' && (incomeNames.has(name) || name === 'משכורת' || name === 'הכנסה' || name === 'הכנסות שונות')) return;
+      // If viewing incomes, ignore any category that is an expense type
+      if (categoryType === 'income' && expenseNames.has(name)) return;
+
+      if (!matchedCategoryNames.has(name)) {
         unmatchedItems.push({
-          name,
+          name: name || 'ללא סיווג',
           amount: val.amount,
           count: val.count,
         });
@@ -398,23 +500,27 @@ function CategoriesContent() {
       }
     });
 
-    if (backendCategoryMap.has('אחר')) {
-      const other = backendCategoryMap.get('אחר');
-      unmatchedTotal += other.amount;
-      unmatchedCount += other.count;
-    }
-
+    // If there are unmatched items, attach them to the designated miscellaneous category
     if (unmatchedTotal > 0) {
-      result.push({
-        id: 'other',
-        name: 'אחר / שונות',
-        color: 'text-slate-400',
-        bg: 'bg-slate-500/10',
-        amount: unmatchedTotal,
-        count: unmatchedCount,
-        percentage: totalSpent > 0 ? Math.round((unmatchedTotal / totalSpent) * 100) : 0,
-        subcategories: unmatchedItems,
-      });
+      const miscCatId = categoryType === 'expense' ? 'exp_misc' : 'inc_misc';
+      const targetMisc = result.find((c) => c.id === miscCatId);
+      if (targetMisc) {
+        targetMisc.amount += unmatchedTotal;
+        targetMisc.count += unmatchedCount;
+        targetMisc.percentage = totalSpent > 0 ? Math.round((targetMisc.amount / totalSpent) * 100) : 0;
+        targetMisc.subcategories = [...(targetMisc.subcategories || []), ...unmatchedItems].sort((a, b) => b.amount - a.amount);
+      } else {
+        result.push({
+          id: miscCatId,
+          name: categoryType === 'expense' ? 'שונות' : 'הכנסות שונות',
+          color: 'text-slate-400',
+          bg: 'bg-slate-500/10',
+          amount: unmatchedTotal,
+          count: unmatchedCount,
+          percentage: totalSpent > 0 ? Math.round((unmatchedTotal / totalSpent) * 100) : 0,
+          subcategories: unmatchedItems,
+        });
+      }
     }
 
     // Filter out empty categories (where amount === 0 && count === 0)
@@ -493,71 +599,126 @@ function CategoriesContent() {
       </div>
 
       {/* Period & Filter Bar */}
-      <div className="p-4 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
-        {/* Month Selector */}
-        <div className="flex items-center gap-2 w-full md:w-auto justify-between md:justify-start">
-          <button
-            onClick={handleNextMonth}
-            className="p-2 rounded-xl border border-dark-border light:border-light-border hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text transition-colors"
-            title="חודש הבא"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
-
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-dark-surface-elevated light:bg-light-surface-elevated border border-dark-border/60 light:border-light-border/60">
-            <span className="font-bold text-sm text-dark-text light:text-light-text min-w-[110px] text-center">
-              {MONTH_NAMES[selectedMonth - 1]} {selectedYear}
-            </span>
+      <div className="p-4 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface shadow-sm flex flex-col gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          {/* Quick Period Presets */}
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 scrollbar-none text-xs">
+            {[
+              { id: 'month', label: 'חודש נבחר' },
+              { id: 'last_month', label: 'חודש שעבר' },
+              { id: '3months', label: '3 חודשים' },
+              { id: '6months', label: '6 חודשים' },
+              { id: 'year', label: 'שנה' },
+              { id: 'all', label: 'כל הזמנים' },
+              { id: 'custom', label: 'טווח מותאם' },
+            ].map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                onClick={() => setPeriodPreset(preset.id)}
+                className={`px-3 py-1.5 rounded-xl font-semibold transition-all shrink-0 ${
+                  periodPreset === preset.id
+                    ? 'bg-brand-primary text-white shadow-xs'
+                    : 'bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
+                }`}
+              >
+                {preset.label}
+              </button>
+            ))}
           </div>
 
-          <button
-            onClick={handlePrevMonth}
-            className="p-2 rounded-xl border border-dark-border light:border-light-border hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text transition-colors"
-            title="חודש קודם"
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </button>
+          {/* Custom Date Range Picker */}
+          {periodPreset === 'custom' && (
+            <div className="flex items-center gap-2 text-xs">
+              <input
+                type="date"
+                value={customStartDate}
+                onChange={(e) => setCustomStartDate(e.target.value)}
+                className="px-2.5 py-1.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text font-mono"
+              />
+              <span className="text-dark-text-muted light:text-light-text-muted">עד</span>
+              <input
+                type="date"
+                value={customEndDate}
+                onChange={(e) => setCustomEndDate(e.target.value)}
+                className="px-2.5 py-1.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text font-mono"
+              />
+            </div>
+          )}
 
-          {!isCurrentMonth && (
-            <button
-              onClick={handleCurrentMonth}
-              className="text-xs px-2.5 py-1.5 rounded-xl border border-brand-primary/40 bg-brand-primary/10 text-brand-primary font-semibold hover:bg-brand-primary/20 transition-colors"
-            >
-              החודש
-            </button>
+          {/* Month Selector (shown when 'month' preset active) */}
+          {periodPreset === 'month' && (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleNextMonth}
+                className="p-2 rounded-xl border border-dark-border light:border-light-border hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text transition-colors"
+                title="חודש הבא"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-dark-surface-elevated light:bg-light-surface-elevated border border-dark-border/60 light:border-light-border/60">
+                <span className="font-bold text-xs sm:text-sm text-dark-text light:text-light-text min-w-[100px] text-center">
+                  {MONTH_NAMES[selectedMonth - 1]} {selectedYear}
+                </span>
+              </div>
+
+              <button
+                onClick={handlePrevMonth}
+                className="p-2 rounded-xl border border-dark-border light:border-light-border hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text transition-colors"
+                title="חודש קודם"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+
+              {!isCurrentMonth && (
+                <button
+                  onClick={handleCurrentMonth}
+                  className="text-xs px-2.5 py-1.5 rounded-xl border border-brand-primary/40 bg-brand-primary/10 text-brand-primary font-semibold hover:bg-brand-primary/20 transition-colors"
+                >
+                  החודש
+                </button>
+              )}
+            </div>
           )}
         </div>
 
-        {/* Multi-Account Filter & Search */}
-        <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto justify-end">
-          <div className="relative flex-1 md:w-48">
-            <Search className="w-3.5 h-3.5 absolute right-3 rtl:right-3 ltr:left-3 top-1/2 -translate-y-1/2 text-dark-text-muted light:text-light-text-muted pointer-events-none" />
-            <input
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="חפש קטגוריה..."
-              className="w-full pr-8 rtl:pr-8 ltr:pl-8 pl-3 py-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-xs text-dark-text light:text-light-text focus:outline-none focus:border-brand-primary"
-            />
+        {/* Secondary Filter Line: Search & Accounts */}
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-dark-border/40 light:border-light-border/40">
+          <div className="text-xs text-dark-text-muted light:text-light-text-muted font-medium">
+            טווח מוצג: <span className="text-dark-text light:text-light-text font-bold">{activeDateRange.label}</span>
           </div>
 
-          <MultiSelectDropdown
-            label="כרטיסים וחשבונות"
-            options={accountOptions}
-            selectedValues={selectedAccountIds}
-            onChange={setSelectedAccountIds}
-            placeholder="הכל"
-            icon={CreditCard}
-          />
+          <div className="flex flex-wrap items-center gap-2.5 flex-1 justify-end">
+            <div className="relative flex-1 max-w-xs">
+              <Search className="w-3.5 h-3.5 absolute right-3 rtl:right-3 ltr:left-3 top-1/2 -translate-y-1/2 text-dark-text-muted light:text-light-text-muted pointer-events-none" />
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="חפש קטגוריה..."
+                className="w-full pr-8 rtl:pr-8 ltr:pl-8 pl-3 py-1.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-xs text-dark-text light:text-light-text focus:outline-none focus:border-brand-primary"
+              />
+            </div>
 
-          <button
-            onClick={loadData}
-            disabled={loading}
-            className="p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text shadow-xs transition-colors"
-            title="רענן"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-brand-primary' : ''}`} />
-          </button>
+            <MultiSelectDropdown
+              label="כרטיסים וחשבונות"
+              options={accountOptions}
+              selectedValues={selectedAccountIds}
+              onChange={setSelectedAccountIds}
+              placeholder="הכל"
+              icon={CreditCard}
+            />
+
+            <button
+              onClick={loadData}
+              disabled={loading}
+              className="p-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text shadow-xs transition-colors"
+              title="רענן"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-brand-primary' : ''}`} />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -715,8 +876,9 @@ function CategoriesContent() {
       {drawerCategory && (
         <CategoryTransactionsDrawer
           categoryName={drawerCategory}
-          year={selectedYear}
-          month={selectedMonth}
+          startDate={activeDateRange.startDate}
+          endDate={activeDateRange.endDate}
+          dateRangeLabel={activeDateRange.label}
           accountIds={selectedAccountIds}
           onClose={() => setDrawerCategory(null)}
           onTxUpdated={() => loadData()}
