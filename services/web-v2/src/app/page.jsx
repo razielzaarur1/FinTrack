@@ -31,6 +31,23 @@ export default function DashboardPage() {
   const [accounts, setAccounts] = useState([]);
   const [recentTx, setRecentTx] = useState([]);
   const [loading, setLoading] = useState(true);
+  const lastTapRef = React.useRef({ time: 0, month: null });
+
+  const handleChartPointClick = (e) => {
+    const monthVal = e?.activePayload?.[0]?.payload?.month;
+    if (!monthVal) return;
+
+    const now = Date.now();
+    const prev = lastTapRef.current;
+
+    // Require double-tap/double-click within 450ms on mobile & desktop
+    if (prev.month === monthVal && now - prev.time < 450) {
+      router.push(`/transactions?month=${encodeURIComponent(monthVal)}`);
+      lastTapRef.current = { time: 0, month: null };
+    } else {
+      lastTapRef.current = { time: now, month: monthVal };
+    }
+  };
 
   const loadDashboard = async () => {
     try {
@@ -236,17 +253,12 @@ export default function DashboardPage() {
               <span>{t('noData')}</span>
             </div>
           ) : (
-            <div className="h-64 w-full cursor-pointer" title="לחץ על חודש כדי לצפות בתנועות">
+            <div className="h-64 w-full cursor-pointer" title={lang === 'he' ? 'לחץ פעמיים רצוף על חודש כדי לעבור לתנועות' : 'Double click to view month transactions'}>
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart 
                   data={trend} 
                   margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
-                  onClick={(e) => {
-                    const monthVal = e?.activePayload?.[0]?.payload?.month;
-                    if (monthVal) {
-                      router.push(`/transactions?month=${encodeURIComponent(monthVal)}`);
-                    }
-                  }}
+                  onClick={handleChartPointClick}
                 >
                   <defs>
                     <linearGradient id="colorInc" x1="0" y1="0" x2="0" y2="1">

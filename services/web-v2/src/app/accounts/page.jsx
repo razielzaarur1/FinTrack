@@ -34,6 +34,7 @@ import InstitutionLogo from '@/components/common/InstitutionLogo';
 import { useApp } from '@/lib/app-context';
 
 function SyncProgressModal({ syncState, onClose }) {
+  const [isCollapsed, setIsCollapsed] = useState(false);
   if (!syncState || !syncState.isOpen) return null;
 
   const {
@@ -54,115 +55,155 @@ function SyncProgressModal({ syncState, onClose }) {
     { id: 5, title: 'הסנכרון הושלם בהצלחה' },
   ];
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
-      <div className="w-full max-w-md rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface p-6 shadow-2xl space-y-5">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-dark-border/60 pb-4">
-          <div className="flex items-center gap-3">
-            {bankCompany && <InstitutionLogo bankCompany={bankCompany} size={36} />}
-            <div>
-              <h3 className="font-bold text-base text-dark-text light:text-light-text">
-                {isComplete ? 'הסנכרון הושלם בהצלחה!' : 'סנכרון חשבונות פעיל'}
-              </h3>
-              <p className="text-xs text-dark-text-muted light:text-light-text-muted mt-0.5">
-                {totalAccounts > 1 ? `חשבון ${currentAccountIndex} מתוך ${totalAccounts}: ${accountName}` : accountName}
-              </p>
-            </div>
-          </div>
-
-          {(isComplete || error) && (
-            <button
-              onClick={onClose}
-              className="p-1.5 rounded-lg hover:bg-dark-surface-elevated text-dark-text-muted hover:text-dark-text cursor-pointer transition-colors"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          )}
-        </div>
-
-        {/* Multi-account overall progress bar */}
-        {totalAccounts > 1 && (
-          <div className="space-y-1.5">
-            <div className="flex justify-between text-xs font-semibold text-dark-text-muted">
-              <span>התקדמות כוללת</span>
-              <span className="font-mono">
-                {isComplete ? '100%' : `${Math.round(((currentAccountIndex - 1 + (currentStep / 5)) / totalAccounts) * 100)}%`}
-              </span>
-            </div>
-            <div className="w-full h-2 rounded-full bg-dark-surface-elevated overflow-hidden">
-              <div
-                className="h-full bg-brand-primary rounded-full transition-all duration-500"
-                style={{
-                  width: isComplete ? '100%' : `${Math.max(5, Math.round(((currentAccountIndex - 1 + (currentStep / 5)) / totalAccounts) * 100))}%`,
-                }}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Steps Checklist */}
-        <div className="space-y-2.5 py-1">
-          {steps.map((s) => {
-            const isDone = isComplete || currentStep > s.id;
-            const isCurrent = !isComplete && !error && currentStep === s.id;
-
-            return (
-              <div
-                key={s.id}
-                className={`flex items-center gap-3 p-3 rounded-xl border transition-all ${
-                  isCurrent
-                    ? 'border-brand-primary/40 bg-brand-primary/5 text-brand-primary font-bold'
-                    : isDone
-                    ? 'border-emerald-500/20 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400 font-medium'
-                    : 'border-transparent text-dark-text-muted/60 opacity-60'
-                }`}
-              >
-                <div className="shrink-0">
-                  {isDone ? (
-                    <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                  ) : isCurrent ? (
-                    <RefreshCw className="w-4 h-4 animate-spin text-brand-primary" />
-                  ) : (
-                    <div className="w-4 h-4 rounded-full border border-dark-border flex items-center justify-center text-[10px]">
-                      {s.id}
-                    </div>
-                  )}
-                </div>
-                <span className="text-xs">{s.title}</span>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Error notification if any */}
-        {error && (
-          <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs flex items-start gap-2">
-            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-            <div className="space-y-1">
-              <div className="font-bold">התרחשה שגיאה במהלך הסנכרון:</div>
-              <div className="opacity-90">{error}</div>
-            </div>
-          </div>
-        )}
-
-        {/* Footer Action */}
-        <div className="pt-2">
-          {isComplete || error ? (
-            <button
-              onClick={onClose}
-              className="w-full py-2.5 rounded-xl bg-brand-primary text-white text-xs font-semibold hover:bg-brand-primary-hover shadow-md transition-colors cursor-pointer"
-            >
-              סגור ורענן
-            </button>
+  if (isCollapsed) {
+    return (
+      <aside aria-label="התקדמות סנכרון" className="fixed bottom-6 left-6 z-40 flex items-center gap-3 p-3 px-4 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface shadow-2xl animate-in slide-in-from-bottom-5 duration-200 pointer-events-auto">
+        {bankCompany && <InstitutionLogo bankCompany={bankCompany} size={24} />}
+        <div className="flex items-center gap-2">
+          {isComplete ? (
+            <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+          ) : error ? (
+            <AlertTriangle className="w-4 h-4 text-rose-500" />
           ) : (
-            <p className="text-[11px] text-center text-dark-text-muted">
-              התהליך מתבצע בצורה מוצפנת ומאובטחת ברקע, אנא המתן...
-            </p>
+            <RefreshCw className="w-4 h-4 animate-spin text-brand-primary" />
           )}
+          <span className="text-xs font-bold text-dark-text light:text-light-text">
+            {isComplete ? 'סנכרון הושלם' : error ? 'שגיאה בסנכרון' : `מסנכרן ${accountName || ''}...`}
+          </span>
+        </div>
+        <button
+          onClick={() => setIsCollapsed(false)}
+          className="p-1 rounded-lg hover:bg-dark-surface-elevated text-dark-text-muted hover:text-dark-text text-xs font-semibold cursor-pointer"
+          title="הרחב חלונית"
+        >
+          הרחב
+        </button>
+        <button
+          onClick={onClose}
+          className="p-1 rounded-lg hover:bg-dark-surface-elevated text-dark-text-muted hover:text-dark-text cursor-pointer"
+          title="סגור"
+        >
+          <X className="w-3.5 h-3.5" />
+        </button>
+      </aside>
+    );
+  }
+
+  return (
+    <aside aria-label="התקדמות סנכרון" className="fixed bottom-6 left-6 z-40 w-80 sm:w-96 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface p-5 shadow-2xl space-y-4 animate-in slide-in-from-bottom-5 duration-200 pointer-events-auto">
+      {/* Header */}
+      <div className="flex items-center justify-between border-b border-dark-border/60 pb-3">
+        <div className="flex items-center gap-2.5 min-w-0">
+          {bankCompany && <InstitutionLogo bankCompany={bankCompany} size={30} />}
+          <div className="min-w-0">
+            <h3 className="font-bold text-sm truncate text-dark-text light:text-light-text">
+              {isComplete ? 'הסנכרון הושלם בהצלחה!' : 'סנכרון חשבונות פעיל'}
+            </h3>
+            <p className="text-[11px] text-dark-text-muted light:text-light-text-muted truncate">
+              {totalAccounts > 1 ? `חשבון ${currentAccountIndex} מתוך ${totalAccounts}: ${accountName}` : accountName}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            onClick={() => setIsCollapsed(true)}
+            className="p-1.5 rounded-lg hover:bg-dark-surface-elevated text-dark-text-muted hover:text-dark-text cursor-pointer transition-colors text-[11px]"
+            title="מזער חלונית"
+          >
+            מזער
+          </button>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg hover:bg-dark-surface-elevated text-dark-text-muted hover:text-dark-text cursor-pointer transition-colors"
+            title="סגור"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
       </div>
-    </div>
+
+      {/* Multi-account overall progress bar */}
+      {totalAccounts > 1 && (
+        <div className="space-y-1">
+          <div className="flex justify-between text-[11px] font-semibold text-dark-text-muted">
+            <span>התקדמות כוללת</span>
+            <span className="font-mono">
+              {isComplete ? '100%' : `${Math.round(((currentAccountIndex - 1 + (currentStep / 5)) / totalAccounts) * 100)}%`}
+            </span>
+          </div>
+          <div className="w-full h-1.5 rounded-full bg-dark-surface-elevated overflow-hidden">
+            <div
+              className="h-full bg-brand-primary rounded-full transition-all duration-500"
+              style={{
+                width: isComplete ? '100%' : `${Math.max(5, Math.round(((currentAccountIndex - 1 + (currentStep / 5)) / totalAccounts) * 100))}%`,
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Steps Checklist */}
+      <div className="space-y-1.5 py-0.5">
+        {steps.map((s) => {
+          const isDone = isComplete || currentStep > s.id;
+          const isCurrent = !isComplete && !error && currentStep === s.id;
+
+          return (
+            <div
+              key={s.id}
+              className={`flex items-center gap-2.5 p-2 rounded-xl border transition-all ${
+                isCurrent
+                  ? 'border-brand-primary/40 bg-brand-primary/5 text-brand-primary font-bold'
+                  : isDone
+                  ? 'border-emerald-500/20 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400 font-medium'
+                  : 'border-transparent text-dark-text-muted/60 opacity-60'
+              }`}
+            >
+              <div className="shrink-0">
+                {isDone ? (
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                ) : isCurrent ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-brand-primary" />
+                ) : (
+                  <div className="w-3.5 h-3.5 rounded-full border border-dark-border flex items-center justify-center text-[9px]">
+                    {s.id}
+                  </div>
+                )}
+              </div>
+              <span className="text-[11px]">{s.title}</span>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Error notification if any */}
+      {error && (
+        <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs flex items-start gap-2">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+          <div className="space-y-0.5">
+            <div className="font-bold">התרחשה שגיאה:</div>
+            <div className="opacity-90 text-[11px]">{error}</div>
+          </div>
+        </div>
+      )}
+
+      {/* Footer Action */}
+      <div className="pt-1">
+        {isComplete || error ? (
+          <button
+            onClick={onClose}
+            className="w-full py-2 rounded-xl bg-brand-primary text-white text-xs font-semibold hover:bg-brand-primary-hover shadow-md transition-colors cursor-pointer"
+          >
+            סגור ורענן
+          </button>
+        ) : (
+          <p className="text-[10px] text-center text-dark-text-muted">
+            הסנכרון מתבצע ברקע. באפשרותך להמשיך לעבוד כרגיל.
+          </p>
+        )}
+      </div>
+    </aside>
   );
 }
 

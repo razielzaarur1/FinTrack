@@ -98,18 +98,20 @@ export function calculateEffectiveBalance(card, bankCompany, billingDay = 10) {
       cycleStart = new Date(curYear, curMonth, day, 0, 0, 0, 0);
     }
 
+    const startOfToday = new Date(curYear, curMonth, curDay, 0, 0, 0, 0);
+
     let netCharges = 0;
     let cycleTxCount = 0;
 
     for (const tx of txns) {
       const txDate = tx.date ? new Date(tx.date) : null;
       const processedDate = tx.processedDate ? new Date(tx.processedDate) : null;
-      const relevantDate = processedDate || txDate;
 
-      if (
-        (relevantDate && relevantDate >= cycleStart && relevantDate <= cycleEnd) ||
-        tx.status === 'pending'
-      ) {
+      // Only count upcoming charges (processedDate >= today or pending or date in current unbilled cycle)
+      const isUpcomingProcessed = processedDate && processedDate >= startOfToday;
+      const isUnbilledTx = !processedDate && txDate && txDate >= cycleStart && txDate <= cycleEnd;
+
+      if (isUpcomingProcessed || isUnbilledTx || tx.status === 'pending') {
         const amt =
           typeof tx.chargedAmount === 'number'
             ? tx.chargedAmount
@@ -117,10 +119,7 @@ export function calculateEffectiveBalance(card, bankCompany, billingDay = 10) {
             ? tx.originalAmount
             : parseFloat(tx.chargedAmount || tx.originalAmount) || 0;
 
-        // In israeli-bank-scrapers:
-        // expenses are negative (e.g. -2500), credits/refunds are positive (e.g. +500)
-        // A monthly bill is net charges minus refunds:
-        // net charge = -1 * amt (so -2500 becomes +2500 charge, +500 becomes -500 credit)
+        // In israeli-bank-scrapers: expenses are negative, credits are positive
         netCharges += -amt;
         cycleTxCount++;
       }
@@ -158,9 +157,39 @@ export function cleanSpacedHebrew(str) {
 }
 
 /**
+ * Extracts 4-digit card number reliably from card metadata or internal transactions.
+ */
+export function extractCardLast4(card, cardTxns = []) {
+  // 1. From card.accountNumber
+  if (card?.accountNumber) {
+    const digits = String(card.accountNumber).replace(/\D/g, '');
+    if (digits.length >= 4) {
+      return digits.slice(-4);
+    }
+  }
+
+  // 2. From transactions inside this card
+  if (Array.isArray(cardTxns)) {
+    for (const tx of cardTxns) {
+      const candidates = [tx.chargedCard, tx.cardLastDigits, tx.accountNumber];
+      for (const cand of candidates) {
+        if (cand) {
+          const digits = String(cand).replace(/\D/g, '');
+          if (digits.length >= 4) {
+            return digits.slice(-4);
+          }
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
  * Generates a globally unique, deterministic external_id for each transaction.
- * Solves the critical Israeli bank scrapers bug where checking accounts (e.g. Otsar HaHayal / FIBI)
- * return sequential numeric row indices (1, 2, 3...) that collide and overwrite across months.
+ * Solves the critical duplicate insertion problem by prioritizing bank-provided identifiers
+ * and using deterministic composite hashing instead of volatile array order.
  */
 export function generateTransactionExternalId(accountId, tx, occurrenceIndex = 0) {
   let dateStr = 'unknown_date';
@@ -172,6 +201,18 @@ export function generateTransactionExternalId(accountId, tx, occurrenceIndex = 0
       }
     } catch (e) {
       dateStr = String(tx.date).slice(0, 10);
+    }
+  }
+
+  let processedDateStr = '';
+  if (tx.processedDate) {
+    try {
+      const pd = new Date(tx.processedDate);
+      if (!isNaN(pd.getTime())) {
+        processedDateStr = pd.toISOString().slice(0, 10);
+      }
+    } catch (e) {
+      processedDateStr = String(tx.processedDate).slice(0, 10);
     }
   }
 
@@ -191,17 +232,16 @@ export function generateTransactionExternalId(accountId, tx, occurrenceIndex = 0
   const merchantName = cleanSpacedHebrew((tx.description || tx.memo || '').trim());
   const description = cleanSpacedHebrew((tx.memo && tx.memo !== tx.description ? tx.memo : tx.description || '').trim());
 
-  // If tx has a genuinely unique external identifier provided by the financial institution (e.g. long voucher string > 7 chars and not a generic row index):
+  // Priority 1: Bank/Credit-Card unique external identifier (deal/voucher reference)
   const rawId = tx.identifier != null ? String(tx.identifier).trim() : (tx.id != null ? String(tx.id).trim() : '');
-  const isReliableExternalId = rawId.length > 7 && !/^\d{1,5}$/.test(rawId);
-
-  if (isReliableExternalId) {
+  if (rawId && rawId !== '0' && rawId !== 'undefined' && rawId !== 'null') {
     return `${dateStr}_${rawId}`;
   }
 
-  // Deterministic composite SHA-256 hash incorporating date, amount, merchant, description, occurrence:
-  const hashPayload = `${accountId}_${dateStr}_${Number(amount).toFixed(2)}_${merchantName}_${description}_${occurrenceIndex}`;
-  const hash = crypto.createHash('sha256').update(hashPayload).digest('hex').slice(0, 20);
+  // Priority 2: Deterministic SHA-256 composite hash
+  const occPart = occurrenceIndex > 0 ? `_#${occurrenceIndex}` : '';
+  const hashPayload = `${accountId}_${dateStr}_${Number(amount).toFixed(2)}_${merchantName}_${description}_${processedDateStr}${occPart}`;
+  const hash = crypto.createHash('sha256').update(hashPayload).digest('hex').slice(0, 24);
   return `tx_${dateStr}_${hash}`;
 }
 
@@ -210,10 +250,23 @@ async function saveTransactionsList(client, accountId, transactions, userId = '0
     return { inserted: 0, total: 0 };
   }
 
+  // Sort transactions deterministically so occurrence indices for same-day duplicates are stable across scrapes
+  const sortedTransactions = [...transactions].sort((a, b) => {
+    const da = a.date ? new Date(a.date).getTime() : 0;
+    const db = b.date ? new Date(b.date).getTime() : 0;
+    if (da !== db) return da - db;
+    const aa = parseFloat(a.chargedAmount || a.originalAmount || 0);
+    const ab = parseFloat(b.chargedAmount || b.originalAmount || 0);
+    if (aa !== ab) return aa - ab;
+    const descA = a.description || a.memo || '';
+    const descB = b.description || b.memo || '';
+    return descA.localeCompare(descB);
+  });
+
   let insertedCount = 0;
   const occurrenceMap = new Map();
 
-  for (const tx of transactions) {
+  for (const tx of sortedTransactions) {
     const txDate = tx.date ? new Date(tx.date) : new Date();
     const processedDate = tx.processedDate ? new Date(tx.processedDate) : txDate;
     const dateStr = !isNaN(txDate.getTime()) ? txDate.toISOString().slice(0, 10) : 'unknown_date';
@@ -291,7 +344,7 @@ async function saveTransactionsList(client, accountId, transactions, userId = '0
     }
   }
 
-  return { inserted: insertedCount, total: transactions.length };
+  return { inserted: insertedCount, total: sortedTransactions.length };
 }
 
 /**
@@ -332,12 +385,12 @@ async function persistScrapedAccounts(pool, primaryAccountId, scrapedAccounts, t
 
     for (let i = 0; i < accountsToProcess.length; i++) {
       const card = accountsToProcess[i];
-      const rawCardNum = card.accountNumber ? String(card.accountNumber).trim() : '';
-      const cardLast4 = rawCardNum ? rawCardNum.slice(-4) : (i === 0 ? primaryAccountNum : `000${i}`);
-      const effectiveBalance = calculateEffectiveBalance(card, targetBank || bank_company, billing_day || 10);
       const cardTxns = Array.isArray(card.txns) ? card.txns : [];
+      const extracted4 = extractCardLast4(card, cardTxns);
+      const effectiveBalance = calculateEffectiveBalance(card, targetBank || bank_company, billing_day || 10);
 
       let targetDbAccountId = null;
+      let cardLast4 = extracted4;
 
       // 1. Try to match an existing active account with the exact same last 4 digits
       if (cardLast4) {
@@ -353,15 +406,26 @@ async function persistScrapedAccounts(pool, primaryAccountId, scrapedAccounts, t
         }
       }
 
-      // 2. If no card-number match, match primary account on first iteration if unused
-      if (!targetDbAccountId && i === 0 && !usedAccountIds.has(primaryAccountId)) {
-        targetDbAccountId = primaryAccountId;
+      // 2. If no card-number match yet, check primary account ONLY if:
+      // - primaryAccountId is unused
+      // - AND primaryAccount has matching cardLast4 OR primaryAccount has NO card number / dummy '0000'
+      if (!targetDbAccountId && !usedAccountIds.has(primaryAccountId)) {
+        const primaryAcc = existingAccounts.find((a) => a.id === primaryAccountId);
+        const primaryDigits = primaryAcc?.account_number ? String(primaryAcc.account_number).replace(/\D/g, '') : '';
+        const isPrimaryUnset = !primaryDigits || primaryDigits === '0000' || primaryDigits === '0';
+
+        if (isPrimaryUnset || (cardLast4 && primaryDigits.slice(-4) === cardLast4)) {
+          targetDbAccountId = primaryAccountId;
+          if (!cardLast4 && primaryDigits && !isPrimaryUnset) {
+            cardLast4 = primaryDigits.slice(-4);
+          }
+        }
       }
 
       // 3. If still no match, check if any unused account without card number exists
       if (!targetDbAccountId) {
         const unassignedAcc = existingAccounts.find(
-          (a) => (!a.account_number || a.account_number === '') && !usedAccountIds.has(a.id) && a.is_active === true
+          (a) => (!a.account_number || a.account_number === '' || a.account_number === '0000') && !usedAccountIds.has(a.id) && a.is_active === true
         );
         if (unassignedAcc) {
           targetDbAccountId = unassignedAcc.id;
@@ -406,6 +470,23 @@ async function persistScrapedAccounts(pool, primaryAccountId, scrapedAccounts, t
 
       // Save transactions for targetDbAccountId with auto-classification
       const saveRes = await saveTransactionsList(client, targetDbAccountId, cardTxns, user_id);
+
+      // Deduplicate any exact identical transactions in this account that might have been created by older versions
+      await client.query(
+        `DELETE FROM transactions t1
+         USING transactions t2
+         WHERE t1.id > t2.id
+           AND t1.account_id = t2.account_id
+           AND t1.account_id = $1
+           AND t1.date = t2.date
+           AND t1.amount = t2.amount
+           AND COALESCE(t1.merchant_name, '') = COALESCE(t2.merchant_name, '')
+           AND COALESCE(t1.description, '') = COALESCE(t2.description, '')
+           AND (t1.is_split = false OR t1.is_split IS NULL)
+           AND (t2.is_split = false OR t2.is_split IS NULL)`,
+        [targetDbAccountId]
+      );
+
       results.push({
         accountId: targetDbAccountId,
         cardLast4,

@@ -31,6 +31,10 @@ const linkSchema = z.object({
 const updateTransactionSchema = z.object({
   category: z.string().optional(),
   userDescription: z.string().optional().nullable(),
+  merchantName: z.string().optional().nullable(),
+  description: z.string().optional().nullable(),
+  amount: z.coerce.number().optional(),
+  date: z.string().optional(),
   isIgnored: z.boolean().optional(),
   applyToSimilar: z.boolean().optional(),
 });
@@ -342,7 +346,7 @@ export default async function transactionsV2Routes(fastify, options) {
       return reply.code(400).send({ error: 'Validation Error', details: parseResult.error.issues });
     }
 
-    const { category, userDescription, isIgnored, applyToSimilar } = parseResult.data;
+    const { category, userDescription, merchantName, description, amount, date, isIgnored, applyToSimilar } = parseResult.data;
     const setClauses = [];
     const values = [];
 
@@ -356,6 +360,22 @@ export default async function transactionsV2Routes(fastify, options) {
       values.push(userDescription);
       setClauses.push(`user_description = $${values.length}`);
     }
+    if (merchantName !== undefined) {
+      values.push(merchantName);
+      setClauses.push(`merchant_name = $${values.length}`);
+    }
+    if (description !== undefined) {
+      values.push(description);
+      setClauses.push(`description = $${values.length}`);
+    }
+    if (amount !== undefined) {
+      values.push(amount);
+      setClauses.push(`amount = $${values.length}`);
+    }
+    if (date !== undefined) {
+      values.push(date);
+      setClauses.push(`date = $${values.length}`);
+    }
     if (isIgnored !== undefined) {
       values.push(isIgnored);
       setClauses.push(`is_ignored = $${values.length}`);
@@ -368,7 +388,7 @@ export default async function transactionsV2Routes(fastify, options) {
     try {
       let updatedSimilarCount = 0;
 
-      // If applyToSimilar is requested, find the original transaction details first
+      // If applyToSimilar is requested, apply category, userDescription, and isIgnored to matching transactions
       if (applyToSimilar) {
         const origRes = await pool.query('SELECT merchant_name, description FROM transactions WHERE id = $1', [id]);
         const origTx = origRes.rows[0];
@@ -376,24 +396,40 @@ export default async function transactionsV2Routes(fastify, options) {
           const mName = origTx.merchant_name?.trim();
           const desc = origTx.description?.trim();
 
-          let whereSql = '';
-          const bulkValues = [...values];
+          const similarSetClauses = [];
+          const similarValues = [];
 
-          if (mName && mName !== 'בית עסק' && mName !== '') {
-            bulkValues.push(mName);
-            whereSql = `merchant_name = $${bulkValues.length}`;
-          } else if (desc && desc !== '') {
-            bulkValues.push(desc);
-            whereSql = `description = $${bulkValues.length}`;
+          if (category !== undefined) {
+            similarValues.push(category);
+            similarSetClauses.push(`category = $${similarValues.length}`);
+            similarSetClauses.push(`is_manual_category = true`);
+            similarSetClauses.push(`is_reviewed = true`);
+          }
+          if (userDescription !== undefined) {
+            similarValues.push(userDescription);
+            similarSetClauses.push(`user_description = $${similarValues.length}`);
+          }
+          if (isIgnored !== undefined) {
+            similarValues.push(isIgnored);
+            similarSetClauses.push(`is_ignored = $${similarValues.length}`);
           }
 
-          if (whereSql) {
+          let whereSql = '';
+          if (mName && mName !== 'בית עסק' && mName !== '') {
+            similarValues.push(mName);
+            whereSql = `merchant_name = $${similarValues.length}`;
+          } else if (desc && desc !== '') {
+            similarValues.push(desc);
+            whereSql = `description = $${similarValues.length}`;
+          }
+
+          if (whereSql && similarSetClauses.length > 0) {
             const bulkQuery = `
               UPDATE transactions
-              SET ${setClauses.join(', ')}
+              SET ${similarSetClauses.join(', ')}
               WHERE ${whereSql}
             `;
-            const bulkRes = await pool.query(bulkQuery, bulkValues);
+            const bulkRes = await pool.query(bulkQuery, similarValues);
             updatedSimilarCount = bulkRes.rowCount || 0;
           }
         }
@@ -405,7 +441,7 @@ export default async function transactionsV2Routes(fastify, options) {
         UPDATE transactions 
         SET ${setClauses.join(', ')} 
         WHERE id = $${values.length}
-        RETURNING id, category, user_description AS "userDescription", is_ignored AS "isIgnored"
+        RETURNING id, category, merchant_name AS "merchantName", description, amount, date, user_description AS "userDescription", is_ignored AS "isIgnored"
       `;
 
       const result = await pool.query(query, values);
@@ -439,6 +475,39 @@ export default async function transactionsV2Routes(fastify, options) {
       });
     } catch (err) {
       fastify.log.error(err, 'Failed to update transaction');
+      return reply.code(500).send({ error: 'Database error', message: err.message });
+    }
+  });
+
+  // GET /api/v2/transactions/:id/similar - List similar transactions sharing merchant name or description
+  fastify.get('/:id/similar', async (request, reply) => {
+    const { id } = request.params;
+    try {
+      const origRes = await pool.query('SELECT merchant_name, description FROM transactions WHERE id = $1', [id]);
+      if (origRes.rows.length === 0) {
+        return reply.code(404).send({ error: 'Transaction not found' });
+      }
+      const { merchant_name, description } = origRes.rows[0];
+      const m = merchant_name?.trim();
+      const d = description?.trim();
+      const searchPattern = (m && m !== 'בית עסק') ? m : d;
+      if (!searchPattern) {
+        return reply.code(200).send({ data: [], total: 0 });
+      }
+
+      const res = await pool.query(
+        `SELECT t.id, t.date, t.amount, t.category, t.merchant_name, t.description, t.user_description AS "userDescription",
+                b.display_name AS "accountDisplayName", b.bank_company AS "bankCompany"
+         FROM transactions t
+         JOIN bank_accounts b ON t.account_id = b.id
+         WHERE t.id != $1
+           AND (t.merchant_name = $2 OR t.description = $2)
+         ORDER BY t.date DESC
+         LIMIT 20`,
+        [id, searchPattern]
+      );
+      return reply.code(200).send({ data: res.rows, total: res.rows.length });
+    } catch (err) {
       return reply.code(500).send({ error: 'Database error', message: err.message });
     }
   });
@@ -543,7 +612,8 @@ export default async function transactionsV2Routes(fastify, options) {
       return reply.code(404).send({ error: 'Transaction not found' });
     }
 
-    const parentAmount = Math.abs(parseFloat(txRes.rows[0].amount));
+    const rawParentAmount = parseFloat(txRes.rows[0].amount);
+    const parentAmount = Math.abs(rawParentAmount);
     const splitsSum = splits.reduce((acc, curr) => acc + parseFloat(curr.amount), 0);
 
     // Enforce balance within 0.01 tolerance
@@ -562,10 +632,11 @@ export default async function transactionsV2Routes(fastify, options) {
       await client.query('DELETE FROM transaction_splits WHERE transaction_id = $1', [id]);
 
       for (const split of splits) {
+        const signedSplitAmount = rawParentAmount < 0 ? -Math.abs(split.amount) : Math.abs(split.amount);
         await client.query(
           `INSERT INTO transaction_splits (transaction_id, amount, category, description)
            VALUES ($1, $2, $3, $4)`,
-          [id, split.amount, split.category, split.description || null]
+          [id, signedSplitAmount, split.category, split.description || null]
         );
       }
 

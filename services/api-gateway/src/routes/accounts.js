@@ -71,6 +71,22 @@ async function cleanDuplicateAccountsAndNames() {
         AND (t1.is_split = false OR t1.is_split IS NULL)
         AND (t2.is_split = false OR t2.is_split IS NULL)
     `);
+
+    // 4. Remove any corrupted user rules that classify credit card charges / bank debits as cash withdrawal
+    await pool.query(`
+      DELETE FROM user_category_rules
+      WHERE (LOWER(merchant_pattern) LIKE '%כרטיס%' OR LOWER(merchant_pattern) LIKE '%חיוב%')
+        AND category = 'משיכת מזומן'
+    `);
+
+    // 5. Reset any bank debits that were erroneously marked as cash withdrawal to 'ללא סיווג'
+    await pool.query(`
+      UPDATE transactions
+      SET category = 'ללא סיווג'
+      WHERE category = 'משיכת מזומן'
+        AND (LOWER(merchant_name) LIKE '%כרטיס%' OR LOWER(merchant_name) LIKE '%חיוב%' OR LOWER(description) LIKE '%כרטיס%' OR LOWER(description) LIKE '%חיוב%')
+        AND is_manual_category = false
+    `);
   } catch (err) {
     console.warn('[Accounts Cleanup] Non-critical warning:', err.message);
   }
@@ -294,14 +310,14 @@ export default async function accountsRoutes(fastify, options) {
 
             let upcomingCharge = 0;
             try {
-              // 1. Find dominant upcoming processed_date for this card
+              // 1. Find dominant upcoming processed_date strictly in the future (>= CURRENT_DATE)
               const dominantProcessedRes = await pool.query(
                 `SELECT processed_date, COUNT(*)::INT AS cnt
                  FROM transactions
                  WHERE account_id = $1
                    AND is_ignored = false
                    AND processed_date IS NOT NULL
-                   AND processed_date >= (CURRENT_DATE - INTERVAL '15 days')
+                   AND processed_date >= CURRENT_DATE
                  GROUP BY processed_date
                  ORDER BY cnt DESC, processed_date ASC
                  LIMIT 1`,
@@ -312,7 +328,7 @@ export default async function accountsRoutes(fastify, options) {
                 const targetDate = formatLocalYMD(new Date(dominantProcessedRes.rows[0].processed_date));
                 nextStr = targetDate;
 
-                // Sum all transactions matching that specific billing date PLUS any pending transactions
+                // Sum all transactions matching that specific upcoming billing date PLUS unbilled/pending transactions
                 const chargeRes = await pool.query(
                   `SELECT -COALESCE(SUM(amount), 0)::FLOAT AS "charge"
                    FROM transactions
@@ -320,21 +336,22 @@ export default async function accountsRoutes(fastify, options) {
                      AND is_ignored = false
                      AND (
                        processed_date = $2::date
-                       OR (status = 'pending' AND (processed_date IS NULL OR processed_date >= CURRENT_DATE - INTERVAL '10 days'))
+                       OR (processed_date IS NULL AND date >= $3::date)
+                       OR status = 'pending'
                      )`,
-                  [acc.id, targetDate]
+                  [acc.id, targetDate, prevStr]
                 );
                 upcomingCharge = chargeRes.rows[0]?.charge || 0;
               } else {
-                // Fallback to billing cycle date window
+                // Fallback to computed future billing cycle date window
                 const fallbackRes = await pool.query(
                   `SELECT -COALESCE(SUM(amount), 0)::FLOAT AS "charge"
                    FROM transactions
                    WHERE account_id = $1
                      AND is_ignored = false
                      AND (
-                       (processed_date IS NOT NULL AND processed_date > $3::date AND processed_date <= $2::date)
-                       OR (processed_date = $2::date)
+                       (processed_date IS NOT NULL AND processed_date >= CURRENT_DATE AND processed_date <= $2::date)
+                       OR (processed_date IS NULL AND date >= $3::date)
                        OR status = 'pending'
                      )`,
                   [acc.id, nextStr, prevStr]

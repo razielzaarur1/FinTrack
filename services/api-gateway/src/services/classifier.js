@@ -74,6 +74,20 @@ export const ISRAELI_MERCHANTS_KB = [
  */
 export function isCashWithdrawalTransaction(merchantName = '', description = '') {
   const text = `${merchantName} ${description}`.toLowerCase();
+  // Protect credit card charges, wire transfers, bank debits and fees from cash withdrawal detection
+  if (
+    text.includes('כרטיס אשראי') ||
+    text.includes('חיוב כרטיס') ||
+    text.includes('חיוב כרטיסי') ||
+    text.includes('העברה') ||
+    text.includes('העב.') ||
+    text.includes('הוראת קבע') ||
+    text.includes('עמלת') ||
+    text.includes('מט״ח') ||
+    text.includes('מטח')
+  ) {
+    return false;
+  }
   return (
     text.includes('משיכת מזומן') ||
     text.includes('משיכת מזומנים') ||
@@ -86,10 +100,11 @@ export function isCashWithdrawalTransaction(merchantName = '', description = '')
 
 /**
  * Hierarchical Classifier Engine:
- * 1. User learned rules (highest priority)
- * 2. Credit Card / Bank scraped category
- * 3. Israeli Merchant Knowledge Base & Keyword matching
- * 4. Fallback default
+ * 1. Historical confidence check (if confidence < 85% across transactions -> ללא סיווג)
+ * 2. User learned rules (highest priority when confident)
+ * 3. Credit Card / Bank scraped category
+ * 4. Israeli Merchant Knowledge Base & Keyword matching
+ * 5. Fallback default
  */
 export async function classifyTransaction({
   userId = '00000000-0000-0000-0000-000000000001',
@@ -102,7 +117,7 @@ export async function classifyTransaction({
   const cleanDesc = (description || '').trim();
   const searchString = `${cleanMerchant} ${cleanDesc}`.trim();
 
-  // Special check: Cash Withdrawal
+  // Special check: Cash Withdrawal (strictly protected against debits)
   if (isCashWithdrawalTransaction(cleanMerchant, cleanDesc)) {
     return {
       category: 'משיכת מזומן',
@@ -111,6 +126,41 @@ export async function classifyTransaction({
       isCashWithdrawal: true,
       needsAction: true,
     };
+  }
+
+  // --- CONFIDENCE-BASED HISTORICAL CHECK (85% THRESHOLD) ---
+  // If transactions under this merchant or description exist with conflicting categories,
+  // ensure that if dominant category / total < 0.85, it is routed to "ללא סיווג".
+  if (cleanMerchant && cleanMerchant !== 'בית עסק') {
+    try {
+      const distRes = await pool.query(
+        `SELECT category, COUNT(*)::INT as cnt
+         FROM transactions
+         WHERE (LOWER(merchant_name) = LOWER($1) OR LOWER(description) = LOWER($1))
+           AND category IS NOT NULL
+           AND category != 'ללא סיווג'
+         GROUP BY category
+         ORDER BY cnt DESC`,
+        [cleanMerchant]
+      );
+
+      const totalCategorized = distRes.rows.reduce((sum, r) => sum + r.cnt, 0);
+      if (totalCategorized >= 2) {
+        const dominantCount = distRes.rows[0].cnt;
+        const confidence = dominantCount / totalCategorized;
+        if (confidence < 0.85) {
+          return {
+            category: 'שונות',
+            subCategory: 'ללא סיווג',
+            source: 'uncertain_historical_confidence',
+            confidence,
+            isCashWithdrawal: false,
+          };
+        }
+      }
+    } catch (err) {
+      console.warn('[Classifier] Error checking historical confidence:', err.message);
+    }
   }
 
   // --- 1. USER RULES (Highest Priority) ---
@@ -216,6 +266,49 @@ export async function saveUserRule({
 }) {
   if (!merchantPattern || !category) return null;
   const cleanPattern = merchantPattern.trim();
+  const lowerPattern = cleanPattern.toLowerCase();
+
+  // Guard: generic bank debit/transfer patterns must NEVER be saved as cash withdrawal
+  if (
+    category === 'משיכת מזומן' &&
+    (lowerPattern.includes('כרטיס') ||
+      lowerPattern.includes('חיוב') ||
+      lowerPattern.includes('העברה') ||
+      lowerPattern.includes('מט״ח') ||
+      lowerPattern.includes('הוראת קבע'))
+  ) {
+    return null;
+  }
+
+  // Check confidence of this pattern across existing transactions
+  try {
+    const distRes = await pool.query(
+      `SELECT category, COUNT(*)::INT as cnt
+       FROM transactions
+       WHERE (LOWER(merchant_name) = LOWER($1) OR LOWER(description) = LOWER($1))
+         AND category IS NOT NULL
+         AND category != 'ללא סיווג'
+       GROUP BY category
+       ORDER BY cnt DESC`,
+      [cleanPattern]
+    );
+
+    const totalCategorized = distRes.rows.reduce((sum, r) => sum + r.cnt, 0);
+    if (totalCategorized >= 2) {
+      const dominantCount = distRes.rows[0].cnt;
+      const confidence = dominantCount / totalCategorized;
+      if (confidence < 0.85) {
+        // If confidence is below 85%, remove any rigid user rule for this pattern
+        await pool.query(
+          `DELETE FROM user_category_rules WHERE user_id = $1 AND LOWER(merchant_pattern) = LOWER($2)`,
+          [userId, cleanPattern]
+        );
+        return null;
+      }
+    }
+  } catch (err) {
+    console.warn('[Classifier] Confidence check warning in saveUserRule:', err.message);
+  }
 
   const query = `
     INSERT INTO user_category_rules (user_id, merchant_pattern, category, sub_category, match_type, updated_at)
@@ -231,6 +324,21 @@ export async function saveUserRule({
 
   const res = await pool.query(query, [userId, cleanPattern, category, subCategory || category, matchType]);
   return res.rows[0];
+}
+
+/**
+ * Cleans up corrupted rules that map credit card or debit patterns to cash withdrawal.
+ */
+export async function cleanupCorruptedRules() {
+  try {
+    await pool.query(`
+      DELETE FROM user_category_rules
+      WHERE (LOWER(merchant_pattern) LIKE '%כרטיס%' OR LOWER(merchant_pattern) LIKE '%חיוב%')
+        AND category = 'משיכת מזומן'
+    `);
+  } catch (e) {
+    console.warn('[Classifier] Cleanup corrupted rules error:', e.message);
+  }
 }
 
 /**

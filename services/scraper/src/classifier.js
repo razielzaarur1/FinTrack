@@ -50,6 +50,20 @@ export const ISRAELI_MERCHANTS_KB = [
 
 export function isCashWithdrawal(merchantName = '', description = '') {
   const text = `${merchantName} ${description}`.toLowerCase();
+  // Protect credit card charges, wire transfers, bank debits and fees from cash withdrawal detection
+  if (
+    text.includes('כרטיס אשראי') ||
+    text.includes('חיוב כרטיס') ||
+    text.includes('חיוב כרטיסי') ||
+    text.includes('העברה') ||
+    text.includes('העב.') ||
+    text.includes('הוראת קבע') ||
+    text.includes('עמלת') ||
+    text.includes('מט״ח') ||
+    text.includes('מטח')
+  ) {
+    return false;
+  }
   return (
     text.includes('משיכת מזומן') ||
     text.includes('משיכת מזומנים') ||
@@ -73,6 +87,32 @@ export async function classifyScrapedTx(client, {
 
   if (isCashWithdrawal(cleanMerchant, cleanDesc)) {
     return 'משיכת מזומן';
+  }
+
+  // Check historical confidence across transactions: if confidence < 85%, route to 'ללא סיווג'
+  if (cleanMerchant && cleanMerchant !== 'בית עסק' && client) {
+    try {
+      const distRes = await client.query(
+        `SELECT category, COUNT(*)::INT as cnt
+         FROM transactions
+         WHERE (LOWER(merchant_name) = LOWER($1) OR LOWER(description) = LOWER($1))
+           AND category IS NOT NULL
+           AND category != 'ללא סיווג'
+         GROUP BY category
+         ORDER BY cnt DESC`,
+        [cleanMerchant]
+      );
+      const totalCategorized = distRes.rows.reduce((sum, r) => sum + r.cnt, 0);
+      if (totalCategorized >= 2) {
+        const dominantCount = distRes.rows[0].cnt;
+        const confidence = dominantCount / totalCategorized;
+        if (confidence < 0.85) {
+          return 'ללא סיווג';
+        }
+      }
+    } catch {
+      // Ignore rule query errors during scrape
+    }
   }
 
   // 1. User rules
