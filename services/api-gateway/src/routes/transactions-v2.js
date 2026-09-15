@@ -59,16 +59,26 @@ export function cleanSpacedHebrew(str) {
   return cleaned.join(' ').replace(/\s+/g, ' ').trim();
 }
 
+/**
+ * Checks whether a transaction originates from the BIT payment service.
+ * Handles Hebrew prepositions (בביט, לביט, מביט, ב-bit), spaced characters (ב י ט, b i t),
+ * card descriptors (BIT*1234, BIT-PURCHASE), and excludes insurance/cancellation words (ביטוח, ביטול).
+ */
+export function isBitTransaction(merchantName, description, memo) {
+  const m = cleanSpacedHebrew(merchantName || '').trim();
+  const d = cleanSpacedHebrew(description || '').trim();
+  const mem = cleanSpacedHebrew(memo || '').trim();
+  const allText = [m, d, mem].filter(Boolean).join(' ');
+
+  return /(?:^|[^\w\u0590-\u05FF]|\s)(?:[בלמהכ]?-?bit|[בלמהכ]?-?ביט|b\s*i\s*t|ב\s*י\s*ט)(?:$|[^\w\u0590-\u05FF]|\s)/i.test(allText);
+}
+
 export function formatBitTransactionName(merchantName, description, memo) {
   const m = cleanSpacedHebrew(merchantName || '').trim();
   const d = cleanSpacedHebrew(description || '').trim();
   const mem = cleanSpacedHebrew(memo || '').trim();
 
-  const isBit = /(?:^|[\s\-_/])(?:bit|ביט)(?:$|[\s\-_/])/i.test(m) ||
-                /(?:^|[\s\-_/])(?:bit|ביט)(?:$|[\s\-_/])/i.test(d) ||
-                /(?:^|[\s\-_/])(?:bit|ביט)(?:$|[\s\-_/])/i.test(mem);
-
-  if (!isBit) return null;
+  if (!isBitTransaction(m, d, mem)) return null;
 
   const candidates = [d, mem, m];
   let detail = '';
@@ -76,24 +86,17 @@ export function formatBitTransactionName(merchantName, description, memo) {
   for (const str of candidates) {
     if (!str) continue;
     let cleaned = str
-      .replace(/(?:^|[\s\-_/])(?:bit|ביט|העברה בביט|חיוב ביט|תשלום בביט)(?:$|[\s\-_/])/gi, ' ')
+      .replace(/(?:העברה|העברת|חיוב|תשלום|זיכוי|משיכה|הוראת קבע)\s+(?:ב-?|ל-?|מ-?)?(?:bit|ביט)/gi, ' ')
+      .replace(/(?:^|[^\w\u0590-\u05FF]|\s)(?:[בלמהכ]?-?bit|[בלמהכ]?-?ביט|b\s*i\s*t|ב\s*י\s*ט)(?:$|[^\w\u0590-\u05FF]|\s)/gi, ' ')
+      .replace(/(?:^|[\s\-_/])(?:אל|לכבוד|עבור|מאת|מ-|ל-)\s*/gi, ' ')
       .replace(/\s+/g, ' ')
       .trim();
-    cleaned = cleaned.replace(/^[\s\-_:.]+|[\s\-_:.]+$/g, '').trim();
 
-    if (cleaned && !/^(בית עסק|העברה|חיוב|תשלום)$/.test(cleaned) && cleaned.length >= 2) {
+    cleaned = cleaned.replace(/^[\s\-_:.*#/]+|[\s\-_:.*#/]+$/g, '').trim();
+
+    if (cleaned && !/^(בית עסק|עסקאות באינטרנט|קניות באינטרנט|תשלום בנייד|העברה|חיוב|תשלום|זיכוי|משיכה)$/.test(cleaned) && cleaned.length >= 2) {
       detail = cleaned;
       break;
-    }
-  }
-
-  if (!detail) {
-    for (const str of candidates) {
-      const clean = (str || '').replace(/^[\s\-_:.]+|[\s\-_:.]+$/g, '').trim();
-      if (clean && !/^(bit|ביט|בית עסק)$/i.test(clean)) {
-        detail = clean;
-        break;
-      }
     }
   }
 
@@ -125,21 +128,34 @@ async function repair0AmountTransactions() {
 }
 
 let hasRepairedBit = false;
-async function repairBitTransactions() {
+export async function repairBitTransactions() {
   if (hasRepairedBit) return;
   try {
     const res = await pool.query(`
       SELECT id, merchant_name, description, raw_data
       FROM transactions
-      WHERE (LOWER(merchant_name) LIKE '%bit%' OR LOWER(merchant_name) LIKE '%ביט%' OR LOWER(description) LIKE '%bit%' OR LOWER(description) LIKE '%ביט%')
-        AND (merchant_name IN ('ביט', 'BIT', 'בית עסק') OR merchant_name ILIKE 'ביט%' OR merchant_name ILIKE 'bit%')
-      LIMIT 300
+      WHERE (
+        merchant_name ILIKE '%bit%'
+        OR merchant_name ILIKE '%ביט%'
+        OR merchant_name ILIKE '%בביט%'
+        OR description ILIKE '%bit%'
+        OR description ILIKE '%ביט%'
+        OR description ILIKE '%בביט%'
+        OR (raw_data->>'memo') ILIKE '%bit%'
+        OR (raw_data->>'memo') ILIKE '%ביט%'
+        OR (raw_data->>'description') ILIKE '%bit%'
+        OR (raw_data->>'description') ILIKE '%ביט%'
+      )
     `);
     for (const row of res.rows) {
       const rawMemo = row.raw_data?.memo;
-      const bitTitle = formatBitTransactionName(row.merchant_name, row.description, rawMemo);
-      if (bitTitle && bitTitle !== row.merchant_name) {
-        await pool.query('UPDATE transactions SET merchant_name = $1 WHERE id = $2', [bitTitle, row.id]);
+      const rawDesc = row.raw_data?.description;
+      const d = row.description || rawDesc || '';
+      if (isBitTransaction(row.merchant_name, d, rawMemo)) {
+        const bitTitle = formatBitTransactionName(row.merchant_name, d, rawMemo);
+        if (bitTitle && bitTitle !== row.merchant_name) {
+          await pool.query('UPDATE transactions SET merchant_name = $1 WHERE id = $2', [bitTitle, row.id]);
+        }
       }
     }
     hasRepairedBit = true;
@@ -557,11 +573,14 @@ export default async function transactionsV2Routes(fastify, options) {
 
       // If applyToSimilar is requested, apply category, userDescription, and isIgnored to matching transactions
       if (applyToSimilar) {
-        const origRes = await pool.query('SELECT merchant_name, description FROM transactions WHERE id = $1', [id]);
+        const origRes = await pool.query('SELECT id, merchant_name, description, raw_data FROM transactions WHERE id = $1', [id]);
         const origTx = origRes.rows[0];
         if (origTx) {
-          const mName = origTx.merchant_name?.trim();
-          const desc = origTx.description?.trim();
+          const rawMemo = origTx.raw_data?.memo;
+          const rawDesc = origTx.raw_data?.description;
+          const mName = cleanSpacedHebrew(origTx.merchant_name || '').trim();
+          const desc = cleanSpacedHebrew(origTx.description || rawDesc || '').trim();
+          const isCurrentBit = isBitTransaction(mName, desc, rawMemo);
 
           const similarSetClauses = [];
           const similarValues = [];
@@ -581,23 +600,59 @@ export default async function transactionsV2Routes(fastify, options) {
             similarSetClauses.push(`is_ignored = $${similarValues.length}`);
           }
 
-          let whereSql = '';
-          if (mName && mName !== 'בית עסק' && mName !== '') {
-            similarValues.push(mName);
-            whereSql = `TRIM(merchant_name) = TRIM($${similarValues.length})`;
-          } else if (desc && desc !== '') {
-            similarValues.push(desc);
-            whereSql = `TRIM(description) = TRIM($${similarValues.length})`;
-          }
+          if (similarSetClauses.length > 0) {
+            if (isCurrentBit) {
+              const currentBitTitle = formatBitTransactionName(mName, desc, rawMemo);
+              const currentDetail = currentBitTitle && currentBitTitle.startsWith('bit ')
+                ? currentBitTitle.slice(4).trim()
+                : '';
 
-          if (whereSql && similarSetClauses.length > 0) {
-            const bulkQuery = `
-              UPDATE transactions
-              SET ${similarSetClauses.join(', ')}
-              WHERE ${whereSql}
-            `;
-            const bulkRes = await pool.query(bulkQuery, similarValues);
-            updatedSimilarCount = bulkRes.rowCount || 0;
+              if (currentDetail) {
+                // Apply to BIT transactions containing this same contact name
+                similarValues.push(`%${currentDetail}%`);
+                const bulkQuery = `
+                  UPDATE transactions
+                  SET ${similarSetClauses.join(', ')}
+                  WHERE (
+                    (merchant_name ILIKE $${similarValues.length} OR description ILIKE $${similarValues.length} OR (raw_data->>'memo') ILIKE $${similarValues.length})
+                    AND (merchant_name ILIKE '%bit%' OR merchant_name ILIKE '%ביט%' OR merchant_name ILIKE '%בביט%' OR description ILIKE '%bit%' OR description ILIKE '%ביט%')
+                  )
+                `;
+                const bulkRes = await pool.query(bulkQuery, similarValues);
+                updatedSimilarCount = bulkRes.rowCount || 0;
+              } else {
+                // Apply to all BIT transactions
+                const bulkQuery = `
+                  UPDATE transactions
+                  SET ${similarSetClauses.join(', ')}
+                  WHERE (
+                    merchant_name ILIKE 'bit%' OR merchant_name ILIKE 'ביט%' OR merchant_name ILIKE '% בביט%' OR merchant_name ILIKE '%בביט%'
+                    OR description ILIKE '%ביט%' OR description ILIKE '%bit%'
+                  )
+                `;
+                const bulkRes = await pool.query(bulkQuery, similarValues);
+                updatedSimilarCount = bulkRes.rowCount || 0;
+              }
+            } else {
+              let whereSql = '';
+              if (mName && mName !== 'בית עסק' && mName !== '') {
+                similarValues.push(mName);
+                whereSql = `TRIM(merchant_name) = TRIM($${similarValues.length})`;
+              } else if (desc && desc !== '') {
+                similarValues.push(desc);
+                whereSql = `TRIM(description) = TRIM($${similarValues.length})`;
+              }
+
+              if (whereSql) {
+                const bulkQuery = `
+                  UPDATE transactions
+                  SET ${similarSetClauses.join(', ')}
+                  WHERE ${whereSql}
+                `;
+                const bulkRes = await pool.query(bulkQuery, similarValues);
+                updatedSimilarCount = bulkRes.rowCount || 0;
+              }
+            }
           }
         }
       }
@@ -618,27 +673,21 @@ export default async function transactionsV2Routes(fastify, options) {
 
       // Auto-learn user categorization rule if category was updated
       if (category) {
-        pool.query('SELECT merchant_name, description FROM transactions WHERE id = $1', [id])
-          .then((res) => {
-            const m = res.rows[0]?.merchant_name;
-            const d = res.rows[0]?.description;
-            const pattern = (m && m.trim() && m !== 'בית עסק') ? m.trim() : (d ? d.trim() : null);
-            if (pattern) {
-              saveUserRule({
-                userId: '00000000-0000-0000-0000-000000000001',
-                merchantPattern: pattern,
-                category: category,
-                matchType: 'exact',
-              }).catch(() => {});
-            }
-          })
-          .catch(() => {});
+        const tx = result.rows[0];
+        const m = tx.merchantName?.trim();
+        if (m && m !== 'בית עסק' && m !== 'ללא תיאור' && !m.startsWith('bit ')) {
+          saveUserRule({
+            userId: '00000000-0000-0000-0000-000000000001',
+            merchantPattern: m,
+            category: category,
+            matchType: 'exact',
+          }).catch(() => {});
+        }
       }
 
-      return reply.code(200).send({ 
-        success: true, 
+      return reply.code(200).send({
         data: result.rows[0],
-        updatedSimilarCount: Math.max(updatedSimilarCount, 1)
+        updatedSimilarCount,
       });
     } catch (err) {
       fastify.log.error(err, 'Failed to update transaction');
@@ -646,17 +695,91 @@ export default async function transactionsV2Routes(fastify, options) {
     }
   });
 
-  // GET /api/v2/transactions/:id/similar - List similar transactions sharing merchant name
+  // GET /api/v2/transactions/:id/similar - List similar transactions sharing merchant name or BIT
   fastify.get('/:id/similar', async (request, reply) => {
     const { id } = request.params;
     try {
-      const origRes = await pool.query('SELECT merchant_name, description FROM transactions WHERE id = $1', [id]);
+      const origRes = await pool.query(
+        'SELECT id, merchant_name, description, raw_data FROM transactions WHERE id = $1',
+        [id]
+      );
       if (origRes.rows.length === 0) {
         return reply.code(404).send({ error: 'Transaction not found' });
       }
-      const { merchant_name, description } = origRes.rows[0];
-      const m = merchant_name?.trim();
-      const searchMerchant = (m && m !== 'בית עסק') ? m : null;
+      const origTx = origRes.rows[0];
+      const rawMemo = origTx.raw_data?.memo;
+      const rawDesc = origTx.raw_data?.description;
+      const m = cleanSpacedHebrew(origTx.merchant_name || '').trim();
+      const d = cleanSpacedHebrew(origTx.description || rawDesc || '').trim();
+      const mem = cleanSpacedHebrew(rawMemo || '').trim();
+
+      const isCurrentBit = isBitTransaction(m, d, mem);
+
+      if (isCurrentBit) {
+        // Find ALL other BIT transactions in the system!
+        const res = await pool.query(
+          `SELECT t.id, t.date, t.amount, t.category, t.merchant_name AS "merchantName", t.description, t.user_description AS "userDescription",
+                  t.raw_data AS "rawData",
+                  b.display_name AS "accountDisplayName", b.bank_company AS "bankCompany"
+           FROM transactions t
+           JOIN bank_accounts b ON t.account_id = b.id
+           WHERE t.id != $1
+             AND (
+               t.merchant_name ILIKE '%bit%'
+               OR t.merchant_name ILIKE '%ביט%'
+               OR t.merchant_name ILIKE '%בביט%'
+               OR t.description ILIKE '%bit%'
+               OR t.description ILIKE '%ביט%'
+               OR t.description ILIKE '%בביט%'
+               OR (t.raw_data->>'memo') ILIKE '%bit%'
+               OR (t.raw_data->>'memo') ILIKE '%ביט%'
+               OR (t.raw_data->>'description') ILIKE '%bit%'
+               OR (t.raw_data->>'description') ILIKE '%ביט%'
+             )
+           ORDER BY t.date DESC
+           LIMIT 200`,
+          [id]
+        );
+
+        const currentBitTitle = formatBitTransactionName(m, d, mem);
+        const currentDetail = currentBitTitle && currentBitTitle.startsWith('bit ')
+          ? currentBitTitle.slice(4).trim().toLowerCase()
+          : '';
+
+        const data = res.rows
+          .filter((r) => isBitTransaction(r.merchantName, r.description, r.rawData?.memo))
+          .map((r) => {
+            let mName = cleanSpacedHebrew(r.merchantName);
+            const desc = cleanSpacedHebrew(r.description);
+            const itemMemo = r.rawData?.memo;
+            const bitTitle = formatBitTransactionName(mName, desc, itemMemo);
+            if (bitTitle && (!r.userDescription || !r.userDescription.trim())) {
+              mName = bitTitle;
+            }
+            return {
+              ...r,
+              merchantName: mName,
+              description: desc,
+              userDescription: cleanSpacedHebrew(r.userDescription),
+            };
+          })
+          .sort((a, b) => {
+            if (currentDetail) {
+              const aName = (a.merchantName || '').toLowerCase();
+              const bName = (b.merchantName || '').toLowerCase();
+              const aMatches = aName.includes(currentDetail);
+              const bMatches = bName.includes(currentDetail);
+              if (aMatches && !bMatches) return -1;
+              if (!aMatches && bMatches) return 1;
+            }
+            return new Date(b.date).getTime() - new Date(a.date).getTime();
+          });
+
+        return reply.code(200).send({ data, total: data.length });
+      }
+
+      // Non-BIT normal merchant lookup
+      const searchMerchant = (m && m !== 'בית עסק') ? m : (d && d !== '' ? d : null);
       if (!searchMerchant) {
         return reply.code(200).send({ data: [], total: 0 });
       }
@@ -667,7 +790,10 @@ export default async function transactionsV2Routes(fastify, options) {
          FROM transactions t
          JOIN bank_accounts b ON t.account_id = b.id
          WHERE t.id != $1
-           AND TRIM(t.merchant_name) = TRIM($2)
+           AND (
+             TRIM(t.merchant_name) = TRIM($2)
+             OR (t.merchant_name IS NOT NULL AND TRIM(t.merchant_name) != 'בית עסק' AND TRIM(t.merchant_name) != '' AND TRIM(t.merchant_name) ILIKE TRIM($2))
+           )
          ORDER BY t.date DESC
          LIMIT 50`,
         [id, searchMerchant]

@@ -157,6 +157,21 @@ export function cleanSpacedHebrew(str) {
 }
 
 /**
+/**
+ * Checks whether a transaction originates from the BIT payment service.
+ * Handles Hebrew prepositions (בביט, לביט, מביט, ב-bit), spaced characters (ב י ט, b i t),
+ * card descriptors (BIT*1234, BIT-PURCHASE), and excludes insurance/cancellation words (ביטוח, ביטול).
+ */
+export function isBitTransaction(merchantName, description, memo) {
+  const m = cleanSpacedHebrew(merchantName || '').trim();
+  const d = cleanSpacedHebrew(description || '').trim();
+  const mem = cleanSpacedHebrew(memo || '').trim();
+  const allText = [m, d, mem].filter(Boolean).join(' ');
+
+  return /(?:^|[^\w\u0590-\u05FF]|\s)(?:[בלמהכ]?-?bit|[בלמהכ]?-?ביט|b\s*i\s*t|ב\s*י\s*ט)(?:$|[^\w\u0590-\u05FF]|\s)/i.test(allText);
+}
+
+/**
  * Detects if a transaction is from BIT and formats its display name:
  * "bit [original transaction description or memo]"
  */
@@ -165,11 +180,7 @@ export function formatBitTransactionName(merchantName, description, memo) {
   const d = cleanSpacedHebrew(description || '').trim();
   const mem = cleanSpacedHebrew(memo || '').trim();
 
-  const isBit = /(?:^|[\s\-_/])(?:bit|ביט)(?:$|[\s\-_/])/i.test(m) ||
-                /(?:^|[\s\-_/])(?:bit|ביט)(?:$|[\s\-_/])/i.test(d) ||
-                /(?:^|[\s\-_/])(?:bit|ביט)(?:$|[\s\-_/])/i.test(mem);
-
-  if (!isBit) return null;
+  if (!isBitTransaction(m, d, mem)) return null;
 
   const candidates = [d, mem, m];
   let detail = '';
@@ -177,24 +188,17 @@ export function formatBitTransactionName(merchantName, description, memo) {
   for (const str of candidates) {
     if (!str) continue;
     let cleaned = str
-      .replace(/(?:^|[\s\-_/])(?:bit|ביט|העברה בביט|חיוב ביט|תשלום בביט)(?:$|[\s\-_/])/gi, ' ')
+      .replace(/(?:העברה|העברת|חיוב|תשלום|זיכוי|משיכה|הוראת קבע)\s+(?:ב-?|ל-?|מ-?)?(?:bit|ביט)/gi, ' ')
+      .replace(/(?:^|[^\w\u0590-\u05FF]|\s)(?:[בלמהכ]?-?bit|[בלמהכ]?-?ביט|b\s*i\s*t|ב\s*י\s*ט)(?:$|[^\w\u0590-\u05FF]|\s)/gi, ' ')
+      .replace(/(?:^|[\s\-_/])(?:אל|לכבוד|עבור|מאת|מ-|ל-)\s*/gi, ' ')
       .replace(/\s+/g, ' ')
       .trim();
-    cleaned = cleaned.replace(/^[\s\-_:.]+|[\s\-_:.]+$/g, '').trim();
 
-    if (cleaned && !/^(בית עסק|העברה|חיוב|תשלום)$/.test(cleaned) && cleaned.length >= 2) {
+    cleaned = cleaned.replace(/^[\s\-_:.*#/]+|[\s\-_:.*#/]+$/g, '').trim();
+
+    if (cleaned && !/^(בית עסק|עסקאות באינטרנט|קניות באינטרנט|תשלום בנייד|העברה|חיוב|תשלום|זיכוי|משיכה)$/.test(cleaned) && cleaned.length >= 2) {
       detail = cleaned;
       break;
-    }
-  }
-
-  if (!detail) {
-    for (const str of candidates) {
-      const clean = (str || '').replace(/^[\s\-_:.]+|[\s\-_:.]+$/g, '').trim();
-      if (clean && !/^(bit|ביט|בית עסק)$/i.test(clean)) {
-        detail = clean;
-        break;
-      }
     }
   }
 

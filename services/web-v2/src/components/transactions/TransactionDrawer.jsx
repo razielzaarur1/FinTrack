@@ -24,9 +24,7 @@ import {
   CheckCircle2,
   RefreshCw
 } from 'lucide-react';
-import { api } from '@/lib/api';
-import { formatILS, formatDate, cleanSpacedHebrew, getTransactionTitle } from '@/lib/formatters';
-import { useApp } from '@/lib/app-context';
+import { formatILS, formatDate, cleanSpacedHebrew, getTransactionTitle, isBitTransaction } from '@/lib/formatters';
 import CategoryBadge from '@/components/common/CategoryBadge';
 import CategoryPicker from '@/components/common/CategoryPicker';
 import { CATEGORIES_DATA } from '@/lib/categories';
@@ -829,19 +827,25 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
           {/* 5. Dedicated Similar Transactions Tab */}
           {activeTab === 'similar' && (
             <div className="space-y-4">
-              <div className="p-3.5 rounded-xl border border-dark-border/70 light:border-light-border/70 bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40 text-xs space-y-1">
-                <div className="font-semibold text-dark-text light:text-light-text flex items-center gap-1.5">
-                  <Layers className="w-4 h-4 text-brand-primary" />
-                  <span>תנועות נוספות עבור אותו בית עסק</span>
-                </div>
-                <div className="text-dark-text-muted light:text-light-text-muted">
-                  בית עסק:{' '}
-                  <span className="font-bold text-dark-text light:text-light-text">
-                    {cleanSpacedHebrew(activeTx.merchantName || activeTx.description || 'ללא שם')}
-                  </span>{' '}
-                  ({similarTxs.length} תנועות נוספות במערכת)
-                </div>
-              </div>
+              {(() => {
+                const isBit = isBitTransaction(activeTx.merchantName, activeTx.description, activeTx.rawData?.memo || activeTx.memo);
+                const title = getTransactionTitle(activeTx);
+                return (
+                  <div className="p-3.5 rounded-xl border border-dark-border/70 light:border-light-border/70 bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40 text-xs space-y-1">
+                    <div className="font-semibold text-dark-text light:text-light-text flex items-center gap-1.5">
+                      <Layers className="w-4 h-4 text-brand-primary" />
+                      <span>{isBit ? 'תנועות ביט (bit) נוספות במערכת' : 'תנועות נוספות עבור אותו בית עסק'}</span>
+                    </div>
+                    <div className="text-dark-text-muted light:text-light-text-muted">
+                      {isBit ? 'עסקת ביט:' : 'בית עסק:'}{' '}
+                      <span className="font-bold text-dark-text light:text-light-text">
+                        {cleanSpacedHebrew(title)}
+                      </span>{' '}
+                      ({similarTxs.length} תנועות {isBit ? 'ביט ' : ''}נוספות במערכת)
+                    </div>
+                  </div>
+                );
+              })()}
 
               {loadingSimilar ? (
                 <div className="py-16 text-center text-xs text-dark-text-muted flex flex-col items-center justify-center gap-2">
@@ -853,7 +857,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
                   <Layers className="w-8 h-8 mx-auto text-dark-text-muted/40 mb-2" />
                   <div className="font-semibold">לא נמצאו תנועות נוספות עבור בית עסק זה</div>
                   <div className="text-[11px] text-dark-text-muted mt-1">
-                    כל התנועות של אותו בית עסק יוצגו כאן.
+                    כל התנועות הדומות יוצגו כאן.
                   </div>
                 </div>
               ) : (
@@ -876,7 +880,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
                           <CategoryBadge category={stx.category} size={18} />
                           <div className="min-w-0 flex-1">
                             <div className="font-bold text-dark-text light:text-light-text truncate group-hover:text-brand-primary transition-colors">
-                              {cleanSpacedHebrew(stx.userDescription || stx.merchantName || stx.description || 'ללא תיאור')}
+                              {cleanSpacedHebrew(stx.userDescription || getTransactionTitle(stx))}
                             </div>
                             <div className="text-[11px] text-dark-text-muted light:text-light-text-muted flex items-center gap-2 mt-0.5">
                               <span className="font-mono">{formatDate(stx.date, lang)}</span>

@@ -18,7 +18,7 @@ import {
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, PieChart, Pie, Cell } from 'recharts';
 import { useApp } from '@/lib/app-context';
 import { api } from '@/lib/api';
-import { formatILS, formatDate, cleanSpacedHebrew } from '@/lib/formatters';
+import { formatILS, formatDate, cleanSpacedHebrew, getTransactionTitle } from '@/lib/formatters';
 import { getInstitutionById } from '@/lib/institutions';
 import InstitutionLogo from '@/components/common/InstitutionLogo';
 import CategoryBadge from '@/components/common/CategoryBadge';
@@ -313,7 +313,7 @@ export default function DashboardPage() {
               <div className="space-y-3">
                 {recentTx.map((tx) => {
                   const isPositive = parseFloat(tx.amount) > 0;
-                  const merchantTitle = cleanSpacedHebrew(tx.userDescription || tx.merchantName || tx.description);
+                  const merchantTitle = cleanSpacedHebrew(getTransactionTitle(tx));
                   const subDescription = tx.description && tx.description !== (tx.userDescription || tx.merchantName) ? cleanSpacedHebrew(tx.description) : null;
 
                   return (
