@@ -693,37 +693,83 @@ export default async function accountsRoutes(fastify, options) {
   });
 
   // ──────────────────────────────────────────────────────────────────────────
-  // DELETE /accounts/:id - Soft delete account (is_active = false)
+  // DELETE /accounts/:id - Permanently delete account and all its transactions
   // ──────────────────────────────────────────────────────────────────────────
   fastify.delete('/:id', async (request, reply) => {
     const { id } = request.params;
+    const client = await pool.connect();
 
     try {
-      const result = await pool.query(
-        `UPDATE bank_accounts
-         SET is_active = false
-         WHERE id = $1 AND user_id = $2
-         RETURNING id, user_id, bank_company, display_name, is_active`,
+      await client.query('BEGIN');
+
+      // Check if account exists
+      const accCheck = await client.query(
+        `SELECT id, display_name, bank_company FROM bank_accounts WHERE id = $1 AND user_id = $2`,
         [id, DEFAULT_USER_ID]
       );
 
-      if (result.rowCount === 0) {
+      if (accCheck.rowCount === 0) {
+        await client.query('ROLLBACK');
         return reply.status(404).send({ success: false, error: 'Account not found' });
       }
 
+      const account = accCheck.rows[0];
+
+      // 1. Gather all transaction IDs for this account
+      const txRows = await client.query(
+        `SELECT id FROM transactions WHERE account_id = $1`,
+        [id]
+      );
+      const txIds = txRows.rows.map((r) => r.id);
+
+      if (txIds.length > 0) {
+        // Delete splits for these transactions
+        await client.query(
+          `DELETE FROM transaction_splits WHERE transaction_id = ANY($1)`,
+          [txIds]
+        );
+        // Delete links involving these transactions
+        await client.query(
+          `DELETE FROM transaction_links WHERE transaction_id_a = ANY($1) OR transaction_id_b = ANY($1)`,
+          [txIds]
+        );
+        // Delete notes
+        await client.query(
+          `DELETE FROM transaction_notes WHERE transaction_id = ANY($1)`,
+          [txIds]
+        );
+        // Delete the transactions themselves
+        await client.query(
+          `DELETE FROM transactions WHERE account_id = $1`,
+          [id]
+        );
+      }
+
+      // 2. Delete the bank account
+      await client.query(
+        `DELETE FROM bank_accounts WHERE id = $1 AND user_id = $2`,
+        [id, DEFAULT_USER_ID]
+      );
+
+      await client.query('COMMIT');
+
       return reply.status(200).send({
         success: true,
-        message: 'Account deactivated successfully',
-        account: result.rows[0],
+        message: 'Account and all its transactions deleted successfully',
+        deletedTransactionsCount: txIds.length,
+        account,
       });
     } catch (err) {
-      fastify.log.error(err, 'Failed to delete account');
+      await client.query('ROLLBACK');
+      fastify.log.error(err, 'Failed to delete account and associated transactions');
       return reply.status(500).send({
         success: false,
-        stage: 'DB_DELETE',
+        stage: 'DB_DELETE_ACCOUNT_CASCADE',
         error: err.message,
         sqlCode: err.code,
       });
+    } finally {
+      client.release();
     }
   });
 }

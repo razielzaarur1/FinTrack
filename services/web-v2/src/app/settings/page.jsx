@@ -15,7 +15,8 @@ import {
   Sparkles,
   X,
   Layers,
-  Edit2
+  Edit2,
+  AlertTriangle
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useApp } from '@/lib/app-context';
@@ -27,6 +28,13 @@ export default function SettingsPage() {
   const { lang, t, theme, toggleTheme, toggleLanguage } = useApp();
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  // Danger Zone State
+  const [dangerAction, setDangerAction] = useState(null); // 'transactions' | 'all_data' | null
+  const [dangerInput, setDangerInput] = useState('');
+  const [dangerLoading, setDangerLoading] = useState(false);
+  const [dangerError, setDangerError] = useState('');
+  const [dangerSuccess, setDangerSuccess] = useState('');
 
   // Scraping range settings
   const [scrapeDaysBack, setScrapeDaysBack] = useState(30);
@@ -269,6 +277,57 @@ export default function SettingsPage() {
       }
     } finally {
       setReclassifying(false);
+    }
+  };
+
+  // Danger Zone Actions Execution
+  const handleExecuteDangerAction = async () => {
+    if (dangerAction === 'transactions') {
+      const expected = lang === 'he' ? 'מחק תנועות' : 'DELETE';
+      if (dangerInput.trim() !== expected && dangerInput.trim() !== 'DELETE') {
+        setDangerError(lang === 'he' ? 'יש להקליד במדויק: ' + expected : 'Please type exactly: ' + expected);
+        return;
+      }
+
+      setDangerLoading(true);
+      setDangerError('');
+      try {
+        await api.deleteAllTransactions();
+        setDangerSuccess(lang === 'he' ? 'כל התנועות נמחקו בהצלחה!' : 'All transactions deleted successfully!');
+        window.dispatchEvent(new CustomEvent('fintrack_tx_updated'));
+        setTimeout(() => {
+          setDangerAction(null);
+          setDangerSuccess('');
+          setDangerInput('');
+        }, 1600);
+      } catch (err) {
+        console.error('Failed to delete all transactions:', err);
+        setDangerError(lang === 'he' ? 'שגיאה במחיקת התנועות' : 'Failed to delete transactions');
+      } finally {
+        setDangerLoading(false);
+      }
+    } else if (dangerAction === 'all_data') {
+      const expected = lang === 'he' ? 'איפוס מלא' : 'WIPE ALL';
+      if (dangerInput.trim() !== expected && dangerInput.trim() !== 'WIPE ALL') {
+        setDangerError(lang === 'he' ? 'יש להקליד במדויק: ' + expected : 'Please type exactly: ' + expected);
+        return;
+      }
+
+      setDangerLoading(true);
+      setDangerError('');
+      try {
+        await api.deleteAllData();
+        setDangerSuccess(lang === 'he' ? 'המערכת אופסה לחלוטין וכל הנתונים נמחקו!' : 'System reset and all data wiped successfully!');
+        window.dispatchEvent(new CustomEvent('fintrack_tx_updated'));
+        setTimeout(() => {
+          window.location.href = '/';
+        }, 1600);
+      } catch (err) {
+        console.error('Failed to wipe system data:', err);
+        setDangerError(lang === 'he' ? 'שגיאה באיפוס המערכת' : 'Failed to wipe system data');
+      } finally {
+        setDangerLoading(false);
+      }
     }
   };
 
@@ -647,6 +706,79 @@ export default function SettingsPage() {
         </div>
       </div>
 
+      {/* Danger Zone: Data Management & Reset */}
+      <div className="p-6 rounded-2xl border border-red-500/30 bg-red-500/5 light:bg-red-50/50 space-y-5">
+        <div>
+          <h3 className="font-bold text-lg flex items-center gap-2 text-red-500">
+            <AlertTriangle className="w-5 h-5" />
+            <span>{lang === 'he' ? 'אזור פעולות רגישות (Danger Zone)' : 'Danger Zone'}</span>
+          </h3>
+          <p className="text-xs text-dark-text-muted light:text-light-text-muted mt-0.5">
+            {lang === 'he'
+              ? 'פעולות בלתי הפיכות למחיקת תנועות או איפוס מלא של נתוני המערכת'
+              : 'Irreversible operations to clear transactions or perform a full factory reset'}
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+          {/* Option 1: Delete All Transactions */}
+          <div className="p-4 rounded-xl border border-red-500/20 bg-dark-surface light:bg-light-surface flex flex-col justify-between gap-4">
+            <div className="space-y-1.5">
+              <div className="font-bold text-sm text-dark-text light:text-light-text flex items-center gap-2">
+                <Trash2 className="w-4 h-4 text-amber-500" />
+                <span>{lang === 'he' ? 'מחיקת כל התנועות' : 'Delete All Transactions'}</span>
+              </div>
+              <p className="text-dark-text-muted light:text-light-text-muted text-[11px] leading-relaxed">
+                {lang === 'he'
+                  ? 'מוחק את כל היסטוריית התנועות, הפיצולים, הקישורים וההערות. החשבונות המחוברים והקטגוריות יישמרו (אידיאלי לסנכרון מחדש).'
+                  : 'Permanently deletes all transactions, splits, links, and notes. Connected accounts and category rules will be preserved.'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setDangerAction('transactions');
+                setDangerInput('');
+                setDangerError('');
+                setDangerSuccess('');
+              }}
+              className="w-full py-2.5 px-4 rounded-xl border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 font-bold text-xs transition-colors flex items-center justify-center gap-2"
+            >
+              <Trash2 className="w-4 h-4" />
+              <span>{lang === 'he' ? 'מחק את כל התנועות' : 'Delete All Transactions'}</span>
+            </button>
+          </div>
+
+          {/* Option 2: Factory Reset / Wipe All Data */}
+          <div className="p-4 rounded-xl border border-red-500/30 bg-dark-surface light:bg-light-surface flex flex-col justify-between gap-4">
+            <div className="space-y-1.5">
+              <div className="font-bold text-sm text-red-500 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4" />
+                <span>{lang === 'he' ? 'איפוס מלא ומחיקת כל הנתונים' : 'Factory Reset / Wipe All Data'}</span>
+              </div>
+              <p className="text-dark-text-muted light:text-light-text-muted text-[11px] leading-relaxed">
+                {lang === 'he'
+                  ? 'מחיקה מוחלטת ובלתי הפיכה של כל החשבונות, פרטי ההתחברות, התנועות, הקטגוריות המותאמות, התקציבים והיעדים. החזרה למצב נקי לחלוטין.'
+                  : 'Permanently wipes all accounts, credentials, transactions, custom categories, budgets, and goals. Returns to a blank slate.'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setDangerAction('all_data');
+                setDangerInput('');
+                setDangerError('');
+                setDangerSuccess('');
+              }}
+              className="w-full py-2.5 px-4 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-xs transition-colors shadow-sm flex items-center justify-center gap-2"
+            >
+              <AlertTriangle className="w-4 h-4" />
+              <span>{lang === 'he' ? 'אפס מערכת ומחק הכל' : 'Factory Reset & Wipe All'}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
       {/* Add / Edit Category & SVG Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
@@ -788,6 +920,88 @@ export default function SettingsPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Danger Action Confirmation Modal */}
+      {dangerAction && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-md bg-dark-surface light:bg-light-surface border border-red-500/40 rounded-2xl p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold flex items-center gap-2 text-red-500">
+                <AlertTriangle className="w-5 h-5" />
+                <span>
+                  {dangerAction === 'transactions'
+                    ? (lang === 'he' ? 'אישור מחיקת כל התנועות' : 'Confirm Delete All Transactions')
+                    : (lang === 'he' ? 'אישור איפוס מלא ומחיקת הכל' : 'Confirm Factory Reset')}
+                </span>
+              </h3>
+              <button
+                onClick={() => { setDangerAction(null); setDangerInput(''); setDangerError(''); }}
+                disabled={dangerLoading}
+                className="p-1 rounded-lg hover:bg-dark-surface-elevated text-dark-text-muted"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-dark-text-muted light:text-light-text-muted leading-relaxed">
+              {dangerAction === 'transactions'
+                ? (lang === 'he'
+                    ? 'פעולה זו תמחק לצמיתות את כל התנועות והעסקאות מכל החשבונות. החשבונות עצמם יישארו מחוברים (אידיאלי לסנכרון היסטוריה מחדש).'
+                    : 'This will permanently delete all transactions across all accounts. Connected accounts will remain.')
+                : (lang === 'he'
+                    ? 'אזהרה חמורה: פעולה זו תמחק לצמיתות את כל החשבונות, פרטי ההתחברות, העסקאות, התקציבים, היעדים והחוקים. המערכת תחזור למצב נקי לחלוטין. לא ניתן לשחזר את המידע!'
+                    : 'CRITICAL WARNING: This will permanently delete all accounts, credentials, transactions, budgets, goals, and rules. This cannot be undone!')}
+            </p>
+
+            <div className="p-3.5 rounded-xl bg-red-500/10 border border-red-500/30 text-xs space-y-2">
+              <div className="font-semibold text-red-400">
+                {lang === 'he'
+                  ? `כדי לאשר, הקלד "${dangerAction === 'transactions' ? 'מחק תנועות' : 'איפוס מלא'}" למטה:`
+                  : `To confirm, type "${dangerAction === 'transactions' ? 'DELETE' : 'WIPE ALL'}" below:`}
+              </div>
+              <input
+                type="text"
+                value={dangerInput}
+                onChange={(e) => { setDangerInput(e.target.value); setDangerError(''); }}
+                placeholder={dangerAction === 'transactions' ? (lang === 'he' ? 'מחק תנועות' : 'DELETE') : (lang === 'he' ? 'איפוס מלא' : 'WIPE ALL')}
+                disabled={dangerLoading}
+                className="w-full p-2.5 rounded-lg border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text text-xs font-semibold focus:border-red-500 focus:outline-none"
+                autoFocus
+              />
+            </div>
+
+            {dangerError && (
+              <div className="text-xs text-red-500 font-semibold">{dangerError}</div>
+            )}
+
+            {dangerSuccess && (
+              <div className="text-xs text-brand-income font-semibold flex items-center gap-1.5">
+                <Check className="w-4 h-4" />
+                <span>{dangerSuccess}</span>
+              </div>
+            )}
+
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => { setDangerAction(null); setDangerInput(''); setDangerError(''); }}
+                disabled={dangerLoading}
+                className="flex-1 py-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text text-xs font-medium hover:bg-dark-surface-elevated transition-colors"
+              >
+                {lang === 'he' ? 'ביטול' : 'Cancel'}
+              </button>
+              <button
+                type="button"
+                onClick={handleExecuteDangerAction}
+                disabled={dangerLoading || !dangerInput.trim()}
+                className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold disabled:opacity-50 transition-colors shadow-sm"
+              >
+                {dangerLoading ? (lang === 'he' ? 'מוחק...' : 'Deleting...') : (lang === 'he' ? 'אשר מחיקה לצמיתות' : 'Confirm Delete')}
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -385,9 +385,21 @@ export default function AccountsPage() {
   };
 
   const handleDeleteAccount = async (id) => {
-    if (!confirm(lang === 'he' ? 'האם להסיר חשבון זה?' : 'Are you sure you want to remove this account?')) return;
-    await api.deleteAccount(id);
-    setAccounts(accounts.filter((a) => a.id !== id));
+    const acc = accounts.find((a) => a.id === id);
+    const accName = acc?.displayName || acc?.display_name || acc?.company || (lang === 'he' ? 'חשבון זה' : 'this account');
+    const confirmMsg = lang === 'he'
+      ? `האם אתה בטוח שברצונך למחוק את "${accName}"?\nפעולה זו תמחק לצמיתות את החשבון ואת כל התנועות שלו!`
+      : `Are you sure you want to delete "${accName}"?\nThis will permanently delete the account and all of its transactions!`;
+    if (!confirm(confirmMsg)) return;
+
+    try {
+      await api.deleteAccount(id);
+      setAccounts(accounts.filter((a) => a.id !== id));
+      window.dispatchEvent(new CustomEvent('fintrack_tx_updated'));
+    } catch (err) {
+      console.error('Failed to delete account:', err);
+      alert(lang === 'he' ? 'שגיאה במחיקת החשבון' : 'Failed to delete account');
+    }
   };
 
   const handleOpenModal = () => {

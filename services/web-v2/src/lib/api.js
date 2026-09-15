@@ -202,9 +202,11 @@ export const api = {
   updateGoal: (id, data) => request(`/api/goals/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteGoal: (id) => request(`/api/goals/${id}`, { method: 'DELETE' }),
 
-  // System Settings
+  // System Settings & Danger Zone
   getSystemSettings: () => request('/api/system/settings'),
   updateSystemSettings: (settings) => request('/api/system/settings', { method: 'PUT', body: JSON.stringify({ settings }) }),
+  deleteAllTransactions: () => request('/api/system/transactions', { method: 'DELETE' }),
+  deleteAllData: () => request('/api/system/data', { method: 'DELETE' }),
 
   // Scraper Trigger
   triggerScrape: (accountId = null, daysBack = null) =>
@@ -213,3 +215,4 @@ export const api = {
       body: JSON.stringify({ accountId, ...(daysBack ? { daysBack } : {}) }),
     }),
 };
+

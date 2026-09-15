@@ -241,4 +241,102 @@ export default async function systemRoutes(fastify, options) {
       alreadyUnsealed: true,
     });
   });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // DELETE /transactions - Delete ALL transactions, splits, links, notes
+  // ──────────────────────────────────────────────────────────────────────────
+  fastify.delete('/transactions', async (request, reply) => {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // 1. Delete all splits, links, notes
+      await client.query('DELETE FROM transaction_splits');
+      await client.query('DELETE FROM transaction_links');
+      await client.query('DELETE FROM transaction_notes');
+
+      // 2. Delete all transactions
+      const txResult = await client.query('DELETE FROM transactions');
+
+      // 3. Reset balances & scraping status on bank_accounts
+      await client.query(
+        `UPDATE bank_accounts
+         SET balance = 0.00,
+             last_scraped_at = NULL,
+             last_scrape_error = NULL
+         WHERE user_id = $1`,
+        [DEFAULT_USER_ID]
+      );
+
+      await client.query('COMMIT');
+
+      return reply.status(200).send({
+        success: true,
+        message: 'All transactions deleted successfully',
+        deletedTransactionsCount: txResult.rowCount,
+      });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      fastify.log.error(err, 'Failed to delete all transactions');
+      return reply.status(500).send({
+        success: false,
+        stage: 'DB_DELETE_ALL_TRANSACTIONS',
+        error: err.message,
+      });
+    } finally {
+      client.release();
+    }
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // DELETE /data - Factory Reset: Delete ALL accounts, transactions, rules, budgets, goals
+  // ──────────────────────────────────────────────────────────────────────────
+  fastify.delete('/data', async (request, reply) => {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // 1. Delete all transaction sub-records and transactions
+      await client.query('DELETE FROM transaction_splits');
+      await client.query('DELETE FROM transaction_links');
+      await client.query('DELETE FROM transaction_notes');
+      await client.query('DELETE FROM transactions');
+
+      // 2. Delete all bank accounts
+      await client.query('DELETE FROM bank_accounts WHERE user_id = $1', [DEFAULT_USER_ID]);
+
+      // 3. Delete all category rules learned by user
+      await client.query('DELETE FROM user_category_rules WHERE user_id = $1', [DEFAULT_USER_ID]);
+
+      // 4. Delete budgets and goals
+      await client.query('DELETE FROM budgets WHERE user_id = $1', [DEFAULT_USER_ID]);
+      await client.query('DELETE FROM goals WHERE user_id = $1', [DEFAULT_USER_ID]);
+
+      // 5. Delete custom categories created by user (preserve system categories)
+      await client.query('DELETE FROM categories WHERE user_id = $1 AND is_system = false', [DEFAULT_USER_ID]);
+
+      // 6. Reset system settings
+      await client.query(
+        `UPDATE system_settings SET settings = '{}'::jsonb WHERE user_id = $1`,
+        [DEFAULT_USER_ID]
+      );
+
+      await client.query('COMMIT');
+
+      return reply.status(200).send({
+        success: true,
+        message: 'All system data wiped and reset successfully',
+      });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      fastify.log.error(err, 'Failed to wipe system data');
+      return reply.status(500).send({
+        success: false,
+        stage: 'DB_WIPE_ALL_DATA',
+        error: err.message,
+      });
+    } finally {
+      client.release();
+    }
+  });
 }
