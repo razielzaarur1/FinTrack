@@ -34,9 +34,9 @@ sudo bash scripts/init/01-host-setup.sh
 | `DB_PASSWORD` | סיסמת הניהול של PostgreSQL | `MyStr0ngDbAdm1nPass!` |
 | `API_DB_PASSWORD` | סיסמת המשתמש של ה-API Gateway | `ApiPassw0rd_9942` |
 | `SCRAPER_DB_PASSWORD` | סיסמת המשתמש של ה-Scraper Worker | `ScraperPassw0rd_1123` |
-| `TELEGRAM_BOT_TOKEN` | טוקן הבוט מ-@BotFather | `1234567890:ABCdef...` |
-| `TELEGRAM_CHAT_ID` | ה-Chat ID האישי שלך בטלגרם | `123456789` |
 | `JWT_SECRET` | מפתח חתימה לטוקנים | `random_64_character_hex_string` |
+
+> 💡 **אינטגרציית טלגרם ותזמון סריקות:** טוקן הבוט, מזהה ה-Chat ID, תזמון הסריקות בשעות והתראות ה-TMA מוגדרים ומנוהלים ישירות מתוך ממשק המערכת במסך **הגדרות** (`/settings`), ללא צורך במשתני סביבה!
 
 ### 3. העלאת ה-Stack ב-Portainer
 1. ב-Portainer, נווט אל **Stacks** -> **Add Stack**.

@@ -18,6 +18,7 @@ import transactionsV2Routes from './routes/transactions-v2.js';
 import categoriesRoutes from './routes/categories.js';
 import analyticsRoutes from './routes/analytics.js';
 import authRoutes from './routes/auth.js';
+import { autoScrapeScheduler } from './services/scheduler.js';
 
 function readSecret(filePath, envVarName) {
   if (filePath && fs.existsSync(filePath)) {
@@ -151,6 +152,7 @@ const closeGracefully = async (signal) => {
   fastify.log.info(`Received ${signal}, starting graceful shutdown...`);
 
   try {
+    autoScrapeScheduler.stop();
     vaultClient.close();
     await fastify.close();
     await pool.end();
@@ -172,6 +174,9 @@ process.on('SIGTERM', () => closeGracefully('SIGTERM'));
 
     await fastify.listen({ port: PORT, host: HOST });
     fastify.log.info(`API Gateway server listening on http://${HOST}:${PORT}`);
+
+    // Start auto-scrape scheduler
+    autoScrapeScheduler.start(fastify.log);
   } catch (err) {
     fastify.log.error(err, 'Server failed to start');
     process.exit(1);

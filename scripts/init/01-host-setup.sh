@@ -70,16 +70,12 @@ declare -A INITIAL_ENV_MAP=(
     ["db_password"]="${DB_PASSWORD:-}"
     ["api_db_password"]="${API_DB_PASSWORD:-}"
     ["scraper_db_password"]="${SCRAPER_DB_PASSWORD:-}"
-    ["telegram_token"]="${TELEGRAM_BOT_TOKEN:-}"
-    ["telegram_chat_id"]="${TELEGRAM_CHAT_ID:-}"
 )
 
 ALL_SECRETS=(
     "db_password"
     "api_db_password"
     "scraper_db_password"
-    "telegram_token"
-    "telegram_chat_id"
     "scraper_role_id"
     "scraper_secret_id"
     "vault_api_role_id"

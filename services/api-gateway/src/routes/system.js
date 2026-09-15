@@ -214,6 +214,16 @@ export default async function systemRoutes(fastify, options) {
 
     const { settings } = parseResult.data;
 
+    // Safety limit enforcement: Minimum 3 hours interval between scrape runs
+    if (settings.scrapeIntervalCreditCardsHours !== undefined) {
+      const val = parseFloat(settings.scrapeIntervalCreditCardsHours);
+      settings.scrapeIntervalCreditCardsHours = Math.max(3, isNaN(val) ? 4 : val);
+    }
+    if (settings.scrapeIntervalBanksHours !== undefined) {
+      const val = parseFloat(settings.scrapeIntervalBanksHours);
+      settings.scrapeIntervalBanksHours = Math.max(3, isNaN(val) ? 8 : val);
+    }
+
     try {
       const result = await pool.query(
         `INSERT INTO system_settings (user_id, settings, updated_at)
@@ -226,10 +236,76 @@ export default async function systemRoutes(fastify, options) {
         [DEFAULT_USER_ID, JSON.stringify(settings)]
       );
 
+      // Dynamically push updated Telegram config to Notifier service
+      try {
+        await fetch(`${NOTIFIER_URL.replace(/\/$/, '')}/api/telegram/config`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            botToken: settings.telegramBotToken || '',
+            chatId: settings.telegramChatId || null,
+            tmaBaseUrl: settings.tmaBaseUrl || null,
+          }),
+          signal: AbortSignal.timeout(5000),
+        });
+      } catch (notifErr) {
+        fastify.log.warn(`Failed to push updated telegram config to notifier: ${notifErr.message}`);
+      }
+
       return reply.code(200).send(result.rows[0]);
     } catch (err) {
       fastify.log.error(err, 'Failed to update system settings');
       return reply.code(500).send({ error: 'Internal Server Error', message: err.message });
+    }
+  });
+
+  // GET /telegram/status - Get Telegram Bot live connection status
+  fastify.get('/telegram/status', async (request, reply) => {
+    try {
+      const res = await fetch(`${NOTIFIER_URL.replace(/\/$/, '')}/api/telegram/status`, {
+        signal: AbortSignal.timeout(4000),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return reply.code(200).send(data);
+      }
+      return reply.code(200).send({ configured: false, active: false });
+    } catch (err) {
+      return reply.code(200).send({ configured: false, active: false, error: err.message });
+    }
+  });
+
+  // POST /telegram/test - Dispatch a test message to Telegram
+  fastify.post('/telegram/test', async (request, reply) => {
+    try {
+      const settingsRes = await pool.query(
+        `SELECT settings FROM system_settings WHERE user_id = $1`,
+        [DEFAULT_USER_ID]
+      );
+      const settings = settingsRes.rows[0]?.settings || {};
+      const chatId = request.body?.chatId || settings.telegramChatId;
+
+      const res = await fetch(`${NOTIFIER_URL.replace(/\/$/, '')}/api/notify/test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chatId }),
+        signal: AbortSignal.timeout(8000),
+      });
+
+      const responseText = await res.text();
+      let data;
+      try {
+        data = JSON.parse(responseText);
+      } catch {
+        data = { message: responseText };
+      }
+
+      if (!res.ok) {
+        return reply.code(res.status).send(data);
+      }
+      return reply.code(200).send(data);
+    } catch (err) {
+      return reply.code(500).send({ error: err.message });
     }
   });
 

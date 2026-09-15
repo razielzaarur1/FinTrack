@@ -179,8 +179,8 @@ export function AppProvider({ children }) {
         bypassLock,
       }}
     >
-      {/* If mounted and not authenticated, render secure LockScreen */}
-      {mounted && !authChecking && !isAuthenticated && (
+      {/* If mounted and not authenticated, render secure LockScreen (except for scoped TMA views) */}
+      {mounted && !authChecking && !isAuthenticated && !(typeof window !== 'undefined' && window.location.pathname.startsWith('/tma')) && (
         <LockScreen
           isSetup={!hasPasscode}
           onUnlock={unlock}

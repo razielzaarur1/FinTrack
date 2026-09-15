@@ -16,7 +16,15 @@ import {
   X,
   Layers,
   Edit2,
-  AlertTriangle
+  AlertTriangle,
+  Send,
+  Bell,
+  Eye,
+  EyeOff,
+  Clock,
+  ShieldCheck,
+  HelpCircle,
+  ExternalLink
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useApp } from '@/lib/app-context';
@@ -46,6 +54,30 @@ export default function SettingsPage() {
   const [monthStartDay, setMonthStartDay] = useState(10);
   const [monthSaved, setMonthSaved] = useState(false);
 
+  // Telegram & Real-time Notification States
+  const [telegramBotToken, setTelegramBotToken] = useState('');
+  const [telegramChatId, setTelegramChatId] = useState('');
+  const [tmaBaseUrl, setTmaBaseUrl] = useState('');
+  const [showToken, setShowToken] = useState(false);
+  const [botStatus, setBotStatus] = useState(null);
+  const [testingTelegram, setTestingTelegram] = useState(false);
+  const [testResult, setTestResult] = useState(null);
+  const [savingTelegram, setSavingTelegram] = useState(false);
+  const [telegramSaved, setTelegramSaved] = useState(false);
+
+  // Alert Toggles & Anomaly Limits
+  const [notifyOnNew, setNotifyOnNew] = useState(true);
+  const [notifyOnAnomaly, setNotifyOnAnomaly] = useState(true);
+  const [notifyOnBudget, setNotifyOnBudget] = useState(true);
+  const [anomalyMinAmount, setAnomalyMinAmount] = useState(300);
+
+  // Auto-Scrape Schedule States (in HOURS, minimum 3h safety limit)
+  const [autoScrapeEnabled, setAutoScrapeEnabled] = useState(true);
+  const [scrapeIntervalCardsHours, setScrapeIntervalCardsHours] = useState(4);
+  const [scrapeIntervalBanksHours, setScrapeIntervalBanksHours] = useState(8);
+  const [savingSchedule, setSavingSchedule] = useState(false);
+  const [scheduleSaved, setScheduleSaved] = useState(false);
+
   // Category Tree UI State
   const [activeTab, setActiveTab] = useState('expense'); // 'expense' | 'income'
   const [expandedCats, setExpandedCats] = useState(new Set(['exp_household', 'exp_shopping']));
@@ -65,17 +97,113 @@ export default function SettingsPage() {
   const [reclassifying, setReclassifying] = useState(false);
   const [reclassifyResult, setReclassifyResult] = useState(null);
 
+  const checkBotStatus = async () => {
+    try {
+      const res = await api.getTelegramStatus();
+      if (res.data) {
+        setBotStatus(res.data);
+      }
+    } catch (e) {}
+  };
+
   const loadSettings = async () => {
     try {
       const res = await api.getSystemSettings();
-      if (res.data?.settings?.scrapeDaysBack) {
-        setScrapeDaysBack(parseInt(res.data.settings.scrapeDaysBack, 10) || 30);
+      if (res.data?.settings) {
+        const s = res.data.settings;
+        if (s.scrapeDaysBack) setScrapeDaysBack(parseInt(s.scrapeDaysBack, 10) || 30);
+        if (s.monthStartDay) setMonthStartDay(parseInt(s.monthStartDay, 10) || 10);
+        if (s.telegramBotToken) setTelegramBotToken(s.telegramBotToken);
+        if (s.telegramChatId) setTelegramChatId(String(s.telegramChatId));
+        if (s.tmaBaseUrl) setTmaBaseUrl(s.tmaBaseUrl);
+        if (s.notifyOnNewTransactions !== undefined) setNotifyOnNew(s.notifyOnNewTransactions);
+        if (s.notifyOnAnomaly !== undefined) setNotifyOnAnomaly(s.notifyOnAnomaly);
+        if (s.notifyOnBudgetExceeded !== undefined) setNotifyOnBudget(s.notifyOnBudgetExceeded);
+        if (s.anomalyMinAmount !== undefined) setAnomalyMinAmount(parseInt(s.anomalyMinAmount, 10) || 300);
+        if (s.autoScrapeEnabled !== undefined) setAutoScrapeEnabled(s.autoScrapeEnabled);
+        if (s.scrapeIntervalCreditCardsHours !== undefined) {
+          setScrapeIntervalCardsHours(Math.max(3, parseFloat(s.scrapeIntervalCreditCardsHours) || 4));
+        }
+        if (s.scrapeIntervalBanksHours !== undefined) {
+          setScrapeIntervalBanksHours(Math.max(3, parseFloat(s.scrapeIntervalBanksHours) || 8));
+        }
       }
-      if (res.data?.settings?.monthStartDay) {
-        setMonthStartDay(parseInt(res.data.settings.monthStartDay, 10) || 10);
-      }
+      await checkBotStatus();
     } catch (err) {
       console.error('Failed to load system settings:', err);
+    }
+  };
+
+  const handleSaveTelegramSettings = async () => {
+    setSavingTelegram(true);
+    setTelegramSaved(false);
+    try {
+      const res = await api.getSystemSettings();
+      const current = res.data?.settings || {};
+      const updated = {
+        ...current,
+        telegramBotToken: telegramBotToken.trim(),
+        telegramChatId: telegramChatId.trim(),
+        tmaBaseUrl: tmaBaseUrl.trim(),
+        notifyOnNewTransactions: notifyOnNew,
+        notifyOnAnomaly,
+        notifyOnBudgetExceeded: notifyOnBudget,
+        anomalyMinAmount: Math.max(50, parseInt(anomalyMinAmount, 10) || 300),
+      };
+      await api.updateSystemSettings(updated);
+      setTelegramSaved(true);
+      await checkBotStatus();
+      setTimeout(() => setTelegramSaved(false), 3000);
+    } catch (err) {
+      console.error('Failed to save telegram settings:', err);
+    } finally {
+      setSavingTelegram(false);
+    }
+  };
+
+  const handleTestTelegram = async () => {
+    setTestingTelegram(true);
+    setTestResult(null);
+    try {
+      const res = await api.testTelegramConnection(telegramChatId.trim() || undefined);
+      if (res.error) {
+        setTestResult({ success: false, message: res.error });
+      } else {
+        setTestResult({ success: true, message: res.data?.message || 'הודעת בדיקה נשלחה בהצלחה לטלגרם!' });
+        await checkBotStatus();
+      }
+    } catch (err) {
+      setTestResult({ success: false, message: err.message || 'שגיאה בבדיקת חיבור' });
+    } finally {
+      setTestingTelegram(false);
+      setTimeout(() => setTestResult(null), 7000);
+    }
+  };
+
+  const handleSaveScheduleSettings = async () => {
+    setSavingSchedule(true);
+    setScheduleSaved(false);
+    try {
+      const res = await api.getSystemSettings();
+      const current = res.data?.settings || {};
+      const cardsHours = Math.max(3, parseFloat(scrapeIntervalCardsHours) || 4);
+      const banksHours = Math.max(3, parseFloat(scrapeIntervalBanksHours) || 8);
+      setScrapeIntervalCardsHours(cardsHours);
+      setScrapeIntervalBanksHours(banksHours);
+
+      const updated = {
+        ...current,
+        autoScrapeEnabled,
+        scrapeIntervalCreditCardsHours: cardsHours,
+        scrapeIntervalBanksHours: banksHours,
+      };
+      await api.updateSystemSettings(updated);
+      setScheduleSaved(true);
+      setTimeout(() => setScheduleSaved(false), 3000);
+    } catch (err) {
+      console.error('Failed to save schedule settings:', err);
+    } finally {
+      setSavingSchedule(false);
     }
   };
 
@@ -488,6 +616,370 @@ export default function SettingsPage() {
               )}
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* Telegram Bot & Real-time Notifications */}
+      <div className="p-5 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h3 className="font-semibold text-base flex items-center gap-2">
+              <Send className="w-5 h-5 text-sky-400" />
+              <span>{lang === 'he' ? 'אינטגרציית טלגרם והתראות חכמות' : 'Telegram Integration & Alerts'}</span>
+            </h3>
+            <p className="text-xs text-dark-text-muted light:text-light-text-muted mt-0.5">
+              {lang === 'he'
+                ? 'הגדר בוט טלגרם אישי להתראות מיידיות על תנועות חדשות עם עריכה ב-TMA, זיהוי חריגות וקודי אימות (OTP)'
+                : 'Configure personal Telegram Bot for instant alerts with TMA editor, anomaly detection and 2FA OTP'}
+            </p>
+          </div>
+
+          {/* Bot Live Status Badge */}
+          <div className="flex items-center gap-2">
+            {botStatus?.configured ? (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span>{botStatus.botUsername ? `@${botStatus.botUsername}` : 'מחובר ופעיל'}</span>
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-slate-800 text-slate-400 border border-slate-700">
+                <span className="w-2 h-2 rounded-full bg-slate-500" />
+                <span>טרם הוגדר בוט</span>
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Credentials Form */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Bot Token Input */}
+          <div className="p-4 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold text-dark-text light:text-light-text">
+                {lang === 'he' ? 'טוקן בוט (Bot Token)' : 'Telegram Bot Token'}
+              </label>
+              <button
+                type="button"
+                onClick={() => setShowToken(!showToken)}
+                className="text-xs text-dark-text-muted hover:text-dark-text flex items-center gap-1 transition-colors"
+              >
+                {showToken ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                <span>{showToken ? 'הסתר' : 'הצג'}</span>
+              </button>
+            </div>
+            <input
+              type={showToken ? 'text' : 'password'}
+              value={telegramBotToken}
+              onChange={(e) => setTelegramBotToken(e.target.value)}
+              placeholder="1234567890:ABCdefGHIjklMNOpqrSTUvwxYZ..."
+              className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text text-xs focus:ring-2 focus:ring-sky-500/50"
+            />
+            <p className="text-[11px] text-dark-text-muted light:text-light-text-muted">
+              ניתן להפיק טוקן חינמי ומהיר בטלגרם דרך הבוט הרשמי <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer" className="text-sky-400 hover:underline">@BotFather</a>
+            </p>
+          </div>
+
+          {/* Chat ID Input */}
+          <div className="p-4 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated space-y-2">
+            <label className="text-xs font-semibold text-dark-text light:text-light-text block">
+              {lang === 'he' ? 'מזהה צ׳אט אישי (Chat ID)' : 'Personal Chat ID'}
+            </label>
+            <input
+              type="text"
+              value={telegramChatId}
+              onChange={(e) => setTelegramChatId(e.target.value)}
+              placeholder="לדוגמה: 123456789"
+              className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text text-xs focus:ring-2 focus:ring-sky-500/50"
+            />
+            <p className="text-[11px] text-dark-text-muted light:text-light-text-muted">
+              את ה-Chat ID שלך ניתן לקבל בלחיצת כפתור בבוט <a href="https://t.me/userinfobot" target="_blank" rel="noopener noreferrer" className="text-sky-400 hover:underline">@userinfobot</a>
+            </p>
+          </div>
+        </div>
+
+        {/* TMA Base URL Input */}
+        <div className="p-4 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated space-y-2">
+          <label className="text-xs font-semibold text-dark-text light:text-light-text flex items-center gap-1.5">
+            <ExternalLink className="w-3.5 h-3.5 text-sky-400" />
+            <span>{lang === 'he' ? 'כתובת HTTPS עבור Telegram Mini App (TMA)' : 'Public HTTPS URL for TMA'}</span>
+          </label>
+          <input
+            type="url"
+            value={tmaBaseUrl}
+            onChange={(e) => setTmaBaseUrl(e.target.value)}
+            placeholder="https://fintrack.example.com או כתובת Tailscale HTTPS"
+            className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text text-xs focus:ring-2 focus:ring-sky-500/50"
+          />
+          <p className="text-[11px] text-dark-text-muted light:text-light-text-muted">
+            טלגרם דורשת כתובת HTTPS לצורך פתיחת חלון עריכת התנועה (TMA) ישירות בתוך האפליקציה. אם תשאיר ריק, ההודעה תישלח ללא כפתור TMA פנימי.
+          </p>
+        </div>
+
+        {/* Notification Rules & Anomaly Preferences */}
+        <div className="p-4 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated space-y-3.5">
+          <div className="font-semibold text-xs text-dark-text light:text-light-text flex items-center gap-1.5">
+            <Bell className="w-4 h-4 text-brand-primary" />
+            <span>{lang === 'he' ? 'סוגי התראות והגדרות זיהוי חריגות' : 'Alert Types & Anomaly Detection'}</span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+            {/* New Transactions */}
+            <label className="flex items-start gap-2.5 p-2.5 rounded-lg border border-dark-border/60 light:border-light-border/60 bg-dark-surface light:bg-light-surface cursor-pointer">
+              <input
+                type="checkbox"
+                checked={notifyOnNew}
+                onChange={(e) => setNotifyOnNew(e.target.checked)}
+                className="mt-0.5 rounded border-dark-border text-brand-primary focus:ring-brand-primary/50"
+              />
+              <div>
+                <span className="font-medium text-dark-text light:text-light-text block">התראות על כל תנועה חדשה</span>
+                <span className="text-[11px] text-dark-text-muted light:text-light-text-muted block">
+                  שליחת הודעה מיידית עם כפתור TMA לעריכה בכל קליטת עסקה
+                </span>
+              </div>
+            </label>
+
+            {/* Budget Exceeded */}
+            <label className="flex items-start gap-2.5 p-2.5 rounded-lg border border-dark-border/60 light:border-light-border/60 bg-dark-surface light:bg-light-surface cursor-pointer">
+              <input
+                type="checkbox"
+                checked={notifyOnBudget}
+                onChange={(e) => setNotifyOnBudget(e.target.checked)}
+                className="mt-0.5 rounded border-dark-border text-brand-primary focus:ring-brand-primary/50"
+              />
+              <div>
+                <span className="font-medium text-dark-text light:text-light-text block">התראות על חריגה מתקציב</span>
+                <span className="text-[11px] text-dark-text-muted light:text-light-text-muted block">
+                  התראה מיידית כאשר סך ההוצאות החודשי בקטגוריה חוצה את הגבול
+                </span>
+              </div>
+            </label>
+
+            {/* Full History Anomaly Detection */}
+            <label className="flex items-start gap-2.5 p-2.5 rounded-lg border border-dark-border/60 light:border-light-border/60 bg-dark-surface light:bg-light-surface cursor-pointer">
+              <input
+                type="checkbox"
+                checked={notifyOnAnomaly}
+                onChange={(e) => setNotifyOnAnomaly(e.target.checked)}
+                className="mt-0.5 rounded border-dark-border text-brand-primary focus:ring-brand-primary/50"
+              />
+              <div>
+                <span className="font-medium text-amber-400 block flex items-center gap-1">
+                  <Sparkles className="w-3 h-3 text-amber-400" />
+                  זיהוי והתראות על תנועות חריגות (מנוע היסטורי מלא)
+                </span>
+                <span className="text-[11px] text-dark-text-muted light:text-light-text-muted block">
+                  לומד מכל היסטוריית העבר: מתריע על בתי עסק חדשים או קפיצות חריגות בסכום
+                </span>
+              </div>
+            </label>
+
+            {/* Anomaly Min Amount */}
+            <div className="p-2.5 rounded-lg border border-dark-border/60 light:border-light-border/60 bg-dark-surface light:bg-light-surface space-y-1">
+              <label className="font-medium text-dark-text light:text-light-text text-[11px] block">
+                סף מינימום לסכום חריג (₪)
+              </label>
+              <input
+                type="number"
+                min="50"
+                step="50"
+                value={anomalyMinAmount}
+                onChange={(e) => setAnomalyMinAmount(e.target.value)}
+                className="w-full p-1.5 rounded-lg border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs focus:ring-1 focus:ring-brand-primary"
+              />
+              <span className="text-[10px] text-dark-text-muted light:text-light-text-muted block">
+                תנועות מתחת לסכום זה לא ייחשבו כחריגות (ברירת מחדל: 300 ₪)
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Buttons & Feedback */}
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleTestTelegram}
+              disabled={testingTelegram || !telegramBotToken.trim()}
+              className="px-3.5 py-2 rounded-xl border border-sky-500/40 bg-sky-500/10 text-sky-400 hover:bg-sky-500/20 text-xs font-semibold flex items-center gap-1.5 transition-all disabled:opacity-50"
+            >
+              <Send className={`w-3.5 h-3.5 ${testingTelegram ? 'animate-bounce' : ''}`} />
+              <span>{testingTelegram ? 'שולח בדיקה...' : 'שלח הודעת בדיקה לטלגרם'}</span>
+            </button>
+
+            {testResult && (
+              <span
+                className={`text-xs font-medium flex items-center gap-1 ${
+                  testResult.success ? 'text-emerald-400' : 'text-rose-400'
+                }`}
+              >
+                {testResult.success ? <Check className="w-3.5 h-3.5" /> : <AlertTriangle className="w-3.5 h-3.5" />}
+                <span>{testResult.message}</span>
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            {telegramSaved && (
+              <span className="flex items-center gap-1 text-emerald-400 font-semibold text-xs">
+                <Check className="w-4 h-4" />
+                <span>הגדרות טלגרם נשמרו בהצלחה!</span>
+              </span>
+            )}
+
+            <button
+              type="button"
+              onClick={handleSaveTelegramSettings}
+              disabled={savingTelegram}
+              className="px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold shadow-md shadow-sky-600/20 transition-all flex items-center gap-1.5 disabled:opacity-50"
+            >
+              <Check className="w-3.5 h-3.5" />
+              <span>{savingTelegram ? 'שומר...' : 'שמור הגדרות טלגרם'}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Automated Scraping Schedule with 3h safety limit */}
+      <div className="p-5 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h3 className="font-semibold text-base flex items-center gap-2">
+              <Clock className="w-5 h-5 text-indigo-400" />
+              <span>{lang === 'he' ? 'תזמון סריקות אוטומטי (בשעות)' : 'Automated Scrape Schedule (Hours)'}</span>
+            </h3>
+            <p className="text-xs text-dark-text-muted light:text-light-text-muted mt-0.5">
+              {lang === 'he'
+                ? 'קביעת תדירות רענון אוטומטית ברקע לכרטיסי אשראי ולחשבונות בנק'
+                : 'Configure background periodic scrape frequency in hours'}
+            </p>
+          </div>
+
+          {/* Master Auto-Scrape Toggle */}
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={autoScrapeEnabled}
+              onChange={(e) => setAutoScrapeEnabled(e.target.checked)}
+              className="rounded border-dark-border text-indigo-600 focus:ring-indigo-500"
+            />
+            <span className="text-xs font-semibold text-dark-text light:text-light-text">
+              {autoScrapeEnabled ? 'סריקה אוטומטית מופעלת' : 'סריקה אוטומטית כבויה'}
+            </span>
+          </label>
+        </div>
+
+        {/* Anti-bot Safety Alert Banner */}
+        <div className="p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-xs flex items-start gap-2.5">
+          <ShieldCheck className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
+          <div>
+            <span className="font-semibold block">מגבלת בטיחות מובנית להגנה מחסימות:</span>
+            <span className="text-[11px] text-indigo-200/80 block">
+              המערכת אוכפת מינימום של 3 שעות בין סריקות אוטומטיות כדי להגן על חשבונותיך מפני זיהוי כבוט או חסימות גישה מצד הבנקים וחברות האשראי. הסריקות מבוצעות בין השעות 08:00 ל-22:00 בלבד.
+            </span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Credit Cards Interval */}
+          <div className="p-4 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated space-y-2.5">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold text-dark-text light:text-light-text">
+                {lang === 'he' ? 'תדירות רענון לכרטיסי אשראי' : 'Credit Cards Interval'}
+              </label>
+              <span className="text-xs font-bold text-indigo-400">
+                כל {scrapeIntervalCardsHours} שעות
+              </span>
+            </div>
+
+            <input
+              type="number"
+              min="3"
+              max="72"
+              step="1"
+              value={scrapeIntervalCardsHours}
+              onChange={(e) => setScrapeIntervalCardsHours(Math.max(3, parseInt(e.target.value, 10) || 3))}
+              className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text text-xs focus:ring-2 focus:ring-indigo-500/50"
+            />
+
+            {/* Quick Preset Buttons */}
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {[3, 4, 6, 12, 24].map((h) => (
+                <button
+                  key={h}
+                  type="button"
+                  onClick={() => setScrapeIntervalCardsHours(h)}
+                  className={`text-[11px] px-2.5 py-1 rounded-lg border transition-all ${
+                    scrapeIntervalCardsHours === h
+                      ? 'bg-indigo-600 border-indigo-500 text-white font-semibold shadow-sm'
+                      : 'border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text-muted hover:text-dark-text'
+                  }`}
+                >
+                  {h === 24 ? 'פעם ביום (24 שעות)' : `${h} שעות`}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Bank Accounts Interval */}
+          <div className="p-4 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated space-y-2.5">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold text-dark-text light:text-light-text">
+                {lang === 'he' ? 'תדירות רענון לחשבונות בנק' : 'Bank Accounts Interval'}
+              </label>
+              <span className="text-xs font-bold text-indigo-400">
+                כל {scrapeIntervalBanksHours} שעות
+              </span>
+            </div>
+
+            <input
+              type="number"
+              min="3"
+              max="72"
+              step="1"
+              value={scrapeIntervalBanksHours}
+              onChange={(e) => setScrapeIntervalBanksHours(Math.max(3, parseInt(e.target.value, 10) || 3))}
+              className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text text-xs focus:ring-2 focus:ring-indigo-500/50"
+            />
+
+            {/* Quick Preset Buttons */}
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {[4, 6, 8, 12, 24].map((h) => (
+                <button
+                  key={h}
+                  type="button"
+                  onClick={() => setScrapeIntervalBanksHours(h)}
+                  className={`text-[11px] px-2.5 py-1 rounded-lg border transition-all ${
+                    scrapeIntervalBanksHours === h
+                      ? 'bg-indigo-600 border-indigo-500 text-white font-semibold shadow-sm'
+                      : 'border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text-muted hover:text-dark-text'
+                  }`}
+                >
+                  {h === 24 ? 'פעם ביום (24 שעות)' : `${h} שעות`}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Save Schedule Button */}
+        <div className="flex items-center justify-end gap-3 pt-1">
+          {scheduleSaved && (
+            <span className="flex items-center gap-1 text-emerald-400 font-semibold text-xs">
+              <Check className="w-4 h-4" />
+              <span>תזמון הסריקות נשמר בהצלחה!</span>
+            </span>
+          )}
+
+          <button
+            type="button"
+            onClick={handleSaveScheduleSettings}
+            disabled={savingSchedule}
+            className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-md shadow-indigo-600/20 transition-all flex items-center gap-1.5 disabled:opacity-50"
+          >
+            <Check className="w-3.5 h-3.5" />
+            <span>{savingSchedule ? 'שומר...' : 'שמור תזמון סריקות'}</span>
+          </button>
         </div>
       </div>
 

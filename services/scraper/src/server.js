@@ -97,6 +97,19 @@ const server = http.createServer(async (req, res) => {
         } finally {
           isJobRunning = false;
           logger.info({ jobId }, 'Background scrape job finished');
+
+          // Notify API Gateway to process new transactions and dispatch Telegram alerts immediately
+          const internalApiUrl = process.env.INTERNAL_API_URL || 'http://api-gateway:3000';
+          try {
+            await fetch(`${internalApiUrl.replace(/\/$/, '')}/internal/on-scrape-completed`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              signal: AbortSignal.timeout(5000),
+            });
+            logger.info({ jobId }, 'Triggered real-time notification engine on API gateway');
+          } catch (notifErr) {
+            logger.warn({ jobId, err: notifErr.message }, 'Could not reach API gateway on-scrape-completed endpoint');
+          }
         }
       })();
     });

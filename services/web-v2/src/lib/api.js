@@ -209,6 +209,26 @@ export const api = {
   deleteAllTransactions: () => request('/api/system/transactions', { method: 'DELETE' }),
   deleteAllData: () => request('/api/system/data', { method: 'DELETE' }),
 
+  // Telegram Integration
+  getTelegramStatus: () => request('/api/system/telegram/status'),
+  testTelegramConnection: (chatId) => request('/api/system/telegram/test', { method: 'POST', body: JSON.stringify({ chatId }) }),
+
+  // TMA (Telegram Mini App) - Scoped Zero-Trust Endpoints
+  getTmaTransaction: (id, token) =>
+    request(`/api/v2/transactions/tma/${id}${token ? `?token=${encodeURIComponent(token)}` : ''}`, {
+      headers: token ? { 'x-tma-token': token } : {},
+    }),
+  updateTmaTransaction: (id, data, token) =>
+    request(`/api/v2/transactions/tma/${id}${token ? `?token=${encodeURIComponent(token)}` : ''}`, {
+      method: 'PATCH',
+      headers: token ? { 'x-tma-token': token } : {},
+      body: JSON.stringify(data),
+    }),
+  getTmaCategories: (token) =>
+    request(`/api/v2/transactions/tma/categories${token ? `?token=${encodeURIComponent(token)}` : ''}`, {
+      headers: token ? { 'x-tma-token': token } : {},
+    }),
+
   // Scraper Trigger
   triggerScrape: (accountId = null, daysBack = null) =>
     request('/api/scraper/trigger', {
@@ -216,4 +236,5 @@ export const api = {
       body: JSON.stringify({ accountId, ...(daysBack ? { daysBack } : {}) }),
     }),
 };
+
 

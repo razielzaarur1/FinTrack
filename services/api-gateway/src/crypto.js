@@ -103,7 +103,53 @@ export function decryptCredentials(encryptedString) {
   }
 }
 
+/**
+ * Signs a scoped, tamper-proof TMA token bound to a specific transaction ID.
+ * @param {string} txId - Transaction UUID
+ * @param {number} [expiresInMs=604800000] - Token expiration in milliseconds (default 7 days)
+ * @returns {string} URL-safe base64 token
+ */
+export function signTmaToken(txId, expiresInMs = 7 * 24 * 60 * 60 * 1000) {
+  if (!txId) throw new Error('Transaction ID is required to generate TMA token');
+  const exp = Date.now() + expiresInMs;
+  const payload = `${txId}:${exp}`;
+  const key = getMasterKey();
+  const signature = crypto.createHmac('sha256', key).update(payload).digest('hex');
+  return Buffer.from(`${payload}:${signature}`).toString('base64url');
+}
+
+/**
+ * Verifies that a TMA token is authentic, non-expired, and scoped to the requested transaction ID.
+ * @param {string} token - Base64url token from request
+ * @param {string} expectedTxId - Transaction UUID being accessed
+ * @returns {boolean} True if valid
+ */
+export function verifyTmaToken(token, expectedTxId = null) {
+  if (!token) return false;
+  try {
+    const raw = Buffer.from(token, 'base64url').toString('utf8');
+    const [txId, expStr, signature] = raw.split(':');
+    if (!txId || !expStr || !signature) return false;
+    if (expectedTxId && txId !== expectedTxId) return false;
+    const exp = parseInt(expStr, 10);
+    if (isNaN(exp) || Date.now() > exp) return false;
+
+    const payload = `${txId}:${expStr}`;
+    const key = getMasterKey();
+    const expectedSignature = crypto.createHmac('sha256', key).update(payload).digest('hex');
+    const sigBuf = Buffer.from(signature, 'hex');
+    const expBuf = Buffer.from(expectedSignature, 'hex');
+    if (sigBuf.length !== expBuf.length) return false;
+    return crypto.timingSafeEqual(sigBuf, expBuf);
+  } catch (_) {
+    return false;
+  }
+}
+
 export default {
   encryptCredentials,
   decryptCredentials,
+  signTmaToken,
+  verifyTmaToken,
 };
+

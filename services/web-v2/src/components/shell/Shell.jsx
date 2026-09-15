@@ -32,6 +32,11 @@ export default function Shell({ children }) {
   const [syncing, setSyncing] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
+  // If loading a Telegram Mini App (TMA), render full screen without main navigation shell
+  if (pathname?.startsWith('/tma')) {
+    return <>{children}</>;
+  }
+
   const handleSyncAll = async () => {
     try {
       setSyncing(true);
