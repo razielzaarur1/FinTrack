@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { pool } from '../db.js';
 import { saveUserRule } from '../services/classifier.js';
+import { verifyTmaToken } from '../crypto.js';
 
 const bulkUpdateSchema = z.object({
   transactionIds: z.array(z.string().uuid()).min(1, 'At least one transaction ID is required'),
@@ -1249,6 +1250,163 @@ export default async function transactionsV2Routes(fastify, options) {
       }
       return reply.code(200).send({ success: true, id, action });
     } catch (err) {
+      return reply.code(500).send({ error: 'Database error', message: err.message });
+    }
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // TELEGRAM MINI APP (TMA) - ZERO-TRUST / LEAST-PRIVILEGE SCOPED ENDPOINTS
+  // ──────────────────────────────────────────────────────────────────────────
+
+  // GET /api/v2/transactions/tma/categories - Fetch categories for TMA picker
+  fastify.get('/tma/categories', async (request, reply) => {
+    const token = request.query?.token || request.headers['x-tma-token'];
+    const isTokenValid = verifyTmaToken(token);
+
+    if (!isTokenValid) {
+      return reply.code(401).send({ error: 'Unauthorized', message: 'טוקן TMA אינו תקף או שפג תוקפו' });
+    }
+
+    try {
+      const res = await pool.query(
+        `SELECT id, name, name_en, type, color, icon
+         FROM categories
+         WHERE user_id = '00000000-0000-0000-0000-000000000001'
+         ORDER BY sort_order ASC, name ASC`
+      );
+      return reply.code(200).send({ data: res.rows });
+    } catch (err) {
+      return reply.code(500).send({ error: 'Database error', message: err.message });
+    }
+  });
+
+  // GET /api/v2/transactions/tma/:id - View single transaction inside TMA
+  fastify.get('/tma/:id', async (request, reply) => {
+    const { id } = request.params;
+    const token = request.query?.token || request.headers['x-tma-token'];
+
+    // Strict validation: token MUST be cryptographically valid AND bound to this transaction ID
+    const isAuthorized = verifyTmaToken(token, id);
+    if (!isAuthorized) {
+      return reply.code(401).send({
+        error: 'Unauthorized',
+        message: 'אין לך הרשאה לגשת לתנועה זו. הטוקן אינו תואם או שפג תוקפו.',
+      });
+    }
+
+    try {
+      const query = `
+        SELECT
+          t.id,
+          t.date,
+          t.amount,
+          t.currency,
+          t.merchant_name AS "merchantName",
+          t.description,
+          t.category,
+          t.user_description AS "userDescription",
+          t.is_ignored AS "isIgnored",
+          b.display_name AS "accountDisplayName",
+          b.bank_company AS "bankCompany",
+          RIGHT(COALESCE(b.account_number, '0000'), 4) AS "cardLast4"
+        FROM transactions t
+        JOIN bank_accounts b ON t.account_id = b.id
+        WHERE t.id = $1
+      `;
+      const res = await pool.query(query, [id]);
+      if (res.rows.length === 0) {
+        return reply.code(404).send({ error: 'Not Found', message: 'התנועה לא נמצאה' });
+      }
+
+      const row = res.rows[0];
+      return reply.code(200).send({
+        data: {
+          id: row.id,
+          date: row.date,
+          amount: parseFloat(row.amount),
+          currency: row.currency || 'ILS',
+          merchantName: cleanSpacedHebrew(row.merchantName),
+          description: cleanSpacedHebrew(row.description),
+          category: row.category,
+          userDescription: cleanSpacedHebrew(row.userDescription),
+          isIgnored: Boolean(row.isIgnored),
+          accountDisplayName: row.accountDisplayName || row.bankCompany,
+          bankCompany: row.bankCompany,
+          cardLast4: row.cardLast4,
+        },
+      });
+    } catch (err) {
+      fastify.log.error(err, 'Failed to fetch TMA transaction');
+      return reply.code(500).send({ error: 'Database error', message: err.message });
+    }
+  });
+
+  // PATCH /api/v2/transactions/tma/:id - Edit single transaction inside TMA
+  fastify.patch('/tma/:id', async (request, reply) => {
+    const { id } = request.params;
+    const token = request.query?.token || request.headers['x-tma-token'];
+
+    // Strict validation: token MUST be cryptographically valid AND bound to this transaction ID
+    const isAuthorized = verifyTmaToken(token, id);
+    if (!isAuthorized) {
+      return reply.code(401).send({
+        error: 'Unauthorized',
+        message: 'אין לך הרשאה לערוך תנועה זו. הטוקן אינו תואם או שפג תוקפו.',
+      });
+    }
+
+    const { category, userDescription, merchantName, isIgnored, applyToSimilar } = request.body || {};
+
+    try {
+      // 1. Fetch current transaction state
+      const currentRes = await pool.query(
+        `SELECT id, category, merchant_name, description, user_description, is_ignored
+         FROM transactions WHERE id = $1`,
+        [id]
+      );
+      if (currentRes.rows.length === 0) {
+        return reply.code(404).send({ error: 'Not Found', message: 'התנועה לא נמצאה' });
+      }
+      const current = currentRes.rows[0];
+
+      const newCategory = category !== undefined ? (category?.trim() || null) : current.category;
+      const newUserDescription = userDescription !== undefined ? (userDescription?.trim() || null) : current.user_description;
+      const newMerchantName = merchantName !== undefined ? (merchantName?.trim() || null) : current.merchant_name;
+      const newIsIgnored = isIgnored !== undefined ? Boolean(isIgnored) : Boolean(current.is_ignored);
+
+      // 2. Update transaction
+      const updateRes = await pool.query(
+        `UPDATE transactions
+         SET category = $1,
+             user_description = $2,
+             merchant_name = $3,
+             is_ignored = $4,
+             is_reviewed = true,
+             is_manual_category = CASE WHEN $1 IS NOT NULL AND $1 <> COALESCE($5, '') THEN true ELSE is_manual_category END
+         WHERE id = $6
+         RETURNING id, category, user_description, merchant_name, is_ignored`,
+        [newCategory, newUserDescription, newMerchantName, newIsIgnored, current.category, id]
+      );
+
+      // 3. If applyToSimilar is checked and category provided, save rule for future transactions
+      if (applyToSimilar && newCategory) {
+        const pattern = newMerchantName || current.merchant_name || current.description;
+        if (pattern && pattern.length >= 2) {
+          try {
+            await saveUserRule('00000000-0000-0000-0000-000000000001', pattern, newCategory);
+          } catch (ruleErr) {
+            fastify.log.warn(`Failed to save user category rule: ${ruleErr.message}`);
+          }
+        }
+      }
+
+      return reply.code(200).send({
+        success: true,
+        message: 'התנועה עודכנה בהצלחה!',
+        data: updateRes.rows[0],
+      });
+    } catch (err) {
+      fastify.log.error(err, 'Failed to update TMA transaction');
       return reply.code(500).send({ error: 'Database error', message: err.message });
     }
   });
