@@ -24,7 +24,7 @@ import {
   Check
 } from 'lucide-react';
 import { api } from '@/lib/api';
-import { formatILS, formatDate, cleanSpacedHebrew } from '@/lib/formatters';
+import { formatILS, formatDate, cleanSpacedHebrew, getTransactionTitle } from '@/lib/formatters';
 import { useApp } from '@/lib/app-context';
 import CategoryBadge from '@/components/common/CategoryBadge';
 import CategoryPicker from '@/components/common/CategoryPicker';
@@ -44,6 +44,11 @@ function TransactionsContent() {
   const [nextCursor, setNextCursor] = useState(null);
   const [nextCursorId, setNextCursorId] = useState(null);
   const [hasNextPage, setHasNextPage] = useState(true);
+
+  // Full-screen Linker Mode State
+  const [linkingTx, setLinkingTx] = useState(null);
+  const [linkingType, setLinkingType] = useState('refund');
+  const [processingLinkId, setProcessingLinkId] = useState(null);
 
   // Filters State (Supports Multi-Select)
   const [search, setSearch] = useState('');
@@ -156,6 +161,65 @@ function TransactionsContent() {
       setShowFilters(true);
     }
   }, [searchParams]);
+
+  // Synchronize Linking Mode from URL query params
+  const linkingTxIdParam = searchParams?.get('linkingTxId');
+  const linkTypeParam = searchParams?.get('linkType');
+
+  useEffect(() => {
+    if (linkingTxIdParam && (!linkingTx || linkingTx.id !== linkingTxIdParam)) {
+      api.getTransaction(linkingTxIdParam).then((res) => {
+        if (res.data?.data) {
+          setLinkingTx(res.data.data);
+          if (linkTypeParam) setLinkingType(linkTypeParam);
+        }
+      });
+    }
+  }, [linkingTxIdParam, linkTypeParam]);
+
+  const handleStartLinking = ({ tx, linkType }) => {
+    setSelectedTx(null);
+    setLinkingTx(tx);
+    setLinkingType(linkType || 'refund');
+    window.history.pushState({}, '', `/transactions?linkingTxId=${tx.id}&linkType=${linkType || 'refund'}`);
+  };
+
+  const handleCancelLinking = () => {
+    const prevTx = linkingTx;
+    setLinkingTx(null);
+    setLinkingType('refund');
+    window.history.pushState({}, '', '/transactions');
+    if (prevTx) {
+      setSelectedTx(prevTx);
+    }
+  };
+
+  const handleExecuteLink = async (targetTx, e) => {
+    e?.stopPropagation();
+    if (!linkingTx || processingLinkId) return;
+    setProcessingLinkId(targetTx.id);
+    try {
+      const res = await api.linkTransaction(linkingTx.id, {
+        targetTransactionId: targetTx.id,
+        linkType: linkingType,
+      });
+      if (res.data) {
+        const prevTx = linkingTx;
+        setLinkingTx(null);
+        setLinkingType('refund');
+        window.history.pushState({}, '', '/transactions');
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('fintrack_tx_updated'));
+        }
+        const updatedTxRes = await api.getTransaction(prevTx.id);
+        setSelectedTx(updatedTxRes.data?.data || prevTx);
+      }
+    } catch (err) {
+      console.error('Failed to link transaction:', err);
+    } finally {
+      setProcessingLinkId(null);
+    }
+  };
 
   // Real-time listener for transaction updates
   useEffect(() => {
@@ -382,6 +446,45 @@ function TransactionsContent() {
 
   return (
     <div className="space-y-5">
+      {/* Sticky Banner when in Linking Mode */}
+      {linkingTx && (
+        <div className="sticky top-2 z-30 p-4 rounded-2xl bg-brand-primary/10 border-2 border-brand-primary flex flex-wrap items-center justify-between gap-3 shadow-xl backdrop-blur-md animate-in fade-in slide-in-from-top-3">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-brand-primary text-white shadow-sm shrink-0">
+              <Link2 className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="text-xs font-bold text-brand-primary flex items-center gap-1.5">
+                <span>מצב קישור תנועה פעיל</span>
+                <span>•</span>
+                <span>
+                  {linkingType === 'refund' ? 'סוג: זיכוי / ביטול' : linkingType === 'correction' ? 'סוג: תיקון' : 'סוג: תנועה קשורה'}
+                </span>
+              </div>
+              <div className="text-sm font-bold text-dark-text light:text-light-text flex items-center gap-2 mt-0.5">
+                <span>מקשר עבור:</span>
+                <span className="text-brand-primary font-extrabold">{cleanSpacedHebrew(getTransactionTitle(linkingTx))}</span>
+                <span className="text-xs text-dark-text-muted font-mono font-normal">
+                  ({formatDate(linkingTx.date, lang)} • {formatILS(linkingTx.amount, { showSign: true })})
+                </span>
+              </div>
+              <div className="text-[11px] text-dark-text-muted light:text-light-text-muted mt-0.5">
+                חפש ובחר תנועה מהרשימה ולחץ על כפתור "קשר" כדי לחבר ביניהן.
+              </div>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleCancelLinking}
+            className="px-4 py-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface hover:bg-dark-surface-elevated text-xs font-bold text-dark-text light:text-light-text transition-colors cursor-pointer shadow-sm flex items-center gap-1.5"
+          >
+            <span>חזור / ביטול קישור</span>
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
@@ -746,7 +849,7 @@ function TransactionsContent() {
               const isLast = idx === transactions.length - 1;
               const isIncome = parseFloat(tx.amount) > 0;
               const isSelected = selectedIds.has(tx.id);
-              const merchantTitle = cleanSpacedHebrew(tx.userDescription || tx.merchantName || tx.description || 'ללא תיאור');
+              const merchantTitle = cleanSpacedHebrew(getTransactionTitle(tx));
               const isAtm = Boolean(tx.isCashWithdrawal || (tx.merchantName && tx.merchantName.includes('משיכת מזומן')));
 
               const catDetails = getCategoryDetails(tx.category);
@@ -767,6 +870,10 @@ function TransactionsContent() {
                   onClick={() => {
                     if (selectMode) {
                       toggleSelect(tx.id);
+                    } else if (linkingTx) {
+                      if (tx.id !== linkingTx.id) {
+                        handleExecuteLink(tx);
+                      }
                     } else {
                       setSelectedTx(tx);
                     }
@@ -843,8 +950,30 @@ function TransactionsContent() {
                     </div>
                   </div>
 
-                  {/* Left side (in RTL): Transaction Amount */}
-                  <div className="shrink-0 text-left ltr:text-right rtl:mr-1 ltr:ml-1">
+                  {/* Left side (in RTL): Action / Amount */}
+                  <div className="shrink-0 flex items-center gap-2.5 text-left ltr:text-right rtl:mr-1 ltr:ml-1">
+                    {linkingTx && (
+                      linkingTx.id === tx.id ? (
+                        <span className="px-2.5 py-1 rounded-lg bg-brand-primary/20 text-brand-primary text-xs font-bold shrink-0">
+                          תנועת המקור
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={processingLinkId === tx.id}
+                          onClick={(e) => handleExecuteLink(tx, e)}
+                          className="px-3 py-1.5 rounded-xl bg-brand-primary hover:bg-brand-primary-hover text-white text-xs font-bold transition-all shadow-sm flex items-center gap-1 shrink-0 cursor-pointer disabled:opacity-50"
+                        >
+                          {processingLinkId === tx.id ? (
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Link2 className="w-3.5 h-3.5" />
+                          )}
+                          <span>קשר</span>
+                        </button>
+                      )
+                    )}
+
                     <div 
                       className={`text-sm sm:text-base font-bold font-mono tracking-tight ${
                         isIncome ? 'text-emerald-500 dark:text-emerald-400' : 'text-dark-text light:text-light-text'
@@ -961,6 +1090,7 @@ function TransactionsContent() {
           tx={selectedTx}
           onClose={() => setSelectedTx(null)}
           onUpdate={handleTxUpdated}
+          onStartLinking={handleStartLinking}
         />
       )}
     </div>

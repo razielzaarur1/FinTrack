@@ -25,25 +25,30 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { api } from '@/lib/api';
-import { formatILS, formatDate, cleanSpacedHebrew } from '@/lib/formatters';
+import { formatILS, formatDate, cleanSpacedHebrew, getTransactionTitle } from '@/lib/formatters';
 import { useApp } from '@/lib/app-context';
 import CategoryBadge from '@/components/common/CategoryBadge';
 import CategoryPicker from '@/components/common/CategoryPicker';
 import { CATEGORIES_DATA } from '@/lib/categories';
 
-export default function TransactionDrawer({ tx, onClose, onUpdate }) {
+export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinking }) {
   const { lang, t } = useApp();
   const [activeTx, setActiveTx] = useState(tx);
-  const [activeTab, setActiveTab] = useState('details'); // details, similar, splits, links, notes, scraper
+  const [activeTab, setActiveTab] = useState('details'); // details, notes, links, splits, similar, scraper
   const [category, setCategory] = useState(tx?.category || '');
   const [userDesc, setUserDesc] = useState(tx?.userDescription || '');
   const [isIgnored, setIsIgnored] = useState(tx?.isIgnored || false);
   const [applyToSimilar, setApplyToSimilar] = useState(false);
   const [similarTxs, setSimilarTxs] = useState([]);
   const [loadingSimilar, setLoadingSimilar] = useState(false);
-  const [showFullLinkerModal, setShowFullLinkerModal] = useState(false);
   const [savingTx, setSavingTx] = useState(false);
   const [copiedRaw, setCopiedRaw] = useState(false);
+
+  const handleTabsWheel = (e) => {
+    if (e.deltaY !== 0) {
+      e.currentTarget.scrollBy({ left: e.deltaY, behavior: 'auto' });
+    }
+  };
 
   // Prevent background page scrolling when drawer is open
   useEffect(() => {
@@ -273,7 +278,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
                 )}
               </div>
               <div className="text-lg font-bold mt-0.5 truncate max-w-sm text-dark-text light:text-light-text">
-                {userDesc || cleanSpacedHebrew(activeTx.merchantName || activeTx.description)}
+                {userDesc || cleanSpacedHebrew(getTransactionTitle(activeTx))}
               </div>
               <div className="text-xs text-dark-text-muted light:text-light-text-muted">
                 {formatDate(activeTx.date, lang)} • {formatILS(activeTx.amount, { showSign: true })}
@@ -289,7 +294,11 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
         </div>
 
         {/* Tab Selector */}
-        <div className="flex border-b border-dark-border light:border-light-border px-4 gap-1.5 sm:gap-2 text-xs font-medium overflow-x-auto no-scrollbar">
+        <div 
+          onWheel={handleTabsWheel}
+          className="flex border-b border-dark-border light:border-light-border px-4 gap-1.5 sm:gap-2 text-xs font-medium overflow-x-auto no-scrollbar select-none"
+        >
+          {/* 1. פרטים */}
           <button
             onClick={() => setActiveTab('details')}
             className={`py-3 px-2.5 sm:px-3 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
@@ -302,30 +311,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
             <span>{lang === 'he' ? 'פרטים' : 'Details'}</span>
           </button>
 
-          <button
-            onClick={() => setActiveTab('similar')}
-            className={`py-3 px-2.5 sm:px-3 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
-              activeTab === 'similar'
-                ? 'border-brand-primary text-brand-primary font-semibold'
-                : 'border-transparent text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
-            }`}
-          >
-            <Layers className="w-3.5 h-3.5" />
-            <span>תנועות דומות ({similarTxs.length})</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('splits')}
-            className={`py-3 px-2.5 sm:px-3 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
-              activeTab === 'splits'
-                ? 'border-brand-primary text-brand-primary font-semibold'
-                : 'border-transparent text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
-            }`}
-          >
-            <Split className="w-3.5 h-3.5" />
-            <span>{t('splitTransaction')} ({splits.length})</span>
-          </button>
-
+          {/* 2. הערות */}
           <button
             onClick={() => setActiveTab('notes')}
             className={`py-3 px-2.5 sm:px-3 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
@@ -338,6 +324,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
             <span>{t('notes')} ({notes.length})</span>
           </button>
 
+          {/* 3. קישור תנועה */}
           <button
             onClick={() => setActiveTab('links')}
             className={`py-3 px-2.5 sm:px-3 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
@@ -350,6 +337,33 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
             <span>{t('linkTransaction')} ({links.length})</span>
           </button>
 
+          {/* 4. פיצול תנועה */}
+          <button
+            onClick={() => setActiveTab('splits')}
+            className={`py-3 px-2.5 sm:px-3 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
+              activeTab === 'splits'
+                ? 'border-brand-primary text-brand-primary font-semibold'
+                : 'border-transparent text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
+            }`}
+          >
+            <Split className="w-3.5 h-3.5" />
+            <span>{t('splitTransaction')} ({splits.length})</span>
+          </button>
+
+          {/* 5. תנועות דומות */}
+          <button
+            onClick={() => setActiveTab('similar')}
+            className={`py-3 px-2.5 sm:px-3 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
+              activeTab === 'similar'
+                ? 'border-brand-primary text-brand-primary font-semibold'
+                : 'border-transparent text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5" />
+            <span>תנועות דומות ({similarTxs.length})</span>
+          </button>
+
+          {/* 6. נתוני סקריפר */}
           <button
             onClick={() => setActiveTab('scraper')}
             className={`py-3 px-2.5 sm:px-3 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
@@ -370,24 +384,22 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
             <div className="space-y-4">
               {/* Custom Name / Nickname (Editable at top) */}
               <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted flex items-center justify-between">
-                  <span>כינוי מותאם אישית (יוצג ככותרת)</span>
-                  <span className="text-[10px] text-dark-text-muted">ניתן לעריכה</span>
+                <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">
+                  כינוי מותאם אישית (יוצג ככותרת)
                 </label>
                 <input
                   type="text"
                   value={userDesc}
                   onChange={(e) => setUserDesc(e.target.value)}
-                  placeholder={cleanSpacedHebrew(activeTx.merchantName || activeTx.description || 'ללא שם')}
+                  placeholder={cleanSpacedHebrew(getTransactionTitle(activeTx))}
                   className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-sm font-semibold focus:outline-none focus:border-brand-primary"
                 />
               </div>
 
               {/* Read-Only Bank Merchant Name */}
               <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted flex items-center justify-between">
-                  <span>שם בית העסק (מקור הבנק / כרטיס)</span>
-                  <span className="text-[10px] text-dark-text-muted">לקריאה בלבד</span>
+                <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">
+                  שם בית העסק (מקור הבנק / כרטיס)
                 </label>
                 <div className="w-full p-2.5 rounded-xl border border-dark-border/60 light:border-light-border/60 bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40 text-dark-text light:text-light-text font-medium text-sm flex items-center justify-between">
                   <span className="truncate">{cleanSpacedHebrew(activeTx.merchantName || 'לא צוין בית עסק')}</span>
@@ -474,66 +486,29 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
                 />
               </div>
 
-              {/* Checkboxes: Uniform Clean Cards (Ignore & ApplyToSimilar) */}
+              {/* Compact Checkboxes: Ignore & ApplyToSimilar */}
               <div className="space-y-2 pt-1">
-                {/* 1. Ignore Toggle */}
-                <div 
-                  onClick={() => setIsIgnored(!isIgnored)}
-                  className={`p-3 rounded-xl border transition-all cursor-pointer select-none flex items-start gap-3 ${
-                    isIgnored
-                      ? 'border-brand-primary/60 bg-brand-primary/10'
-                      : 'border-dark-border/70 light:border-light-border/70 bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40 hover:bg-dark-surface-elevated'
-                  }`}
-                >
+                <label className="flex items-center gap-2 text-xs text-dark-text light:text-light-text cursor-pointer select-none">
                   <input
                     type="checkbox"
                     checked={isIgnored}
                     onChange={(e) => setIsIgnored(e.target.checked)}
-                    onClick={(e) => e.stopPropagation()}
-                    className="w-4 h-4 mt-0.5 rounded text-brand-primary focus:ring-brand-primary cursor-pointer shrink-0"
+                    className="w-4 h-4 rounded text-brand-primary focus:ring-brand-primary cursor-pointer shrink-0"
                   />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs font-bold text-dark-text light:text-light-text">
-                      התעלם מתנועה זו בחישובי דשבורד ותקציבים
-                    </div>
-                    <div className="text-[11px] text-dark-text-muted light:text-light-text-muted mt-0.5">
-                      התנועה תישמר בהיסטוריה אך לא תיכלל בסך ההוצאות והחישובים החודשיים.
-                    </div>
-                  </div>
-                </div>
+                  <span>התעלם מתנועה זו (לא תיכלל בחישובים וגרפים)</span>
+                </label>
 
-                {/* 2. Apply to Similar Toggle - Exactly same styling, no flashy lightning/yellow */}
-                <div 
-                  onClick={() => setApplyToSimilar(!applyToSimilar)}
-                  className={`p-3 rounded-xl border transition-all cursor-pointer select-none flex items-start gap-3 ${
-                    applyToSimilar
-                      ? 'border-brand-primary/60 bg-brand-primary/10'
-                      : 'border-dark-border/70 light:border-light-border/70 bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40 hover:bg-dark-surface-elevated'
-                  }`}
-                >
+                <label className="flex items-center gap-2 text-xs text-dark-text light:text-light-text cursor-pointer select-none">
                   <input
                     type="checkbox"
                     checked={applyToSimilar}
                     onChange={(e) => setApplyToSimilar(e.target.checked)}
-                    onClick={(e) => e.stopPropagation()}
-                    className="w-4 h-4 mt-0.5 rounded text-brand-primary focus:ring-brand-primary cursor-pointer shrink-0"
+                    className="w-4 h-4 rounded text-brand-primary focus:ring-brand-primary cursor-pointer shrink-0"
                   />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs font-bold text-dark-text light:text-light-text flex items-center justify-between">
-                      <span>החל על כל התנועות הדומות</span>
-                      {similarTxs.length > 0 && (
-                        <span className="text-[10px] px-1.5 py-0.2 rounded bg-dark-surface light:bg-light-surface border border-dark-border/40 text-dark-text-muted">
-                          {similarTxs.length} תנועות נוספות
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-[11px] text-dark-text-muted light:text-light-text-muted mt-0.5">
-                      {applyToSimilar
-                        ? `הסיווג וההגדרות יוחלו על כל ${similarTxs.length + 1} התנועות של אותו בית עסק ויילמדו להבא.`
-                        : 'השינויים יישמרו רק על תנועה ספציפית זו.'}
-                    </div>
-                  </div>
-                </div>
+                  <span>
+                    החל על כל התנועות הדומות {similarTxs.length > 0 && `(${similarTxs.length} תנועות נוספות)`}
+                  </span>
+                </label>
               </div>
 
               {/* Sub-records Quick Access Indicators */}
@@ -599,189 +574,43 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
             </div>
           )}
 
-          {/* Dedicated Similar Transactions Tab */}
-          {activeTab === 'similar' && (
+          {/* 2. Notes Tab */}
+          {activeTab === 'notes' && (
             <div className="space-y-4">
-              <div className="p-3.5 rounded-xl border border-dark-border/70 light:border-light-border/70 bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40 text-xs space-y-1">
-                <div className="font-semibold text-dark-text light:text-light-text flex items-center gap-1.5">
-                  <Layers className="w-4 h-4 text-brand-primary" />
-                  <span>תנועות נוספות עבור אותו בית עסק</span>
-                </div>
-                <div className="text-dark-text-muted light:text-light-text-muted">
-                  בית עסק:{' '}
-                  <span className="font-bold text-dark-text light:text-light-text">
-                    {cleanSpacedHebrew(activeTx.merchantName || activeTx.description || 'ללא שם')}
-                  </span>{' '}
-                  ({similarTxs.length} תנועות נוספות במערכת)
-                </div>
-              </div>
+              <form onSubmit={handleAddNote} className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="הוסף הערה..."
+                  value={newNote}
+                  onChange={(e) => setNewNote(e.target.value)}
+                  className="flex-1 p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs focus:outline-none focus:border-brand-primary"
+                />
+                <button
+                  type="submit"
+                  className="px-4 py-2.5 rounded-xl bg-brand-primary text-white text-xs font-semibold cursor-pointer"
+                >
+                  הוסף
+                </button>
+              </form>
 
-              {loadingSimilar ? (
-                <div className="py-16 text-center text-xs text-dark-text-muted flex flex-col items-center justify-center gap-2">
-                  <RefreshCw className="w-5 h-5 animate-spin text-brand-primary" />
-                  <span>טוען תנועות דומות...</span>
-                </div>
-              ) : similarTxs.length === 0 ? (
-                <div className="py-14 text-center text-xs text-dark-text-muted border border-dashed border-dark-border light:border-light-border rounded-xl p-6 bg-dark-surface-elevated/20 light:bg-light-surface-elevated/20">
-                  <Layers className="w-8 h-8 mx-auto text-dark-text-muted/40 mb-2" />
-                  <div className="font-semibold">לא נמצאו תנועות נוספות עבור בית עסק זה</div>
-                  <div className="text-[11px] text-dark-text-muted mt-1">
-                    כל התנועות של אותו בית עסק יוצגו כאן.
+              <div className="space-y-2">
+                {notes.length === 0 ? (
+                  <div className="text-center py-8 text-xs text-dark-text-muted light:text-light-text-muted">
+                    אין הערות עדיין
                   </div>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <div className="text-[11px] text-dark-text-muted px-1">
-                    לחץ על תנועה כדי לפתוח אותה ולערוך את פרטיה:
-                  </div>
-                  {similarTxs.map((stx) => {
-                    const stxAmt = parseFloat(stx.amount);
-                    return (
-                      <div
-                        key={stx.id}
-                        onClick={() => {
-                          setActiveTx(stx);
-                          setActiveTab('details');
-                        }}
-                        className="p-3 rounded-xl border border-dark-border/70 light:border-light-border/70 bg-dark-surface-elevated/50 light:bg-light-surface-elevated/50 hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated hover:border-brand-primary/50 transition-all cursor-pointer flex items-center justify-between gap-3 text-xs group"
-                      >
-                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                          <CategoryBadge category={stx.category} size={18} />
-                          <div className="min-w-0 flex-1">
-                            <div className="font-bold text-dark-text light:text-light-text truncate group-hover:text-brand-primary transition-colors">
-                              {cleanSpacedHebrew(stx.userDescription || stx.merchantName || stx.description || 'ללא תיאור')}
-                            </div>
-                            <div className="text-[11px] text-dark-text-muted light:text-light-text-muted flex items-center gap-2 mt-0.5">
-                              <span className="font-mono">{formatDate(stx.date, lang)}</span>
-                              <span>•</span>
-                              <span className={stxAmt < 0 ? 'text-brand-expense font-bold' : 'text-brand-income font-bold'}>
-                                {formatILS(stx.amount, { showSign: true })}
-                              </span>
-                              {stx.accountDisplayName && (
-                                <>
-                                  <span>•</span>
-                                  <span className="truncate">{stx.accountDisplayName}</span>
-                                </>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2 shrink-0">
-                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-dark-surface light:bg-light-surface border border-dark-border/40 text-dark-text-muted">
-                            {stx.category || 'ללא סיווג'}
-                          </span>
-                          <span className="text-dark-text-muted group-hover:text-brand-primary transition-colors text-xs font-bold">
-                            ←
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* 2. Splits Tab */}
-          {activeTab === 'splits' && (
-            <div className="space-y-4">
-              <div className="p-3.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-xs space-y-2">
-                <div className="flex justify-between font-semibold">
-                  <span className="text-dark-text-muted light:text-light-text-muted">{lang === 'he' ? 'סכום מקורי:' : 'Original Amount:'}</span>
-                  <span className="font-bold text-sm">{formatILS(parentAmount)}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-dark-text-muted light:text-light-text-muted">{lang === 'he' ? 'סכום פיצולים נוכחי:' : 'Current Splits Sum:'}</span>
-                  <span className={splitsBalanced ? 'text-brand-income font-bold text-sm' : 'text-brand-expense font-bold text-sm'}>
-                    {formatILS(splitsTotal)}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center pt-2 border-t border-dark-border/40 light:border-light-border/40">
-                  <span className="font-semibold text-dark-text light:text-light-text">{lang === 'he' ? 'יתרה לחלוקה:' : 'Remaining to split:'}</span>
-                  <span className={`font-bold text-sm ${Math.abs(remainingAmount) < 0.01 ? 'text-emerald-400' : remainingAmount > 0 ? 'text-amber-400' : 'text-rose-500'}`}>
-                    {formatILS(remainingAmount)}
-                    {remainingAmount < -0.01 && <span className="text-[11px] font-normal mr-1 text-rose-400">({lang === 'he' ? 'חריגה מהסכום המקורי!' : 'Exceeds original!'})</span>}
-                  </span>
-                </div>
-              </div>
-
-              {splitError && (
-                <div className="p-3 rounded-xl bg-brand-expense-bg border border-brand-expense/20 text-brand-expense text-xs flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>{splitError}</span>
-                </div>
-              )}
-
-              <div className="space-y-2.5">
-                {splits.map((s, idx) => (
-                  <div key={idx} className="p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40 space-y-2">
-                    <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
-                      <div className="relative w-32 shrink-0">
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={s.amount || ''}
-                          onChange={(e) => handleSplitChange(idx, 'amount', e.target.value)}
-                          placeholder="0.00"
-                          className={`w-full p-2 rtl:pr-7 ltr:pl-7 rounded-lg border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-xs font-mono text-left rtl:text-right ${
-                            parseFloat(tx.amount) < 0 ? 'text-rose-500 font-semibold' : 'text-emerald-500 font-semibold'
-                          }`}
-                        />
-                        <span className="absolute left-2 rtl:left-auto rtl:right-2 top-2 text-xs font-mono text-dark-text-muted light:text-light-text-muted pointer-events-none">
-                          {parseFloat(tx.amount) < 0 ? '-₪' : '+₪'}
-                        </span>
-                      </div>
-                      <div className="flex-1 min-w-[140px]">
-                        <CategoryPicker
-                          className="w-full"
-                          value={s.category}
-                          onChange={(val) => handleSplitChange(idx, 'category', val)}
-                          placeholder="בחר קטגוריה..."
-                        />
-                      </div>
+                ) : (
+                  notes.map((n) => (
+                    <div key={n.id} className="p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text flex items-center justify-between text-xs">
+                      <span>{n.note}</span>
                       <button
-                        type="button"
-                        onClick={() => handleRemoveSplitRow(idx)}
-                        className="p-2 text-brand-expense hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated rounded-lg transition-colors shrink-0"
-                        title="הסר שורה"
+                        onClick={() => handleDeleteNote(n.id)}
+                        className="text-brand-expense p-1 hover:bg-dark-surface light:hover:bg-light-surface rounded cursor-pointer"
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
-                    <input
-                      type="text"
-                      value={s.description || ''}
-                      onChange={(e) => handleSplitChange(idx, 'description', e.target.value)}
-                      placeholder={lang === 'he' ? 'תיאור לפיצול (אופציונלי)...' : 'Split note (optional)...'}
-                      className="w-full p-2 rounded-lg border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text text-xs"
-                    />
-                  </div>
-                ))}
-              </div>
-
-              <div className="flex gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={handleAddSplitRow}
-                  className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface hover:border-brand-primary text-xs font-semibold text-dark-text light:text-light-text transition-colors"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>{lang === 'he' ? 'הוסף שורת פיצול' : 'Add Split Row'}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSaveSplits}
-                  disabled={savingSplits || splits.length === 0 || !splitsBalanced || splitsTotal > parentAmount + 0.001}
-                  className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-white text-xs font-semibold transition-all ${
-                    splitsBalanced && splitsTotal <= parentAmount + 0.001
-                      ? 'bg-brand-primary hover:bg-brand-primary-hover shadow-md shadow-brand-primary/20'
-                      : 'bg-gray-600 opacity-50 cursor-not-allowed'
-                  }`}
-                >
-                  <Check className="w-4 h-4" />
-                  <span>{savingSplits ? 'שומר...' : 'שמור פיצולים'}</span>
-                </button>
+                  ))
+                )}
               </div>
             </div>
           )}
@@ -881,54 +710,223 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
 
                 <button
                   type="button"
-                  onClick={() => setShowFullLinkerModal(true)}
+                  onClick={() => {
+                    onClose?.();
+                    onStartLinking?.({ tx: activeTx, linkType });
+                  }}
                   className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-brand-primary hover:bg-brand-primary-hover text-white font-bold text-xs shadow-md shadow-brand-primary/20 transition-all cursor-pointer"
                 >
                   <Link2 className="w-4 h-4" />
-                  <span>קשר תנועה (פתח רשימת תנועות מלאה)</span>
+                  <span>קשר תנועה (מעבר למסך תנועות מלא)</span>
                 </button>
               </div>
             </div>
           )}
 
-          {/* 4. Notes Tab */}
-          {activeTab === 'notes' && (
+          {/* 4. Splits Tab */}
+          {activeTab === 'splits' && (
             <div className="space-y-4">
-              <form onSubmit={handleAddNote} className="flex gap-2">
-                <input
-                  type="text"
-                  placeholder="הוסף הערה..."
-                  value={newNote}
-                  onChange={(e) => setNewNote(e.target.value)}
-                  className="flex-1 p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs focus:outline-none focus:border-brand-primary"
-                />
-                <button
-                  type="submit"
-                  className="px-4 py-2.5 rounded-xl bg-brand-primary text-white text-xs font-semibold"
-                >
-                  הוסף
-                </button>
-              </form>
+              <div className="p-3.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-xs space-y-2">
+                <div className="flex justify-between font-semibold">
+                  <span className="text-dark-text-muted light:text-light-text-muted">{lang === 'he' ? 'סכום מקורי:' : 'Original Amount:'}</span>
+                  <span className="font-bold text-sm">{formatILS(parentAmount)}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-dark-text-muted light:text-light-text-muted">{lang === 'he' ? 'סכום פיצולים נוכחי:' : 'Current Splits Sum:'}</span>
+                  <span className={splitsBalanced ? 'text-brand-income font-bold text-sm' : 'text-brand-expense font-bold text-sm'}>
+                    {formatILS(splitsTotal)}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center pt-2 border-t border-dark-border/40 light:border-light-border/40">
+                  <span className="font-semibold text-dark-text light:text-light-text">{lang === 'he' ? 'יתרה לחלוקה:' : 'Remaining to split:'}</span>
+                  <span className={`font-bold text-sm ${Math.abs(remainingAmount) < 0.01 ? 'text-emerald-400' : remainingAmount > 0 ? 'text-amber-400' : 'text-rose-500'}`}>
+                    {formatILS(remainingAmount)}
+                    {remainingAmount < -0.01 && <span className="text-[11px] font-normal mr-1 text-rose-400">({lang === 'he' ? 'חריגה מהסכום המקורי!' : 'Exceeds original!'})</span>}
+                  </span>
+                </div>
+              </div>
 
-              <div className="space-y-2">
-                {notes.length === 0 ? (
-                  <div className="text-center py-8 text-xs text-dark-text-muted light:text-light-text-muted">
-                    אין הערות עדיין
-                  </div>
-                ) : (
-                  notes.map((n) => (
-                    <div key={n.id} className="p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text flex items-center justify-between text-xs">
-                      <span>{n.note}</span>
+              {splitError && (
+                <div className="p-3 rounded-xl bg-brand-expense-bg border border-brand-expense/20 text-brand-expense text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{splitError}</span>
+                </div>
+              )}
+
+              <div className="space-y-2.5">
+                {splits.map((s, idx) => (
+                  <div key={idx} className="p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40 space-y-2">
+                    <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
+                      <div className="relative w-32 shrink-0">
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={s.amount || ''}
+                          onChange={(e) => handleSplitChange(idx, 'amount', e.target.value)}
+                          placeholder="0.00"
+                          className={`w-full p-2 rtl:pr-7 ltr:pl-7 rounded-lg border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-xs font-mono text-left rtl:text-right ${
+                            parseFloat(tx.amount) < 0 ? 'text-rose-500 font-semibold' : 'text-emerald-500 font-semibold'
+                          }`}
+                        />
+                        <span className="absolute left-2 rtl:left-auto rtl:right-2 top-2 text-xs font-mono text-dark-text-muted light:text-light-text-muted pointer-events-none">
+                          {parseFloat(tx.amount) < 0 ? '-₪' : '+₪'}
+                        </span>
+                      </div>
+                      <div className="flex-1 min-w-[140px]">
+                        <CategoryPicker
+                          className="w-full"
+                          value={s.category}
+                          onChange={(val) => handleSplitChange(idx, 'category', val)}
+                          placeholder="בחר קטגוריה..."
+                        />
+                      </div>
                       <button
-                        onClick={() => handleDeleteNote(n.id)}
-                        className="text-brand-expense p-1 hover:bg-dark-surface light:hover:bg-light-surface rounded"
+                        type="button"
+                        onClick={() => handleRemoveSplitRow(idx)}
+                        className="p-2 text-brand-expense hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated rounded-lg transition-colors shrink-0 cursor-pointer"
+                        title="הסר שורה"
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
+                        <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
-                  ))
-                )}
+                    <input
+                      type="text"
+                      value={s.description || ''}
+                      onChange={(e) => handleSplitChange(idx, 'description', e.target.value)}
+                      placeholder={lang === 'he' ? 'תיאור לפיצול (אופציונלי)...' : 'Split note (optional)...'}
+                      className="w-full p-2 rounded-lg border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text text-xs"
+                    />
+                  </div>
+                ))}
               </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={handleAddSplitRow}
+                  className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface hover:border-brand-primary text-xs font-semibold text-dark-text light:text-light-text transition-colors cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>{lang === 'he' ? 'הוסף שורת פיצול' : 'Add Split Row'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveSplits}
+                  disabled={savingSplits || splits.length === 0 || !splitsBalanced || splitsTotal > parentAmount + 0.001}
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-white text-xs font-semibold transition-all cursor-pointer ${
+                    splitsBalanced && splitsTotal <= parentAmount + 0.001
+                      ? 'bg-brand-primary hover:bg-brand-primary-hover shadow-md shadow-brand-primary/20'
+                      : 'bg-gray-600 opacity-50 cursor-not-allowed'
+                  }`}
+                >
+                  <Check className="w-4 h-4" />
+                  <span>{savingSplits ? 'שומר...' : 'שמור פיצולים'}</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* 5. Dedicated Similar Transactions Tab */}
+          {activeTab === 'similar' && (
+            <div className="space-y-4">
+              <div className="p-3.5 rounded-xl border border-dark-border/70 light:border-light-border/70 bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40 text-xs space-y-1">
+                <div className="font-semibold text-dark-text light:text-light-text flex items-center gap-1.5">
+                  <Layers className="w-4 h-4 text-brand-primary" />
+                  <span>תנועות נוספות עבור אותו בית עסק</span>
+                </div>
+                <div className="text-dark-text-muted light:text-light-text-muted">
+                  בית עסק:{' '}
+                  <span className="font-bold text-dark-text light:text-light-text">
+                    {cleanSpacedHebrew(activeTx.merchantName || activeTx.description || 'ללא שם')}
+                  </span>{' '}
+                  ({similarTxs.length} תנועות נוספות במערכת)
+                </div>
+              </div>
+
+              {loadingSimilar ? (
+                <div className="py-16 text-center text-xs text-dark-text-muted flex flex-col items-center justify-center gap-2">
+                  <RefreshCw className="w-5 h-5 animate-spin text-brand-primary" />
+                  <span>טוען תנועות דומות...</span>
+                </div>
+              ) : similarTxs.length === 0 ? (
+                <div className="py-14 text-center text-xs text-dark-text-muted border border-dashed border-dark-border light:border-light-border rounded-xl p-6 bg-dark-surface-elevated/20 light:bg-light-surface-elevated/20">
+                  <Layers className="w-8 h-8 mx-auto text-dark-text-muted/40 mb-2" />
+                  <div className="font-semibold">לא נמצאו תנועות נוספות עבור בית עסק זה</div>
+                  <div className="text-[11px] text-dark-text-muted mt-1">
+                    כל התנועות של אותו בית עסק יוצגו כאן.
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="text-[11px] text-dark-text-muted px-1">
+                    לחץ על תנועה כדי לפתוח אותה ולערוך את פרטיה:
+                  </div>
+                  {similarTxs.map((stx) => {
+                    const stxAmt = parseFloat(stx.amount);
+                    return (
+                      <div
+                        key={stx.id}
+                        onClick={() => {
+                          setActiveTx(stx);
+                          setActiveTab('details');
+                        }}
+                        className="p-3 rounded-xl border border-dark-border/70 light:border-light-border/70 bg-dark-surface-elevated/50 light:bg-light-surface-elevated/50 hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated hover:border-brand-primary/50 transition-all cursor-pointer flex items-center justify-between gap-3 text-xs group"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                          <CategoryBadge category={stx.category} size={18} />
+                          <div className="min-w-0 flex-1">
+                            <div className="font-bold text-dark-text light:text-light-text truncate group-hover:text-brand-primary transition-colors">
+                              {cleanSpacedHebrew(stx.userDescription || stx.merchantName || stx.description || 'ללא תיאור')}
+                            </div>
+                            <div className="text-[11px] text-dark-text-muted light:text-light-text-muted flex items-center gap-2 mt-0.5">
+                              <span className="font-mono">{formatDate(stx.date, lang)}</span>
+                              <span>•</span>
+                              <span className={stxAmt < 0 ? 'text-brand-expense font-bold' : 'text-brand-income font-bold'}>
+                                {formatILS(stx.amount, { showSign: true })}
+                              </span>
+                              {stx.accountDisplayName && (
+                                <>
+                                  <span>•</span>
+                                  <span className="truncate">{stx.accountDisplayName}</span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-dark-surface light:bg-light-surface border border-dark-border/40 text-dark-text-muted">
+                            {stx.category || 'ללא סיווג'}
+                          </span>
+                          <span className="text-dark-text-muted group-hover:text-brand-primary transition-colors text-xs font-bold">
+                            ←
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {/* Bottom Summary: Total of all similar transactions including this activeTx */}
+                  <div className="mt-3 p-3.5 rounded-xl border border-dark-border/80 light:border-light-border/80 bg-dark-surface-elevated light:bg-light-surface-elevated flex items-center justify-between text-xs font-semibold">
+                    <span className="text-dark-text-muted light:text-light-text-muted">
+                      סך הכל ({similarTxs.length + 1} תנועות):
+                    </span>
+                    <span 
+                      className={`text-sm font-bold font-mono ${
+                        ((parseFloat(activeTx.amount) || 0) + similarTxs.reduce((acc, stx) => acc + (parseFloat(stx.amount) || 0), 0)) < 0 
+                          ? 'text-brand-expense' 
+                          : 'text-brand-income'
+                      }`}
+                      dir="ltr"
+                    >
+                      {formatILS(
+                        (parseFloat(activeTx.amount) || 0) + similarTxs.reduce((acc, stx) => acc + (parseFloat(stx.amount) || 0), 0),
+                        { showSign: true }
+                      )}
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -1042,204 +1040,6 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
               </div>
             );
           })()}
-        </div>
-      </div>
-
-      {/* Full Interactive Transaction Linker Modal */}
-      {showFullLinkerModal && (
-        <FullTransactionLinkerModal
-          currentTx={activeTx}
-          linkType={linkType}
-          onSelectTx={async (targetId) => {
-            await handleLinkDirect(targetId);
-            setShowFullLinkerModal(false);
-          }}
-          onClose={() => setShowFullLinkerModal(false)}
-          lang={lang}
-        />
-      )}
-    </div>
-  );
-}
-
-function FullTransactionLinkerModal({
-  currentTx,
-  linkType,
-  onSelectTx,
-  onClose,
-  lang,
-}) {
-  const [search, setSearch] = useState('');
-  const [transactions, setTransactions] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [linkingId, setLinkingId] = useState(null);
-
-  const fetchCandidates = (searchTerm = '') => {
-    setLoading(true);
-    api.getTransactionsV2({
-      search: searchTerm.trim() || undefined,
-      limit: 60,
-    })
-      .then((res) => {
-        if (res.data) {
-          const list = (res.data.data || []).filter((t) => t.id !== currentTx.id);
-          setTransactions(list);
-        }
-      })
-      .finally(() => {
-        setLoading(false);
-      });
-  };
-
-  useEffect(() => {
-    fetchCandidates(search);
-  }, []);
-
-  const handleSearchSubmit = (e) => {
-    e.preventDefault();
-    fetchCandidates(search);
-  };
-
-  const handlePick = async (targetId) => {
-    setLinkingId(targetId);
-    try {
-      await onSelectTx(targetId);
-    } finally {
-      setLinkingId(null);
-    }
-  };
-
-  const currentAmt = parseFloat(currentTx.amount);
-
-  return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center p-3 sm:p-6 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="w-full max-w-4xl h-[85vh] rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface flex flex-col overflow-hidden shadow-2xl">
-        {/* Header */}
-        <div className="p-4 sm:p-5 border-b border-dark-border light:border-light-border flex items-center justify-between bg-dark-surface-elevated/50 light:bg-light-surface-elevated/50 shrink-0">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="p-1.5 rounded-lg bg-brand-primary/15 text-brand-primary">
-                <Link2 className="w-5 h-5" />
-              </span>
-              <h2 className="text-base sm:text-lg font-bold text-dark-text light:text-light-text">
-                {lang === 'he' ? 'בחר תנועה לקישור' : 'Link Transaction'}
-              </h2>
-            </div>
-            <p className="text-xs text-dark-text-muted light:text-light-text-muted mt-1">
-              {lang === 'he' ? 'מקשר עבור:' : 'Linking for:'}{' '}
-              <span className="font-semibold text-dark-text light:text-light-text">
-                {cleanSpacedHebrew(currentTx.userDescription || currentTx.merchantName || currentTx.description)}
-              </span>{' '}
-              ({formatDate(currentTx.date, lang)} •{' '}
-              <span className={currentAmt < 0 ? 'text-brand-expense font-bold' : 'text-brand-income font-bold'}>
-                {formatILS(currentTx.amount, { showSign: true })}
-              </span>
-              )
-            </p>
-          </div>
-
-          <button
-            onClick={onClose}
-            className="p-2 rounded-xl hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-dark-text-muted hover:text-dark-text cursor-pointer transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        {/* Search Bar */}
-        <div className="p-3 sm:p-4 border-b border-dark-border/70 light:border-light-border/70 bg-dark-surface light:bg-light-surface shrink-0">
-          <form onSubmit={handleSearchSubmit} className="flex gap-2">
-            <div className="relative flex-1">
-              <Search className="w-4 h-4 absolute right-3 rtl:right-3 ltr:left-3 top-2.5 text-dark-text-muted pointer-events-none" />
-              <input
-                type="text"
-                placeholder={lang === 'he' ? 'חפש לפי בית עסק, פירוט, תאריך או סכום...' : 'Search by merchant, memo, date or amount...'}
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="w-full py-2 pr-9 pl-3 rtl:pr-9 rtl:pl-3 ltr:pl-9 ltr:pr-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs focus:outline-none focus:border-brand-primary"
-              />
-            </div>
-            <button
-              type="submit"
-              className="px-4 py-2 rounded-xl bg-brand-primary hover:bg-brand-primary-hover text-white text-xs font-semibold transition-colors cursor-pointer shadow-sm"
-            >
-              {lang === 'he' ? 'חיפוש' : 'Search'}
-            </button>
-          </form>
-        </div>
-
-        {/* Scrollable Candidates List */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-2">
-          {loading ? (
-            <div className="py-20 text-center text-xs text-dark-text-muted flex flex-col items-center justify-center gap-2">
-              <RefreshCw className="w-5 h-5 animate-spin text-brand-primary" />
-              <span>{lang === 'he' ? 'טוען תנועות זמינות...' : 'Loading candidate transactions...'}</span>
-            </div>
-          ) : transactions.length === 0 ? (
-            <div className="py-20 text-center text-xs text-dark-text-muted">
-              {lang === 'he' ? 'לא נמצאו תנועות התואמות לחיפוש' : 'No matching transactions found'}
-            </div>
-          ) : (
-            transactions.map((item) => {
-              const itemAmt = parseFloat(item.amount);
-              const isItemLinking = linkingId === item.id;
-
-              return (
-                <div
-                  key={item.id}
-                  className="p-3 sm:p-4 rounded-xl border border-dark-border/80 light:border-light-border/80 bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40 hover:bg-dark-surface-elevated hover:border-brand-primary/50 transition-all flex items-center justify-between gap-3 text-xs"
-                >
-                  <div className="flex items-center gap-3 min-w-0 flex-1">
-                    <CategoryBadge category={item.category} size={20} />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-sm text-dark-text light:text-light-text truncate">
-                          {cleanSpacedHebrew(item.userDescription || item.merchantName || item.description || 'ללא שם')}
-                        </span>
-                        {item.accountDisplayName && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-dark-surface light:bg-light-surface border border-dark-border/40 text-dark-text-muted shrink-0">
-                            {item.accountDisplayName}
-                          </span>
-                        )}
-                        {item.category && (
-                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-brand-primary/10 text-brand-primary font-medium shrink-0">
-                            {item.category}
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-[11px] text-dark-text-muted light:text-light-text-muted flex items-center gap-2 mt-0.5">
-                        <span>{formatDate(item.date, lang)}</span>
-                        <span>•</span>
-                        <span className={itemAmt < 0 ? 'text-brand-expense font-bold' : 'text-brand-income font-bold'}>
-                          {formatILS(item.amount, { showSign: true })}
-                        </span>
-                        {item.description && item.description !== item.merchantName && (
-                          <>
-                            <span>•</span>
-                            <span className="truncate max-w-sm">{cleanSpacedHebrew(item.description)}</span>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    disabled={isItemLinking}
-                    onClick={() => handlePick(item.id)}
-                    className="px-3.5 py-2 rounded-xl bg-brand-primary hover:bg-brand-primary-hover text-white font-bold text-xs transition-all shrink-0 flex items-center gap-1.5 shadow-sm cursor-pointer disabled:opacity-50"
-                  >
-                    {isItemLinking ? (
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <Link2 className="w-3.5 h-3.5" />
-                    )}
-                    <span>{lang === 'he' ? 'קשר לתנועה זו' : 'Link This'}</span>
-                  </button>
-                </div>
-              );
-            })
-          )}
         </div>
       </div>
     </div>

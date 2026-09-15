@@ -88,6 +88,7 @@ export const api = {
     });
     return request(`/api/v2/transactions?${searchParams.toString()}`);
   },
+  getTransaction: (id) => request(`/api/v2/transactions/${id}`),
   updateTransaction: (id, data) => request(`/api/v2/transactions/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   getSimilarTransactions: (id) => request(`/api/v2/transactions/${id}/similar`),
   bulkUpdateTransactions: (data) => request('/api/v2/transactions/bulk-update', { method: 'POST', body: JSON.stringify(data) }),

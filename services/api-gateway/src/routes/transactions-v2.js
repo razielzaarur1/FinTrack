@@ -59,6 +59,50 @@ export function cleanSpacedHebrew(str) {
   return cleaned.join(' ').replace(/\s+/g, ' ').trim();
 }
 
+export function formatBitTransactionName(merchantName, description, memo) {
+  const m = cleanSpacedHebrew(merchantName || '').trim();
+  const d = cleanSpacedHebrew(description || '').trim();
+  const mem = cleanSpacedHebrew(memo || '').trim();
+
+  const isBit = /(?:^|[\s\-_/])(?:bit|ביט)(?:$|[\s\-_/])/i.test(m) ||
+                /(?:^|[\s\-_/])(?:bit|ביט)(?:$|[\s\-_/])/i.test(d) ||
+                /(?:^|[\s\-_/])(?:bit|ביט)(?:$|[\s\-_/])/i.test(mem);
+
+  if (!isBit) return null;
+
+  const candidates = [d, mem, m];
+  let detail = '';
+
+  for (const str of candidates) {
+    if (!str) continue;
+    let cleaned = str
+      .replace(/(?:^|[\s\-_/])(?:bit|ביט|העברה בביט|חיוב ביט|תשלום בביט)(?:$|[\s\-_/])/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    cleaned = cleaned.replace(/^[\s\-_:.]+|[\s\-_:.]+$/g, '').trim();
+
+    if (cleaned && !/^(בית עסק|העברה|חיוב|תשלום)$/.test(cleaned) && cleaned.length >= 2) {
+      detail = cleaned;
+      break;
+    }
+  }
+
+  if (!detail) {
+    for (const str of candidates) {
+      const clean = (str || '').replace(/^[\s\-_:.]+|[\s\-_:.]+$/g, '').trim();
+      if (clean && !/^(bit|ביט|בית עסק)$/i.test(clean)) {
+        detail = clean;
+        break;
+      }
+    }
+  }
+
+  if (detail) {
+    return `bit ${cleanSpacedHebrew(detail)}`;
+  }
+  return 'bit';
+}
+
 let hasRepaired0Amount = false;
 async function repair0AmountTransactions() {
   if (hasRepaired0Amount) return;
@@ -75,6 +119,30 @@ async function repair0AmountTransactions() {
       WHERE (amount = 0 OR amount IS NULL) AND raw_data IS NOT NULL
     `);
     hasRepaired0Amount = true;
+  } catch (err) {
+    // Non-critical background task
+  }
+}
+
+let hasRepairedBit = false;
+async function repairBitTransactions() {
+  if (hasRepairedBit) return;
+  try {
+    const res = await pool.query(`
+      SELECT id, merchant_name, description, raw_data
+      FROM transactions
+      WHERE (LOWER(merchant_name) LIKE '%bit%' OR LOWER(merchant_name) LIKE '%ביט%' OR LOWER(description) LIKE '%bit%' OR LOWER(description) LIKE '%ביט%')
+        AND (merchant_name IN ('ביט', 'BIT', 'בית עסק') OR merchant_name ILIKE 'ביט%' OR merchant_name ILIKE 'bit%')
+      LIMIT 300
+    `);
+    for (const row of res.rows) {
+      const rawMemo = row.raw_data?.memo;
+      const bitTitle = formatBitTransactionName(row.merchant_name, row.description, rawMemo);
+      if (bitTitle && bitTitle !== row.merchant_name) {
+        await pool.query('UPDATE transactions SET merchant_name = $1 WHERE id = $2', [bitTitle, row.id]);
+      }
+    }
+    hasRepairedBit = true;
   } catch (err) {
     // Non-critical background task
   }
@@ -103,6 +171,7 @@ const cursorPaginationQuerySchema = z.object({
 
 export default async function transactionsV2Routes(fastify, options) {
   repair0AmountTransactions().catch(() => {});
+  repairBitTransactions().catch(() => {});
 
   // GET /api/v2/transactions - Cursor-based Infinite Scroll Transactions with rich multi-filters
   fastify.get('/', async (request, reply) => {
@@ -316,12 +385,21 @@ export default async function transactionsV2Routes(fastify, options) {
       const hasNextPage = rows.length > limit;
       const rawData = hasNextPage ? rows.slice(0, limit) : rows;
 
-      const data = rawData.map((tx) => ({
-        ...tx,
-        merchantName: cleanSpacedHebrew(tx.merchantName),
-        description: cleanSpacedHebrew(tx.description),
-        userDescription: cleanSpacedHebrew(tx.userDescription),
-      }));
+      const data = rawData.map((tx) => {
+        let mName = cleanSpacedHebrew(tx.merchantName);
+        const desc = cleanSpacedHebrew(tx.description);
+        const rawMemo = tx.rawData?.memo;
+        const bitTitle = formatBitTransactionName(mName, desc, rawMemo);
+        if (bitTitle && (!tx.userDescription || !tx.userDescription.trim())) {
+          mName = bitTitle;
+        }
+        return {
+          ...tx,
+          merchantName: mName,
+          description: desc,
+          userDescription: cleanSpacedHebrew(tx.userDescription),
+        };
+      });
 
       const nextCursor = data.length > 0 ? data[data.length - 1].date : null;
       const nextCursorId = data.length > 0 ? data[data.length - 1].id : null;
@@ -334,6 +412,95 @@ export default async function transactionsV2Routes(fastify, options) {
       });
     } catch (err) {
       fastify.log.error(err, 'Error in cursor transactions query');
+      return reply.code(500).send({ error: 'Database error', message: err.message });
+    }
+  });
+
+  // GET /api/v2/transactions/:id - Fetch single transaction details
+  fastify.get('/:id', async (request, reply) => {
+    const { id } = request.params;
+    try {
+      const query = `
+        SELECT 
+          t.id,
+          t.account_id AS "accountId",
+          b.display_name AS "accountDisplayName",
+          b.bank_company AS "bankCompany",
+          b.account_number AS "accountNumber",
+          t.amount,
+          t.original_amount AS "originalAmount",
+          t.original_currency AS "originalCurrency",
+          t.charged_amount AS "chargedAmount",
+          t.description,
+          t.merchant_name AS "merchantName",
+          t.user_description AS "userDescription",
+          t.category,
+          t.date,
+          t.processed_date AS "processedDate",
+          t.memo,
+          t.raw_data AS "rawData",
+          t.identifier,
+          t.type,
+          t.installments,
+          t.is_ignored AS "isIgnored",
+          t.is_reviewed AS "isReviewed",
+          t.is_flagged AS "isFlagged",
+          t.is_split AS "isSplit",
+          CASE 
+            WHEN t.category = 'משיכת מזומן' 
+              OR LOWER(t.merchant_name) LIKE '%משיכת מזומן%' 
+              OR LOWER(t.description) LIKE '%משיכת מזומן%'
+              OR LOWER(t.merchant_name) LIKE '%כספומט%'
+              OR LOWER(t.description) LIKE '%כספומט%' 
+              OR LOWER(t.merchant_name) LIKE '%atm%'
+            THEN true
+            ELSE false
+          END AS "isCashWithdrawal",
+          t.status,
+          t.created_at AS "createdAt",
+          (SELECT COUNT(*) FROM transaction_notes tn WHERE tn.transaction_id = t.id) > 0 AS "hasNotes",
+          (SELECT COUNT(*) FROM transaction_links tl WHERE tl.transaction_id_a = t.id OR tl.transaction_id_b = t.id) > 0 AS "hasLinks",
+          (
+            SELECT COALESCE(
+              json_agg(
+                json_build_object(
+                  'id', ts.id,
+                  'category', ts.category,
+                  'amount', ts.amount,
+                  'description', ts.description
+                )
+              ),
+              '[]'::json
+            )
+            FROM transaction_splits ts
+            WHERE ts.transaction_id = t.id
+          ) AS "splits"
+        FROM transactions t
+        JOIN bank_accounts b ON t.account_id = b.id
+        WHERE t.id = $1
+      `;
+      const result = await pool.query(query, [id]);
+      if (result.rows.length === 0) {
+        return reply.code(404).send({ error: 'Transaction not found' });
+      }
+      const tx = result.rows[0];
+      let mName = cleanSpacedHebrew(tx.merchantName);
+      const desc = cleanSpacedHebrew(tx.description);
+      const rawMemo = tx.rawData?.memo;
+      const bitTitle = formatBitTransactionName(mName, desc, rawMemo);
+      if (bitTitle && (!tx.userDescription || !tx.userDescription.trim())) {
+        mName = bitTitle;
+      }
+      return reply.code(200).send({
+        data: {
+          ...tx,
+          merchantName: mName,
+          description: desc,
+          userDescription: cleanSpacedHebrew(tx.userDescription),
+        }
+      });
+    } catch (err) {
+      fastify.log.error(err, 'Error in single transaction query');
       return reply.code(500).send({ error: 'Database error', message: err.message });
     }
   });

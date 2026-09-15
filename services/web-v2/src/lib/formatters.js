@@ -78,3 +78,71 @@ export const cleanSpacedHebrew = (str) => {
   });
   return cleaned.join(' ').replace(/\s+/g, ' ').trim();
 };
+
+/**
+ * Detects if a transaction is from BIT and formats its display name:
+ * "bit [original transaction description or memo]"
+ */
+export const formatBitTransactionName = (merchantName, description, memo) => {
+  const m = cleanSpacedHebrew(merchantName || '').trim();
+  const d = cleanSpacedHebrew(description || '').trim();
+  const mem = cleanSpacedHebrew(memo || '').trim();
+
+  // Check if BIT appears in merchantName, description, or memo
+  const isBit = /(?:^|[\s\-_/])(?:bit|ביט)(?:$|[\s\-_/])/i.test(m) ||
+                /(?:^|[\s\-_/])(?:bit|ביט)(?:$|[\s\-_/])/i.test(d) ||
+                /(?:^|[\s\-_/])(?:bit|ביט)(?:$|[\s\-_/])/i.test(mem);
+
+  if (!isBit) return null;
+
+  // Extract the original description / memo details beyond the word "bit"
+  const candidates = [d, mem, m];
+  let detail = '';
+
+  for (const str of candidates) {
+    if (!str) continue;
+    let cleaned = str
+      .replace(/(?:^|[\s\-_/])(?:bit|ביט|העברה בביט|חיוב ביט|תשלום בביט)(?:$|[\s\-_/])/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    cleaned = cleaned.replace(/^[\s\-_:.]+|[\s\-_:.]+$/g, '').trim();
+
+    if (cleaned && !/^(בית עסק|העברה|חיוב|תשלום)$/.test(cleaned) && cleaned.length >= 2) {
+      detail = cleaned;
+      break;
+    }
+  }
+
+  if (!detail) {
+    for (const str of candidates) {
+      const clean = (str || '').replace(/^[\s\-_:.]+|[\s\-_:.]+$/g, '').trim();
+      if (clean && !/^(bit|ביט|בית עסק)$/i.test(clean)) {
+        detail = clean;
+        break;
+      }
+    }
+  }
+
+  if (detail) {
+    return `bit ${cleanSpacedHebrew(detail)}`;
+  }
+  return 'bit';
+};
+
+/**
+ * Resolves the display headline/title for a transaction:
+ * Priority: userDescription > formatBitTransactionName > merchantName > description > 'ללא שם'
+ */
+export const getTransactionTitle = (tx) => {
+  if (!tx) return 'ללא תיאור';
+  if (tx.userDescription && tx.userDescription.trim()) {
+    return cleanSpacedHebrew(tx.userDescription);
+  }
+  const rawMemo = tx.rawData?.memo || tx.memo;
+  const bitName = formatBitTransactionName(tx.merchantName, tx.description, rawMemo);
+  if (bitName) {
+    return bitName;
+  }
+  return cleanSpacedHebrew(tx.merchantName || tx.description || 'ללא תיאור');
+};
+

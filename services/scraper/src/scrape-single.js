@@ -157,6 +157,54 @@ export function cleanSpacedHebrew(str) {
 }
 
 /**
+ * Detects if a transaction is from BIT and formats its display name:
+ * "bit [original transaction description or memo]"
+ */
+export function formatBitTransactionName(merchantName, description, memo) {
+  const m = cleanSpacedHebrew(merchantName || '').trim();
+  const d = cleanSpacedHebrew(description || '').trim();
+  const mem = cleanSpacedHebrew(memo || '').trim();
+
+  const isBit = /(?:^|[\s\-_/])(?:bit|ביט)(?:$|[\s\-_/])/i.test(m) ||
+                /(?:^|[\s\-_/])(?:bit|ביט)(?:$|[\s\-_/])/i.test(d) ||
+                /(?:^|[\s\-_/])(?:bit|ביט)(?:$|[\s\-_/])/i.test(mem);
+
+  if (!isBit) return null;
+
+  const candidates = [d, mem, m];
+  let detail = '';
+
+  for (const str of candidates) {
+    if (!str) continue;
+    let cleaned = str
+      .replace(/(?:^|[\s\-_/])(?:bit|ביט|העברה בביט|חיוב ביט|תשלום בביט)(?:$|[\s\-_/])/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    cleaned = cleaned.replace(/^[\s\-_:.]+|[\s\-_:.]+$/g, '').trim();
+
+    if (cleaned && !/^(בית עסק|העברה|חיוב|תשלום)$/.test(cleaned) && cleaned.length >= 2) {
+      detail = cleaned;
+      break;
+    }
+  }
+
+  if (!detail) {
+    for (const str of candidates) {
+      const clean = (str || '').replace(/^[\s\-_:.]+|[\s\-_:.]+$/g, '').trim();
+      if (clean && !/^(bit|ביט|בית עסק)$/i.test(clean)) {
+        detail = clean;
+        break;
+      }
+    }
+  }
+
+  if (detail) {
+    return `bit ${cleanSpacedHebrew(detail)}`;
+  }
+  return 'bit';
+}
+
+/**
  * Extracts 4-digit card number reliably from card metadata or internal transactions.
  */
 export function extractCardLast4(card, cardTxns = []) {
@@ -285,8 +333,12 @@ async function saveTransactionsList(client, accountId, transactions, userId = '0
       amount = origNum;
     }
     
-    const merchantName = cleanSpacedHebrew((tx.description || tx.memo || '').trim()) || 'בית עסק';
+    let merchantName = cleanSpacedHebrew((tx.description || tx.memo || '').trim()) || 'בית עסק';
     const description = cleanSpacedHebrew((tx.memo && tx.memo !== tx.description ? tx.memo : tx.description) || '');
+    const bitTitle = formatBitTransactionName(merchantName, description, tx.memo);
+    if (bitTitle) {
+      merchantName = bitTitle;
+    }
     const currency = tx.originalCurrency || tx.chargedCurrency || 'ILS';
 
     // Track occurrences of identical transactions on the same day to maintain uniqueness

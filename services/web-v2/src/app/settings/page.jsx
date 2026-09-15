@@ -420,8 +420,8 @@ export default function SettingsPage() {
               </div>
               <div className="text-dark-text-muted light:text-light-text-muted text-[11px] mt-0.5">
                 {lang === 'he'
-                  ? 'הספריות של Max, כאל ובנקים תומכות במשיכה של עד שנה (365 יום) או שנתיים אחורה'
-                  : 'Israeli bank scrapers support fetching up to 1 year (365 days) or 2 years back'}
+                  ? 'תמיכה במשיכה של עד 4 שנים אחורה (1460 יום - בהתאם למוסד הפיננסי)'
+                  : 'Scrapers support fetching up to 4 years back (1460 days - subject to institution support)'}
               </div>
             </div>
 
@@ -437,7 +437,9 @@ export default function SettingsPage() {
                 <option value="90">{lang === 'he' ? '3 חודשים אחורה (90 יום)' : '3 Months (90 days)'}</option>
                 <option value="180">{lang === 'he' ? 'חצי שנה אחורה (180 יום)' : '6 Months (180 days)'}</option>
                 <option value="365">{lang === 'he' ? 'שנה אחורה (365 יום - מומלץ למשיכה מלאה)' : '1 Year (365 days - Full History)'}</option>
-                <option value="730">{lang === 'he' ? 'שנתיים אחורה (730 יום - מוסדות תומכים)' : '2 Years (730 days)'}</option>
+                <option value="730">{lang === 'he' ? 'שנתיים אחורה (730 יום)' : '2 Years (730 days)'}</option>
+                <option value="1095">{lang === 'he' ? '3 שנים אחורה (1095 יום)' : '3 Years (1095 days)'}</option>
+                <option value="1460">{lang === 'he' ? '4 שנים אחורה (1460 יום - היסטוריה מורחבת)' : '4 Years (1460 days - Extended History)'}</option>
               </select>
 
               {settingsSaved && (
