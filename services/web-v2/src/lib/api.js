@@ -90,6 +90,7 @@ export const api = {
     return request(`/api/v2/transactions?${searchParams.toString()}`);
   },
   getTransaction: (id) => request(`/api/v2/transactions/${id}`),
+  getCurrencies: (params) => request(`/api/v2/transactions/currencies${params?.refresh ? '?refresh=true' : ''}`),
   updateTransaction: (id, data) => request(`/api/v2/transactions/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   getSimilarTransactions: (id) => request(`/api/v2/transactions/${id}/similar`),
   getTxFxDetails: (id) => request(`/api/v2/transactions/${id}/fx`),

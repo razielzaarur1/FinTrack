@@ -187,6 +187,8 @@ const cursorPaginationQuerySchema = z.object({
   accountIds: z.string().optional(),
   category: z.string().optional(),
   categories: z.string().optional(),
+  currency: z.string().optional(),
+  currencies: z.string().optional(),
   type: z.enum(['income', 'expense', 'all']).optional(),
   startDate: z.string().optional(),
   endDate: z.string().optional(),
@@ -222,6 +224,8 @@ export default async function transactionsV2Routes(fastify, options) {
       accountIds,
       category,
       categories,
+      currency,
+      currencies,
       type,
       startDate,
       endDate,
@@ -276,6 +280,18 @@ export default async function transactionsV2Routes(fastify, options) {
     } else if (category) {
       values.push(category);
       conditions.push(`(t.category = $${values.length} OR EXISTS (SELECT 1 FROM transaction_splits ts WHERE ts.transaction_id = t.id AND ts.category = $${values.length}))`);
+    }
+
+    // Currency / Currencies (multi-select support)
+    if (currencies) {
+      const currs = String(currencies).split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+      if (currs.length > 0) {
+        values.push(currs);
+        conditions.push(`UPPER(TRIM(t.currency)) = ANY($${values.length})`);
+      }
+    } else if (currency) {
+      values.push(currency.trim().toUpperCase());
+      conditions.push(`UPPER(TRIM(t.currency)) = $${values.length}`);
     }
 
     // Reviewed / Flagged filter
@@ -456,6 +472,82 @@ export default async function transactionsV2Routes(fastify, options) {
       });
     } catch (err) {
       fastify.log.error(err, 'Error in cursor transactions query');
+      return reply.code(500).send({ error: 'Database error', message: err.message });
+    }
+  });
+
+  // In-memory cache for available currencies (TTL 5 minutes)
+  let cachedCurrencies = null;
+  let cachedCurrenciesExpiry = 0;
+  const CURRENCIES_CACHE_TTL_MS = 5 * 60 * 1000;
+
+  const CURRENCY_METADATA = {
+    ILS: { symbol: '₪', name: 'שקל ישראלי (ILS)' },
+    NIS: { symbol: '₪', name: 'שקל ישראלי (ILS)' },
+    USD: { symbol: '$', name: 'דולר אמריקאי (USD)' },
+    EUR: { symbol: '€', name: 'אירו (EUR)' },
+    GBP: { symbol: '£', name: 'לירה שטרלינג (GBP)' },
+    JPY: { symbol: '¥', name: 'ין יפני (JPY)' },
+    CAD: { symbol: 'C$', name: 'דולר קנדי (CAD)' },
+    AUD: { symbol: 'A$', name: 'דולר אוסטרלי (AUD)' },
+    CHF: { symbol: 'CHF', name: 'פרנק שוויצרי (CHF)' },
+    CNY: { symbol: '¥', name: 'יואן סיני (CNY)' },
+    INR: { symbol: '₹', name: 'רופי הודי (INR)' },
+    THB: { symbol: '฿', name: 'באט תאילנדי (THB)' },
+    TRY: { symbol: '₺', name: 'לירה טורקית (TRY)' },
+    AED: { symbol: 'د.إ', name: 'דירהם אמירתי (AED)' },
+    BRL: { symbol: 'R$', name: 'ריאל ברזילאי (BRL)' },
+    MXN: { symbol: 'Mex$', name: 'פזו מקסיקני (MXN)' },
+    SGD: { symbol: 'S$', name: 'דולר סינגפורי (SGD)' },
+    HKD: { symbol: 'HK$', name: 'דולר הונג קונגי (HKD)' },
+  };
+
+  // GET /api/v2/transactions/currencies - Fast, smart cached list of existing currencies in DB
+  fastify.get('/currencies', async (request, reply) => {
+    const forceRefresh = request.query?.refresh === 'true' || request.query?.refresh === '1';
+    const now = Date.now();
+
+    if (!forceRefresh && cachedCurrencies && now < cachedCurrenciesExpiry) {
+      return reply.code(200).send({
+        data: cachedCurrencies,
+        cached: true,
+      });
+    }
+
+    try {
+      const result = await pool.query(`
+        SELECT 
+          UPPER(TRIM(currency)) AS currency,
+          COUNT(*)::int AS count
+        FROM transactions
+        WHERE currency IS NOT NULL AND TRIM(currency) != ''
+        GROUP BY UPPER(TRIM(currency))
+        ORDER BY count DESC
+      `);
+
+      const list = result.rows.map((row) => {
+        const code = row.currency;
+        const meta = CURRENCY_METADATA[code] || {
+          symbol: code,
+          name: code,
+        };
+        return {
+          currency: code,
+          symbol: meta.symbol,
+          name: meta.name,
+          count: row.count,
+        };
+      });
+
+      cachedCurrencies = list;
+      cachedCurrenciesExpiry = now + CURRENCIES_CACHE_TTL_MS;
+
+      return reply.code(200).send({
+        data: list,
+        cached: false,
+      });
+    } catch (err) {
+      fastify.log.error(err, 'Error querying transaction currencies');
       return reply.code(500).send({ error: 'Database error', message: err.message });
     }
   });
@@ -1394,15 +1486,8 @@ export default async function transactionsV2Routes(fastify, options) {
           t.category,
           t.user_description AS "userDescription",
           t.is_ignored AS "isIgnored",
-          t.identifier,
-          t.processed_date AS "processedDate",
-          t.original_amount AS "originalAmount",
-          t.original_currency AS "originalCurrency",
-          t.charged_amount AS "chargedAmount",
-          t.memo,
           t.status,
-          t.type,
-          t.installments,
+          t.processed_date AS "processedDate",
           t.raw_data AS "rawData",
           b.display_name AS "accountDisplayName",
           b.bank_company AS "bankCompany",
@@ -1417,6 +1502,12 @@ export default async function transactionsV2Routes(fastify, options) {
       }
 
       const row = res.rows[0];
+      let raw = row.rawData;
+      if (typeof raw === 'string') {
+        try { raw = JSON.parse(raw); } catch (e) { raw = {}; }
+      }
+      if (!raw || typeof raw !== 'object') raw = {};
+
       return reply.code(200).send({
         data: {
           id: row.id,
@@ -1428,15 +1519,15 @@ export default async function transactionsV2Routes(fastify, options) {
           category: row.category,
           userDescription: cleanSpacedHebrew(row.userDescription),
           isIgnored: Boolean(row.isIgnored),
-          identifier: row.identifier,
-          processedDate: row.processedDate,
-          originalAmount: row.originalAmount,
-          originalCurrency: row.originalCurrency,
-          chargedAmount: row.chargedAmount,
-          memo: cleanSpacedHebrew(row.memo),
-          status: row.status,
-          type: row.type,
-          installments: row.installments,
+          identifier: raw.identifier || row.id,
+          processedDate: row.processedDate || raw.processedDate || row.date,
+          originalAmount: raw.originalAmount != null ? raw.originalAmount : row.amount,
+          originalCurrency: raw.originalCurrency || row.currency || 'ILS',
+          chargedAmount: raw.chargedAmount != null ? raw.chargedAmount : row.amount,
+          memo: cleanSpacedHebrew(raw.memo || ''),
+          status: row.status || raw.status || 'completed',
+          type: raw.type || (parseFloat(row.amount) < 0 ? 'expense' : 'income'),
+          installments: raw.installments || null,
           rawData: row.rawData,
           accountDisplayName: row.accountDisplayName || row.bankCompany,
           bankCompany: row.bankCompany,

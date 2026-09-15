@@ -22,7 +22,8 @@ import {
   CheckSquare,
   Square,
   Check,
-  Receipt
+  Receipt,
+  Coins
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { formatILS, formatDate, cleanSpacedHebrew, getTransactionTitle, formatCurrency } from '@/lib/formatters';
@@ -41,6 +42,7 @@ function TransactionsContent() {
 
   const [transactions, setTransactions] = useState([]);
   const [accounts, setAccounts] = useState([]);
+  const [availableCurrencies, setAvailableCurrencies] = useState([]);
   const [loading, setLoading] = useState(false);
   const [nextCursor, setNextCursor] = useState(null);
   const [nextCursorId, setNextCursorId] = useState(null);
@@ -56,6 +58,7 @@ function TransactionsContent() {
   const [type, setType] = useState('all'); // all, expense, income
   const [selectedAccountIds, setSelectedAccountIds] = useState(initialAccountId ? [initialAccountId] : []);
   const [selectedCategories, setSelectedCategories] = useState([]);
+  const [selectedCurrencies, setSelectedCurrencies] = useState([]);
   const [minAmount, setMinAmount] = useState('');
   const [maxAmount, setMaxAmount] = useState('');
   const [datePreset, setDatePreset] = useState('all'); // all, current_month, last_month, last_90, custom
@@ -137,10 +140,13 @@ function TransactionsContent() {
 
   const observer = useRef();
 
-  // Load user accounts for filter options
+  // Load user accounts and available currencies for filter options
   useEffect(() => {
     api.getAccounts().then((res) => {
       if (res.data) setAccounts(res.data);
+    });
+    api.getCurrencies().then((res) => {
+      if (res.data?.data) setAvailableCurrencies(res.data.data);
     });
   }, []);
 
@@ -231,7 +237,7 @@ function TransactionsContent() {
     return () => {
       window.removeEventListener('fintrack_tx_updated', handleSync);
     };
-  }, [type, selectedAccountIds, selectedCategories, datePreset, startDate, endDate]);
+  }, [type, selectedAccountIds, selectedCategories, selectedCurrencies, datePreset, startDate, endDate]);
 
   // Options for Account Multi-Select
   const accountOptions = useMemo(() => {
@@ -264,6 +270,20 @@ function TransactionsContent() {
     });
     return list;
   }, []);
+
+  // Options for Currency Multi-Select
+  const currencyOptions = useMemo(() => {
+    return availableCurrencies.map((c) => ({
+      id: c.currency,
+      label: `${c.symbol || c.currency} - ${c.currency}`,
+      secondaryLabel: `${c.count} תנועות`,
+      icon: (
+        <span className="w-5 h-5 rounded-md bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold text-xs">
+          {c.symbol || c.currency}
+        </span>
+      ),
+    }));
+  }, [availableCurrencies]);
 
   // Quick month selector helper options (last 24 months)
   const monthOptions = useMemo(() => {
@@ -325,6 +345,7 @@ function TransactionsContent() {
     type !== 'all' ? 1 : 0,
     selectedAccountIds.length > 0 ? selectedAccountIds.length : 0,
     selectedCategories.length > 0 ? selectedCategories.length : 0,
+    selectedCurrencies.length > 0 ? selectedCurrencies.length : 0,
     minAmount ? 1 : 0,
     maxAmount ? 1 : 0,
     datePreset !== 'all' || startDate || endDate ? 1 : 0,
@@ -366,6 +387,7 @@ function TransactionsContent() {
         type: type !== 'all' ? type : undefined,
         accountIds: selectedAccountIds.length > 0 ? selectedAccountIds : undefined,
         categories: selectedCategories.length > 0 ? selectedCategories : undefined,
+        currencies: selectedCurrencies.length > 0 ? selectedCurrencies : undefined,
         minAmount: minAmount ? parseFloat(minAmount) : undefined,
         maxAmount: maxAmount ? parseFloat(maxAmount) : undefined,
         startDate: range.start,
@@ -388,7 +410,7 @@ function TransactionsContent() {
   // Reload transactions on filter change
   useEffect(() => {
     loadTransactions(null, null, true);
-  }, [type, selectedAccountIds, selectedCategories, datePreset, startDate, endDate]);
+  }, [type, selectedAccountIds, selectedCategories, selectedCurrencies, datePreset, startDate, endDate]);
 
   const handleSearchSubmit = (e) => {
     e?.preventDefault();
@@ -400,6 +422,7 @@ function TransactionsContent() {
     setType('all');
     setSelectedAccountIds([]);
     setSelectedCategories([]);
+    setSelectedCurrencies([]);
     setMinAmount('');
     setMaxAmount('');
     setDatePreset('all');
@@ -626,12 +649,12 @@ function TransactionsContent() {
 
         {/* Expandable Advanced Multi-Select Filters */}
         {showFilters && (
-          <div className="pt-3 border-t border-dark-border/60 light:border-light-border/60 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 animate-in fade-in duration-200">
+          <div className="pt-3 border-t border-dark-border/60 light:border-light-border/60 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 animate-in fade-in duration-200">
             {/* 1. Account / Card Multi-Select Filter */}
             <div className="space-y-1">
               <label className="text-[11px] font-semibold text-dark-text-muted light:text-light-text-muted flex items-center gap-1">
                 <CreditCard className="w-3 h-3 text-indigo-400" />
-                <span>חשבונות וכרטיסים (בחירה מרובה)</span>
+                <span>חשבונות וכרטיסים</span>
               </label>
               <MultiSelectDropdown
                 label="בחר חשבונות"
@@ -648,7 +671,7 @@ function TransactionsContent() {
             <div className="space-y-1">
               <label className="text-[11px] font-semibold text-dark-text-muted light:text-light-text-muted flex items-center gap-1">
                 <Tag className="w-3 h-3 text-pink-400" />
-                <span>קטגוריות (בחירה מרובה)</span>
+                <span>קטגוריות</span>
               </label>
               <MultiSelectDropdown
                 label="בחר קטגוריות"
@@ -661,10 +684,27 @@ function TransactionsContent() {
               />
             </div>
 
-            {/* 3. Amount Range (Min - Max) */}
+            {/* 3. Currency Multi-Select Filter */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-semibold text-dark-text-muted light:text-light-text-muted flex items-center gap-1">
+                <Coins className="w-3 h-3 text-emerald-400" />
+                <span>מטבע</span>
+              </label>
+              <MultiSelectDropdown
+                label="בחר מטבעות"
+                options={currencyOptions}
+                selectedValues={selectedCurrencies}
+                onChange={setSelectedCurrencies}
+                placeholder="כל המטבעות"
+                icon={Coins}
+                className="w-full"
+              />
+            </div>
+
+            {/* 4. Amount Range (Min - Max) */}
             <div className="space-y-1">
               <label className="text-[11px] font-semibold text-dark-text-muted light:text-light-text-muted">
-                סכום (₪) מינימום - מקסימום
+                סכום מינימום - מקסימום
               </label>
               <div className="flex items-center gap-1.5">
                 <input
@@ -687,7 +727,7 @@ function TransactionsContent() {
               </div>
             </div>
 
-            {/* 4. Date Filter */}
+            {/* 5. Date Filter */}
             <div className="space-y-1">
               <label className="text-[11px] font-semibold text-dark-text-muted light:text-light-text-muted flex items-center gap-1">
                 <Calendar className="w-3 h-3 text-sky-400" />
@@ -772,9 +812,21 @@ function TransactionsContent() {
               </span>
             ))}
 
+            {selectedCurrencies.map((code) => {
+              const curr = availableCurrencies.find((c) => c.currency === code);
+              return (
+                <span key={code} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-medium text-[11px]">
+                  <span>מטבע: {curr?.symbol ? `${curr.symbol} (${code})` : code}</span>
+                  <button onClick={() => setSelectedCurrencies(selectedCurrencies.filter((c) => c !== code))}>
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              );
+            })}
+
             {(minAmount || maxAmount) && (
               <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-500 dark:text-amber-400 font-medium text-[11px]">
-                <span>סכום: {minAmount || '0'} ₪ עד {maxAmount || '∞'} ₪</span>
+                <span>סכום: {minAmount || '0'} עד {maxAmount || '∞'}</span>
                 <button onClick={() => { setMinAmount(''); setMaxAmount(''); loadTransactions(null, null, true); }}>
                   <X className="w-3 h-3" />
                 </button>

@@ -35,6 +35,128 @@ import CategoryBadge from '@/components/common/CategoryBadge';
 import CategoryPicker from '@/components/common/CategoryPicker';
 import { formatILS, formatDate, cleanSpacedHebrew, getTransactionTitle } from '@/lib/formatters';
 
+function ChromeErrorPage() {
+  const [currentHost, setCurrentHost] = useState('');
+  const [isHebrew, setIsHebrew] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      document.title = 'This site can’t be reached';
+      setCurrentHost(window.location.hostname || 'localhost');
+      const lang = navigator.language || navigator.userLanguage || '';
+      if (lang.startsWith('he')) {
+        setIsHebrew(true);
+        document.title = 'לא ניתן להגיע לאתר הזה';
+      }
+    }
+  }, []);
+
+  const handleReload = () => {
+    if (typeof window !== 'undefined') {
+      window.location.reload();
+    }
+  };
+
+  return (
+    <div
+      className="min-h-screen w-full bg-white dark:bg-[#202124] text-[#202124] dark:text-[#e8eaed] px-6 py-16 flex flex-col justify-start select-none"
+      style={{
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif',
+        direction: isHebrew ? 'rtl' : 'ltr',
+        textAlign: isHebrew ? 'right' : 'left'
+      }}
+    >
+      <div className="max-w-[600px] w-full mx-auto">
+        {/* Chrome Sad Document Icon */}
+        <div className="mb-6">
+          <svg
+            width="48"
+            height="48"
+            viewBox="0 0 48 48"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              d="M12 6C10.3431 6 9 7.34315 9 9V39C9 40.6569 10.3431 42 12 42H36C37.6569 42 39 40.6569 39 39V16L29 6H12Z"
+              fill="#dadce0"
+              className="dark:fill-[#3c4043]"
+            />
+            <path
+              d="M28 6V17H39L28 6Z"
+              fill="#bdc1c6"
+              className="dark:fill-[#5f6368]"
+            />
+            <circle cx="19" cy="25" r="2.5" fill="#5f6368" className="dark:fill-[#9aa0a6]" />
+            <circle cx="29" cy="25" r="2.5" fill="#5f6368" className="dark:fill-[#9aa0a6]" />
+            <path
+              d="M28 33C27 31.5 25 31.5 24 31.5C23 31.5 21 31.5 20 33"
+              stroke="#5f6368"
+              className="dark:stroke-[#9aa0a6]"
+              strokeWidth="2"
+              strokeLinecap="round"
+            />
+          </svg>
+        </div>
+
+        {/* Heading */}
+        <h1 className="text-2xl font-normal leading-8 mb-4 text-[#202124] dark:text-[#e8eaed]">
+          {isHebrew ? 'לא ניתן להגיע לאתר הזה' : 'This site can’t be reached'}
+        </h1>
+
+        {/* Body Text */}
+        <p className="text-sm leading-[22px] mb-4 text-[#5f6368] dark:text-[#9aa0a6]">
+          {isHebrew ? (
+            <>
+              ייתכן שדף האינטרנט בכתובת{' '}
+              <strong className="text-[#202124] dark:text-[#e8eaed] font-medium">{currentHost}</strong>{' '}
+              מושבת באופן זמני או שהועבר לצמיתות לכתובת אינטרנט חדשה.
+            </>
+          ) : (
+            <>
+              The webpage at{' '}
+              <strong className="text-[#202124] dark:text-[#e8eaed] font-medium">{currentHost}</strong>{' '}
+              might be temporarily down or it may have moved permanently to a new web address.
+            </>
+          )}
+        </p>
+
+        {/* Troubleshooting bullet points */}
+        <ul className="text-sm leading-6 mb-7 text-[#5f6368] dark:text-[#9aa0a6] list-disc list-inside space-y-1">
+          {isHebrew ? (
+            <>
+              <li>בדוק את החיבור לרשת</li>
+              <li>בדוק את שרת ה-proxy ואת חומת האש</li>
+              <li>הפעל את אבחון הרשת של Windows</li>
+            </>
+          ) : (
+            <>
+              <li>Check the connection</li>
+              <li>Check the proxy and the firewall</li>
+              <li>Running Windows Network Diagnostics</li>
+            </>
+          )}
+        </ul>
+
+        {/* Reload button */}
+        <div className="mb-10">
+          <button
+            type="button"
+            onClick={handleReload}
+            className="bg-[#1a73e8] hover:bg-[#1765cc] text-white text-sm font-medium py-2 px-4 rounded transition-colors"
+          >
+            {isHebrew ? 'טען מחדש' : 'Reload'}
+          </button>
+        </div>
+
+        {/* Error code at bottom */}
+        <div className="text-[11px] font-medium text-[#70757a] dark:text-[#9aa0a6] tracking-wider uppercase">
+          HTTP ERROR 404
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function TmaTransactionPage() {
   const params = useParams();
   const searchParams = useSearchParams();
@@ -103,28 +225,41 @@ export default function TmaTransactionPage() {
 
     const checkTg = () => {
       attempts++;
-      if (typeof window !== 'undefined' && window.Telegram?.WebApp) {
-        const tg = window.Telegram.WebApp;
-        try {
-          tg.ready();
-          tg.expand();
-          if (tg.setHeaderColor) tg.setHeaderColor('#0f172a');
-        } catch (e) {
-          console.warn('Telegram WebApp init error:', e);
+      if (typeof window !== 'undefined') {
+        if (window.Telegram?.WebApp) {
+          const tg = window.Telegram.WebApp;
+          try {
+            tg.ready();
+            tg.expand();
+            if (tg.setHeaderColor) tg.setHeaderColor('#0f172a');
+          } catch (e) {
+            console.warn('Telegram WebApp init error:', e);
+          }
+
+          if (tg.initData) {
+            setInitData(tg.initData);
+            setIsTelegramEnv(true);
+            if (checkInterval) clearInterval(checkInterval);
+            return true;
+          }
         }
 
-        if (tg.initData) {
-          setInitData(tg.initData);
-          setIsTelegramEnv(true);
-          if (checkInterval) clearInterval(checkInterval);
-          return true;
+        // Also check hash parameters for launch data
+        if (window.location.hash && window.location.hash.includes('tgWebAppData=')) {
+          const hashParams = new URLSearchParams(window.location.hash.substring(1));
+          const hashData = hashParams.get('tgWebAppData');
+          if (hashData) {
+            setInitData(hashData);
+            setIsTelegramEnv(true);
+            if (checkInterval) clearInterval(checkInterval);
+            return true;
+          }
         }
       }
 
-      if (attempts >= 10) {
-        const tgData = (typeof window !== 'undefined' && window.Telegram?.WebApp?.initData) || '';
-        setInitData(tgData);
-        setIsTelegramEnv(Boolean(tgData));
+      // After 3 attempts (approx 300ms), confirm this is a standard external browser
+      if (attempts >= 3) {
+        setIsTelegramEnv(false);
         if (checkInterval) clearInterval(checkInterval);
       }
       return false;
@@ -416,28 +551,19 @@ export default function TmaTransactionPage() {
     }
   };
 
+  if (isTelegramEnv === false) {
+    return <ChromeErrorPage />;
+  }
+
+  if (isTelegramEnv === null) {
+    return <div className="min-h-screen bg-white dark:bg-[#202124]" />;
+  }
+
   return (
     <>
       <Script src="https://telegram.org/js/telegram-web-app.js" strategy="beforeInteractive" />
 
       <div className="min-h-screen bg-slate-950 text-slate-100 font-sans rtl flex flex-col justify-between overflow-x-hidden">
-        {/* Blocked Browser View */}
-        {isTelegramEnv === false && (
-          <div className="p-6 m-4 rounded-2xl bg-slate-900 border border-slate-800 text-center space-y-4 shadow-2xl my-auto">
-            <div className="w-14 h-14 rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 mx-auto">
-              <ShieldAlert className="w-7 h-7" />
-            </div>
-            <div className="space-y-1">
-              <h2 className="text-base font-bold text-slate-100">גישה חסומה (403 Forbidden)</h2>
-              <p className="text-xs text-slate-400 leading-relaxed">
-                ממשק עריכה זה מוגן ונגיש אך ורק מתוך אפליקציית טלגרם בחשבונך המורשה.
-              </p>
-            </div>
-            <p className="text-[11px] text-slate-500 bg-slate-950 p-3 rounded-xl border border-slate-800/80">
-              🔒 נחסמה גישה מדפדפן חיצוני או ממשתמש שאינו מורשה בהגדרות המערכת.
-            </p>
-          </div>
-        )}
 
         {/* Loading State */}
         {loading && isTelegramEnv !== false && (
