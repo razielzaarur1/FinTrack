@@ -18,6 +18,8 @@ import transactionsV2Routes from './routes/transactions-v2.js';
 import categoriesRoutes from './routes/categories.js';
 import analyticsRoutes from './routes/analytics.js';
 import authRoutes from './routes/auth.js';
+import receiptsRoutes from './routes/receipts.js';
+import multipart from '@fastify/multipart';
 import { autoScrapeScheduler } from './services/scheduler.js';
 
 function readSecret(filePath, envVarName) {
@@ -70,6 +72,13 @@ await fastify.register(rateLimit, {
 // Register JWT Plugin
 await fastify.register(jwt, {
   secret: JWT_SECRET,
+});
+
+// Register Multipart for File Uploads (Receipts/Invoices)
+await fastify.register(multipart, {
+  limits: {
+    fileSize: 15 * 1024 * 1024, // 15MB
+  },
 });
 
 // Authentication Decorator for protected routes
@@ -138,6 +147,7 @@ await fastify.register(dashboardRoutes, { prefix: '/api/dashboard' });
 await fastify.register(accountsRoutes, { prefix: '/api/accounts' });
 await fastify.register(transactionsRoutes, { prefix: '/api/transactions' });
 await fastify.register(transactionsV2Routes, { prefix: '/api/v2/transactions' });
+await fastify.register(receiptsRoutes, { prefix: '/api/v2/transactions' });
 await fastify.register(categoriesRoutes, { prefix: '/api/categories' });
 await fastify.register(analyticsRoutes, { prefix: '/api/analytics' });
 await fastify.register(budgetsRoutes, { prefix: '/api/budgets' });

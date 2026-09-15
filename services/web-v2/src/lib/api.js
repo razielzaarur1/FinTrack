@@ -2,8 +2,9 @@ const API_BASE = typeof window !== 'undefined' ? '' : (process.env.INTERNAL_API_
 
 async function request(endpoint, options = {}) {
   const url = `${API_BASE}${endpoint}`;
+  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
   const headers = {
-    'Content-Type': 'application/json',
+    ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
     ...options.headers,
   };
 
@@ -244,6 +245,37 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ accountId, ...(daysBack ? { daysBack } : {}) }),
     }),
+
+  // Receipts & Invoices
+  getReceipts: (txId) => request(`/api/v2/transactions/${txId}/receipts`),
+  uploadReceipt: (txId, file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return request(`/api/v2/transactions/${txId}/receipts`, {
+      method: 'POST',
+      body: formData,
+    });
+  },
+  analyzeReceiptUrl: (txId, url) =>
+    request(`/api/v2/transactions/${txId}/receipts/url`, {
+      method: 'POST',
+      body: JSON.stringify({ url }),
+    }),
+  deleteReceipt: (receiptId) =>
+    request(`/api/v2/transactions/receipts/${receiptId}`, { method: 'DELETE' }),
+  reanalyzeReceipt: (receiptId) =>
+    request(`/api/v2/transactions/receipts/${receiptId}/reanalyze`, { method: 'POST' }),
+  applyReceiptSplits: (txId, splits) =>
+    request(`/api/v2/transactions/${txId}/receipts/apply-splits`, {
+      method: 'POST',
+      body: JSON.stringify({ splits }),
+    }),
+  testGeminiApiKey: (apiKey) =>
+    request('/api/v2/transactions/receipts/test-ai', {
+      method: 'POST',
+      body: JSON.stringify({ apiKey }),
+    }),
+  getReceiptFileUrl: (filename) => `/api/v2/transactions/receipts/file/${encodeURIComponent(filename)}`,
 };
 
 

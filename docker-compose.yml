@@ -16,7 +16,6 @@ services:
       - web-v2
     volumes:
       - /opt/finapp/certs:/etc/ssl/tailscale:ro
-      - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     read_only: true
     tmpfs:
       - /var/cache/nginx
@@ -70,6 +69,10 @@ services:
       - JWT_SECRET=${JWT_SECRET:-fintrack-jwt-secret-key-production-2026}
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - NODE_ENV=${NODE_ENV:-production}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - UPLOADS_DIR=${UPLOADS_DIR:-/opt/finapp/uploads}
+    volumes:
+      - uploads-data:/opt/finapp/uploads
     security_opt:
       - no-new-privileges:true
     read_only: false
@@ -167,3 +170,4 @@ networks:
 
 volumes:
   postgres-data:
+  uploads-data:

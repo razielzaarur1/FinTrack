@@ -374,6 +374,8 @@ export default async function transactionsV2Routes(fastify, options) {
         t.created_at AS "createdAt",
         (SELECT COUNT(*) FROM transaction_notes tn WHERE tn.transaction_id = t.id) > 0 AS "hasNotes",
         (SELECT COUNT(*) FROM transaction_links tl WHERE tl.transaction_id_a = t.id OR tl.transaction_id_b = t.id) > 0 AS "hasLinks",
+        (SELECT COUNT(*) FROM transaction_receipts tr WHERE tr.transaction_id = t.id) > 0 AS "hasReceipts",
+        (SELECT COUNT(*) FROM transaction_receipts tr WHERE tr.transaction_id = t.id)::int AS "receiptsCount",
         (
           SELECT COALESCE(
             json_agg(
@@ -477,6 +479,8 @@ export default async function transactionsV2Routes(fastify, options) {
           t.created_at AS "createdAt",
           (SELECT COUNT(*) FROM transaction_notes tn WHERE tn.transaction_id = t.id) > 0 AS "hasNotes",
           (SELECT COUNT(*) FROM transaction_links tl WHERE tl.transaction_id_a = t.id OR tl.transaction_id_b = t.id) > 0 AS "hasLinks",
+          (SELECT COUNT(*) FROM transaction_receipts tr WHERE tr.transaction_id = t.id) > 0 AS "hasReceipts",
+          (SELECT COUNT(*) FROM transaction_receipts tr WHERE tr.transaction_id = t.id)::int AS "receiptsCount",
           (
             SELECT COALESCE(
               json_agg(

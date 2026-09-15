@@ -21,7 +21,8 @@ import {
   ChevronDown,
   CheckSquare,
   Square,
-  Check
+  Check,
+  Receipt
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { formatILS, formatDate, cleanSpacedHebrew, getTransactionTitle } from '@/lib/formatters';
@@ -927,6 +928,11 @@ function TransactionsContent() {
                         {tx.hasNotes && (
                           <span className="p-0.5 rounded bg-brand-amber/20 text-brand-amber text-[10px] shrink-0" title="הערות">
                             <MessageSquare className="w-3 h-3" />
+                          </span>
+                        )}
+                        {tx.hasReceipts && (
+                          <span className="p-0.5 rounded bg-emerald-500/20 text-emerald-400 text-[10px] shrink-0" title="מצורפת חשבונית">
+                            <Receipt className="w-3 h-3" />
                           </span>
                         )}
                         {tx.status === 'pending' && (

@@ -78,6 +78,15 @@ export default function SettingsPage() {
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [scheduleSaved, setScheduleSaved] = useState(false);
 
+  // Gemini AI & Receipt Analysis States
+  const [geminiApiKey, setGeminiApiKey] = useState('');
+  const [enableAiAnalysis, setEnableAiAnalysis] = useState(true);
+  const [showGeminiKey, setShowGeminiKey] = useState(false);
+  const [savingGemini, setSavingGemini] = useState(false);
+  const [geminiSaved, setGeminiSaved] = useState(false);
+  const [testingGemini, setTestingGemini] = useState(false);
+  const [geminiTestResult, setGeminiTestResult] = useState(null);
+
   // Category Tree UI State
   const [activeTab, setActiveTab] = useState('expense'); // 'expense' | 'income'
   const [expandedCats, setExpandedCats] = useState(new Set(['exp_household', 'exp_shopping']));
@@ -127,6 +136,8 @@ export default function SettingsPage() {
         if (s.scrapeIntervalBanksHours !== undefined) {
           setScrapeIntervalBanksHours(Math.max(3, parseFloat(s.scrapeIntervalBanksHours) || 8));
         }
+        if (s.geminiApiKey) setGeminiApiKey(s.geminiApiKey);
+        if (s.enableAiAnalysis !== undefined) setEnableAiAnalysis(s.enableAiAnalysis);
       }
       await checkBotStatus();
     } catch (err) {
@@ -204,6 +215,45 @@ export default function SettingsPage() {
       console.error('Failed to save schedule settings:', err);
     } finally {
       setSavingSchedule(false);
+    }
+  };
+
+  const handleSaveGeminiSettings = async () => {
+    setSavingGemini(true);
+    setGeminiSaved(false);
+    try {
+      const res = await api.getSystemSettings();
+      const current = res.data?.settings || {};
+      const updated = {
+        ...current,
+        geminiApiKey: geminiApiKey.trim(),
+        enableAiAnalysis,
+      };
+      await api.updateSystemSettings(updated);
+      setGeminiSaved(true);
+      setTimeout(() => setGeminiSaved(false), 3000);
+    } catch (err) {
+      console.error('Failed to save Gemini settings:', err);
+    } finally {
+      setSavingGemini(false);
+    }
+  };
+
+  const handleTestGemini = async () => {
+    setTestingGemini(true);
+    setGeminiTestResult(null);
+    try {
+      const res = await api.testGeminiApiKey(geminiApiKey.trim() || undefined);
+      if (res.error) {
+        setGeminiTestResult({ success: false, message: res.error });
+      } else {
+        setGeminiTestResult({ success: true, message: 'חיבור ל-Gemini הצליח! ניתוח החשבוניות מוכן לפעולה.' });
+      }
+    } catch (err) {
+      setGeminiTestResult({ success: false, message: err.message || 'שגיאה בבדיקת חיבור ל-Gemini' });
+    } finally {
+      setTestingGemini(false);
+      setTimeout(() => setGeminiTestResult(null), 8000);
     }
   };
 
@@ -980,6 +1030,123 @@ export default function SettingsPage() {
             <Check className="w-3.5 h-3.5" />
             <span>{savingSchedule ? 'שומר...' : 'שמור תזמון סריקות'}</span>
           </button>
+        </div>
+      </div>
+
+      {/* 🧾 ניתוח חשבוניות חכם ב-AI (Google Gemini) */}
+      <div className="p-6 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface space-y-6 shadow-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h3 className="font-bold text-lg flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-amber-400" />
+              <span>ניתוח חשבוניות וקבלות ב-AI (Google Gemini)</span>
+            </h3>
+            <p className="text-xs text-dark-text-muted mt-0.5">
+              העלאת תמונות/קובצי PDF או הזנת קישור דיגיטלי (כמו רמי לוי / שופרסל) - ה-AI יחלץ פריטים ויאפשר חלוקה לקטגוריות ופיצול תנועות.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-dark-text-muted">
+              {enableAiAnalysis ? 'ניתוח AI פעיל' : 'ניתוח AI כבוי'}
+            </span>
+            <button
+              type="button"
+              onClick={() => setEnableAiAnalysis(!enableAiAnalysis)}
+              className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                enableAiAnalysis ? 'bg-amber-500' : 'bg-dark-border light:border-light-border'
+              }`}
+            >
+              <span
+                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                  enableAiAnalysis ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4">
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold text-dark-text light:text-light-text flex items-center gap-1.5">
+                <span>Google Gemini API Key</span>
+              </label>
+              <a
+                href="https://aistudio.google.com/app/apikey"
+                target="_blank"
+                rel="noreferrer"
+                className="text-[11px] text-brand-primary hover:underline flex items-center gap-1"
+              >
+                <span>השג מפתח API חינם ב-Google AI Studio</span>
+                <ExternalLink className="w-3 h-3" />
+              </a>
+            </div>
+
+            <div className="relative">
+              <input
+                type={showGeminiKey ? 'text' : 'password'}
+                value={geminiApiKey}
+                onChange={(e) => setGeminiApiKey(e.target.value)}
+                placeholder="AIzaSy..."
+                className="w-full p-2.5 pl-10 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text text-xs focus:ring-2 focus:ring-amber-500/50"
+              />
+              <button
+                type="button"
+                onClick={() => setShowGeminiKey(!showGeminiKey)}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-dark-text-muted hover:text-dark-text"
+              >
+                {showGeminiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+            <p className="text-[11px] text-dark-text-muted">
+              ניתן להגדיר כאן או כמשתנה סביבה <code className="text-amber-400 font-mono text-[10px]">GEMINI_API_KEY</code>.
+            </p>
+          </div>
+        </div>
+
+        {geminiTestResult && (
+          <div
+            className={`p-3 rounded-xl border text-xs flex items-center gap-2 ${
+              geminiTestResult.success
+                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                : 'bg-rose-500/10 border-rose-500/30 text-rose-400'
+            }`}
+          >
+            {geminiTestResult.success ? <Check className="w-4 h-4 shrink-0" /> : <AlertTriangle className="w-4 h-4 shrink-0" />}
+            <span>{geminiTestResult.message}</span>
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-t border-dark-border light:border-light-border">
+          <button
+            type="button"
+            onClick={handleTestGemini}
+            disabled={testingGemini || !geminiApiKey.trim()}
+            className="px-3.5 py-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface hover:bg-dark-surface-elevated text-dark-text light:text-light-text text-xs font-semibold transition-all flex items-center gap-1.5 disabled:opacity-50"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+            <span>{testingGemini ? 'בודק חיבור...' : 'בדוק חיבור ל-Gemini'}</span>
+          </button>
+
+          <div className="flex items-center gap-3">
+            {geminiSaved && (
+              <span className="flex items-center gap-1 text-emerald-400 font-semibold text-xs">
+                <Check className="w-4 h-4" />
+                <span>הגדרות ה-AI נשמרו בהצלחה!</span>
+              </span>
+            )}
+
+            <button
+              type="button"
+              onClick={handleSaveGeminiSettings}
+              disabled={savingGemini}
+              className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold shadow-md shadow-amber-500/20 transition-all flex items-center gap-1.5 disabled:opacity-50"
+            >
+              <Check className="w-3.5 h-3.5" />
+              <span>{savingGemini ? 'שומר...' : 'שמור הגדרות AI'}</span>
+            </button>
+          </div>
         </div>
       </div>
 

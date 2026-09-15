@@ -22,17 +22,22 @@ import {
   Search,
   Unlink,
   CheckCircle2,
-  RefreshCw
+  RefreshCw,
+  Receipt
 } from 'lucide-react';
+import { api } from '@/lib/api';
+import { useApp } from '@/lib/app-context';
 import { formatILS, formatDate, cleanSpacedHebrew, getTransactionTitle, isBitTransaction } from '@/lib/formatters';
 import CategoryBadge from '@/components/common/CategoryBadge';
 import CategoryPicker from '@/components/common/CategoryPicker';
 import { CATEGORIES_DATA } from '@/lib/categories';
+import ReceiptsTab from './ReceiptsTab';
 
 export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinking }) {
   const { lang, t } = useApp();
   const [activeTx, setActiveTx] = useState(tx);
-  const [activeTab, setActiveTab] = useState('details'); // details, notes, links, splits, similar, scraper
+  const [activeTab, setActiveTab] = useState('details'); // details, receipts, notes, links, splits, similar, scraper
+  const [receiptsCount, setReceiptsCount] = useState(tx?.receiptsCount || (tx?.hasReceipts ? 1 : 0));
   const [category, setCategory] = useState(tx?.category || '');
   const [userDesc, setUserDesc] = useState(tx?.userDescription || '');
   const [isIgnored, setIsIgnored] = useState(tx?.isIgnored || false);
@@ -309,6 +314,19 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
             <span>{lang === 'he' ? 'פרטים' : 'Details'}</span>
           </button>
 
+          {/* חשבונית 🧾 */}
+          <button
+            onClick={() => setActiveTab('receipts')}
+            className={`py-3 px-2.5 sm:px-3 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
+              activeTab === 'receipts'
+                ? 'border-brand-primary text-brand-primary font-semibold'
+                : 'border-transparent text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
+            }`}
+          >
+            <Receipt className="w-3.5 h-3.5" />
+            <span>חשבונית 🧾 {receiptsCount > 0 && `(${receiptsCount})`}</span>
+          </button>
+
           {/* 2. הערות */}
           <button
             onClick={() => setActiveTab('notes')}
@@ -570,6 +588,21 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
                 <span>{savingTx ? (lang === 'he' ? 'שומר...' : 'Saving...') : t('save')}</span>
               </button>
             </div>
+          )}
+
+          {/* Receipts Tab */}
+          {activeTab === 'receipts' && (
+            <ReceiptsTab
+              tx={activeTx}
+              categories={categories}
+              onSplitsUpdated={() => {
+                api.getSplits(activeTx.id).then((res) => {
+                  if (res.data) setSplits(res.data.data || []);
+                });
+                onUpdate?.({ ...activeTx, isSplit: true });
+              }}
+              onReceiptsCountChanged={(cnt) => setReceiptsCount(cnt)}
+            />
           )}
 
           {/* 2. Notes Tab */}
