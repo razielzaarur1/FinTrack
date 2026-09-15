@@ -152,8 +152,36 @@ const DEFAULT_CATEGORY = {
   type: "expense" 
 };
 
+let dynamicCategoriesStore = null;
+
+export function setDynamicCategories(tree) {
+  if (Array.isArray(tree) && tree.length > 0) {
+    dynamicCategoriesStore = tree;
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('fintrack_cached_categories', JSON.stringify(tree));
+      } catch (e) {}
+    }
+  }
+}
+
+export function getDynamicCategories() {
+  if (dynamicCategoriesStore) return dynamicCategoriesStore;
+  if (typeof window !== 'undefined') {
+    try {
+      const cached = localStorage.getItem('fintrack_cached_categories');
+      if (cached) {
+        dynamicCategoriesStore = JSON.parse(cached);
+        return dynamicCategoriesStore;
+      }
+    } catch (e) {}
+  }
+  return null;
+}
+
 /**
  * Returns main and sub category details matching by ID or Hebrew name.
+ * Priority: Dynamic live user categories -> Static fallback categories.
  */
 export function getCategoryDetails(term) {
   if (!term || typeof term !== 'string') {
@@ -162,14 +190,63 @@ export function getCategoryDetails(term) {
 
   const clean = term.trim().toLowerCase();
 
-  // 1. Check Incomes
+  // 1. Check Dynamic Categories First!
+  const dynamicTree = getDynamicCategories();
+  if (dynamicTree && Array.isArray(dynamicTree)) {
+    for (const main of dynamicTree) {
+      const mainMatch = (main.id && String(main.id).toLowerCase() === clean) ||
+                        (main.name && main.name.trim().toLowerCase() === clean) ||
+                        (main.nameEn && main.nameEn.trim().toLowerCase() === clean);
+      if (mainMatch) {
+        const effectiveColor = main.color || (main.type === 'income' ? '#10b981' : '#6366f1');
+        return {
+          mainCat: {
+            ...main,
+            color: effectiveColor.startsWith('#') ? effectiveColor : effectiveColor,
+            bg: effectiveColor.startsWith('#') ? `${effectiveColor}20` : (main.bg || 'bg-indigo-500/10'),
+          },
+          subCat: {
+            ...main,
+            color: effectiveColor.startsWith('#') ? effectiveColor : effectiveColor,
+            bg: effectiveColor.startsWith('#') ? `${effectiveColor}20` : (main.bg || 'bg-indigo-500/10'),
+          }
+        };
+      }
+
+      if (main.subs && Array.isArray(main.subs)) {
+        for (const sub of main.subs) {
+          const subMatch = (sub.id && String(sub.id).toLowerCase() === clean) ||
+                           (sub.name && sub.name.trim().toLowerCase() === clean) ||
+                           (sub.nameEn && sub.nameEn.trim().toLowerCase() === clean);
+          if (subMatch) {
+            // Inherit parent category's color if subcategory has no custom color
+            const effectiveColor = sub.color || main.color || (main.type === 'income' ? '#10b981' : '#6366f1');
+            return {
+              mainCat: {
+                ...main,
+                color: main.color?.startsWith('#') ? main.color : (main.color || 'text-indigo-500'),
+                bg: main.color?.startsWith('#') ? `${main.color}20` : (main.bg || 'bg-indigo-500/10'),
+              },
+              subCat: {
+                ...sub,
+                color: effectiveColor.startsWith('#') ? effectiveColor : effectiveColor,
+                bg: effectiveColor.startsWith('#') ? `${effectiveColor}20` : (sub.bg || `${main.color}20`),
+              }
+            };
+          }
+        }
+      }
+    }
+  }
+
+  // 2. Check Static Incomes
   for (const inc of CATEGORIES_DATA.incomes) {
     if (inc.id.toLowerCase() === clean || inc.name.toLowerCase() === clean) {
       return { mainCat: inc, subCat: inc };
     }
   }
 
-  // 2. Check Expenses & Subcategories
+  // 3. Check Static Expenses & Subcategories
   for (const exp of CATEGORIES_DATA.expenses) {
     if (exp.id.toLowerCase() === clean || exp.name.toLowerCase() === clean) {
       return { mainCat: exp, subCat: exp };
@@ -184,7 +261,7 @@ export function getCategoryDetails(term) {
     }
   }
 
-  // 3. Fallback fuzzy check on common terms
+  // 4. Fallback fuzzy check on common terms
   if (clean.includes('סופר') || clean.includes('מכולת') || clean.includes('קניות')) {
     const shop = CATEGORIES_DATA.expenses.find(e => e.id === 'exp_shopping');
     return { mainCat: shop, subCat: shop?.subs?.[0] || shop };

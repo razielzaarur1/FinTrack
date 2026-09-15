@@ -24,19 +24,26 @@ import {
   Clock,
   ShieldCheck,
   HelpCircle,
-  ExternalLink
+  ExternalLink,
+  RotateCcw
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useApp } from '@/lib/app-context';
 import CategoryBadge from '@/components/common/CategoryBadge';
-import { CATEGORIES_DATA } from '@/lib/categories';
+import { CATEGORIES_DATA, setDynamicCategories } from '@/lib/categories';
 import { generateDesignSystemPrompt } from '@/lib/designSystemPrompt';
-import { normalizeCategorySvg } from '@/lib/svg-normalizer';
+import { normalizeCategorySvg, getIconSvgMarkup } from '@/lib/svg-normalizer';
 
 export default function SettingsPage() {
   const { lang, t, theme, toggleTheme, toggleLanguage } = useApp();
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  // Reset Categories to Factory Default State
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [resetConfirmText, setResetConfirmText] = useState('');
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetError, setResetError] = useState('');
 
   // Danger Zone State
   const [dangerAction, setDangerAction] = useState(null); // 'transactions' | 'all_data' | null
@@ -263,12 +270,14 @@ export default function SettingsPage() {
       const res = await api.getCategories({ tree: 'true' });
       if (res.data?.data && Array.isArray(res.data.data) && res.data.data.length > 0) {
         setCategories(res.data.data);
+        setDynamicCategories(res.data.data);
       } else {
         const fallback = [
           ...CATEGORIES_DATA.expenses.map(c => ({ ...c, type: 'expense' })),
           ...CATEGORIES_DATA.incomes.map(c => ({ ...c, type: 'income' })),
         ];
         setCategories(fallback);
+        setDynamicCategories(fallback);
       }
     } catch (err) {
       console.error('Failed to load categories:', err);
@@ -277,6 +286,7 @@ export default function SettingsPage() {
         ...CATEGORIES_DATA.incomes.map(c => ({ ...c, type: 'income' })),
       ];
       setCategories(fallback);
+      setDynamicCategories(fallback);
     } finally {
       setLoading(false);
     }
@@ -367,7 +377,9 @@ export default function SettingsPage() {
     setFormName(cat.name || '');
     setFormNameEn(cat.nameEn || '');
     setFormIcon(cat.icon || 'tag');
-    setFormSvg(cat.customSvg || '');
+    // Pre-populate with existing customSvg or generated normalized SVG for the icon
+    const existingSvg = cat.customSvg || (cat.icon ? getIconSvgMarkup(cat.icon) : '');
+    setFormSvg(existingSvg);
     setIsModalOpen(true);
   };
 
@@ -391,10 +403,48 @@ export default function SettingsPage() {
     if (window.confirm(`האם אתה בטוח שברצונך למחוק את הקטגוריה "${cat.name}"?`)) {
       try {
         await api.deleteCategory(cat.id);
+        window.dispatchEvent(new CustomEvent('fintrack_categories_updated'));
         await loadCategories();
       } catch (err) {
         console.error('Failed to delete category:', err);
       }
+    }
+  };
+
+  // Toggle category active status (on/off)
+  const handleToggleActive = async (cat, e) => {
+    e?.stopPropagation?.();
+    try {
+      const nextActive = cat.isActive === false ? true : false;
+      if (cat.id && !cat.id.startsWith('exp_') && !cat.id.startsWith('inc_')) {
+        await api.updateCategory(cat.id, { isActive: nextActive });
+      }
+      window.dispatchEvent(new CustomEvent('fintrack_categories_updated'));
+      await loadCategories();
+    } catch (err) {
+      console.error('Failed to toggle category active status:', err);
+    }
+  };
+
+  // Restore all categories to system default MoneyApp hierarchy
+  const handleResetCategories = async () => {
+    if (resetConfirmText.trim() !== 'שחזר קטגוריות' && resetConfirmText.trim() !== 'RESET') {
+      setResetError(lang === 'he' ? 'יש להקליד "שחזר קטגוריות" כדי לאשר' : 'Type "RESET" to confirm');
+      return;
+    }
+    setResetLoading(true);
+    setResetError('');
+    try {
+      await api.resetCategoriesToDefault();
+      window.dispatchEvent(new CustomEvent('fintrack_categories_updated'));
+      await loadCategories();
+      setShowResetModal(false);
+      setResetConfirmText('');
+    } catch (err) {
+      console.error('Failed to reset categories:', err);
+      setResetError(lang === 'he' ? 'שגיאה בשחזור הקטגוריות לברירת מחדל' : 'Failed to reset categories to default');
+    } finally {
+      setResetLoading(false);
     }
   };
 
@@ -439,6 +489,7 @@ export default function SettingsPage() {
 
       setIsModalOpen(false);
       setEditingCat(null);
+      window.dispatchEvent(new CustomEvent('fintrack_categories_updated'));
       await loadCategories();
     } catch (err) {
       console.error('Failed to save category:', err);
@@ -1168,6 +1219,20 @@ export default function SettingsPage() {
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
+              onClick={() => {
+                setShowResetModal(true);
+                setResetConfirmText('');
+                setResetError('');
+              }}
+              className="px-3.5 py-2 rounded-xl border border-rose-500/40 bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 transition-colors text-xs font-semibold flex items-center gap-1.5 shadow-xs"
+              title="שחזור כל הקטגוריות למבנה ברירת המחדל"
+            >
+              <RotateCcw className="w-4 h-4" />
+              <span>שחזור לברירת מחדל</span>
+            </button>
+
+            <button
+              type="button"
               onClick={handleDownloadDesignPrompt}
               className="px-3.5 py-2 rounded-xl border border-brand-primary/40 bg-brand-primary/10 text-brand-primary hover:bg-brand-primary/20 transition-colors text-xs font-semibold flex items-center gap-1.5 shadow-xs"
               title="הורד קובץ מפרט עיצוב להעתקה ל-AI ליצירת SVG תואם"
@@ -1233,11 +1298,16 @@ export default function SettingsPage() {
           {activeCategories.map((cat) => {
             const isExpanded = expandedCats.has(cat.id);
             const subs = cat.subs || [];
+            const isInactive = cat.isActive === false;
 
             return (
               <div
                 key={cat.id}
-                className="rounded-2xl border border-dark-border light:border-light-border bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40 overflow-hidden transition-all shadow-xs"
+                className={`rounded-2xl border transition-all shadow-xs overflow-hidden ${
+                  isInactive
+                    ? 'border-dark-border/50 light:border-light-border/50 bg-dark-surface-elevated/20 light:bg-light-surface-elevated/20 opacity-70'
+                    : 'border-dark-border light:border-light-border bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40'
+                }`}
               >
                 {/* Main Category Header Row */}
                 <div 
@@ -1249,7 +1319,7 @@ export default function SettingsPage() {
                     <CategoryBadge category={cat.name} customSvg={cat.customSvg} size={22} className="shrink-0" />
                     <div className="min-w-0 flex-1">
                       <div className="font-bold text-xs sm:text-sm text-dark-text light:text-light-text flex items-center gap-2 flex-wrap">
-                        <span className="truncate">{cat.name}</span>
+                        <span className={`truncate ${isInactive ? 'line-through text-dark-text-muted' : ''}`}>{cat.name}</span>
                         {cat.nameEn && (
                           <span className="text-[11px] font-normal text-dark-text-muted light:text-light-text-muted">
                             ({cat.nameEn})
@@ -1263,12 +1333,34 @@ export default function SettingsPage() {
                         }`}>
                           {cat.type === 'income' ? 'הכנסה' : 'הוצאה'}
                         </span>
+                        {isInactive && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/30 shrink-0">
+                            מושבת
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
 
                   {/* Actions Bar */}
-                  <div className="flex items-center justify-between sm:justify-end gap-2 pt-2 sm:pt-0 border-t sm:border-t-0 border-dark-border/40 light:border-light-border/40" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex items-center justify-between sm:justify-end gap-2.5 pt-2 sm:pt-0 border-t sm:border-t-0 border-dark-border/40 light:border-light-border/40" onClick={(e) => e.stopPropagation()}>
+                    {/* Active / Inactive Toggle */}
+                    <div className="flex items-center gap-1.5 shrink-0" dir="ltr" title={!isInactive ? 'קטגוריה פעילה (לחץ להשבתה)' : 'קטגוריה מושבתת (לחץ להפעלה)'}>
+                      <button
+                        type="button"
+                        onClick={(e) => handleToggleActive(cat, e)}
+                        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                          !isInactive ? 'bg-emerald-500' : 'bg-slate-600'
+                        }`}
+                      >
+                        <span
+                          className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-xs ring-0 transition duration-200 ease-in-out ${
+                            !isInactive ? 'translate-x-4' : 'translate-x-0'
+                          }`}
+                        />
+                      </button>
+                    </div>
+
                     <button
                       type="button"
                       onClick={() => handleOpenAddSub(cat)}
@@ -1312,45 +1404,71 @@ export default function SettingsPage() {
                 {isExpanded && (
                   <div className="p-4 pt-2 border-t border-dark-border/40 light:border-light-border/40 bg-dark-surface/50 light:bg-light-surface/50">
                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5 mt-2">
-                      {subs.map((sub) => (
-                        <div
-                          key={sub.id}
-                          className="group p-2.5 rounded-xl border border-dark-border/60 light:border-light-border/60 bg-dark-surface light:bg-light-surface flex items-center justify-between gap-2 shadow-2xs hover:border-brand-primary/40 transition-colors"
-                        >
-                          <div className="flex items-center gap-2.5 min-w-0">
-                            <CategoryBadge category={sub.name} customSvg={sub.customSvg} size={16} className="scale-90" />
-                            <div className="truncate">
-                              <div className="text-xs font-semibold truncate text-dark-text light:text-light-text">
-                                {sub.name}
-                              </div>
-                              {sub.nameEn && (
-                                <div className="text-[10px] text-dark-text-muted light:text-light-text-muted truncate">
-                                  {sub.nameEn}
+                      {subs.map((sub) => {
+                        const isSubInactive = sub.isActive === false;
+                        return (
+                          <div
+                            key={sub.id}
+                            className={`group p-2.5 rounded-xl border flex items-center justify-between gap-2 shadow-2xs transition-colors ${
+                              isSubInactive
+                                ? 'border-dark-border/40 light:border-light-border/40 bg-dark-surface/40 light:bg-light-surface/40 opacity-60 border-dashed'
+                                : 'border-dark-border/60 light:border-light-border/60 bg-dark-surface light:bg-light-surface hover:border-brand-primary/40'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <CategoryBadge category={sub.name} customSvg={sub.customSvg} size={16} className="scale-90" />
+                              <div className="truncate">
+                                <div className={`text-xs font-semibold truncate ${
+                                  isSubInactive ? 'line-through text-dark-text-muted' : 'text-dark-text light:text-light-text'
+                                }`}>
+                                  {sub.name}
                                 </div>
-                              )}
+                                {sub.nameEn && (
+                                  <div className="text-[10px] text-dark-text-muted light:text-light-text-muted truncate">
+                                    {sub.nameEn}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-1 shrink-0 opacity-80 group-hover:opacity-100 transition-opacity">
+                              {/* Subcategory Active Toggle */}
+                              <div className="flex items-center gap-1 shrink-0 mr-1" dir="ltr" title={!isSubInactive ? 'תת-קטגוריה פעילה (לחץ להשבתה)' : 'תת-קטגוריה מושבתת (לחץ להפעלה)'}>
+                                <button
+                                  type="button"
+                                  onClick={(e) => handleToggleActive(sub, e)}
+                                  className={`relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                                    !isSubInactive ? 'bg-emerald-500' : 'bg-slate-600'
+                                  }`}
+                                >
+                                  <span
+                                    className={`pointer-events-none inline-block h-3 w-3 transform rounded-full bg-white shadow-xs ring-0 transition duration-200 ease-in-out ${
+                                      !isSubInactive ? 'translate-x-3' : 'translate-x-0'
+                                    }`}
+                                  />
+                                </button>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEdit(sub, cat.name)}
+                                className="p-1 rounded-md text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated transition-colors"
+                                title="ערוך תת-קטגוריה"
+                              >
+                                <Edit2 className="w-3 h-3" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteCategory(sub)}
+                                className="p-1 rounded-md text-dark-text-muted light:text-light-text-muted hover:text-rose-500 hover:bg-rose-500/10 transition-colors"
+                                title="מחק תת-קטגוריה"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
                             </div>
                           </div>
-
-                          <div className="flex items-center gap-1 shrink-0 opacity-80 group-hover:opacity-100 transition-opacity">
-                            <button
-                              type="button"
-                              onClick={() => handleOpenEdit(sub, cat.name)}
-                              className="p-1 rounded-md text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated transition-colors"
-                              title="ערוך תת-קטגוריה"
-                            >
-                              <Edit2 className="w-3 h-3" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteCategory(sub)}
-                              className="p-1 rounded-md text-dark-text-muted light:text-light-text-muted hover:text-rose-500 hover:bg-rose-500/10 transition-colors"
-                              title="מחק תת-קטגוריה"
-                            >
-                              <Trash2 className="w-3 h-3" />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
+                        );
+                      })}
 
                       {/* Quick Add Subcategory Card inside grid */}
                       <button
@@ -1588,6 +1706,73 @@ export default function SettingsPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Restore Categories to Default Confirmation Modal */}
+      {showResetModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-md bg-dark-surface light:bg-light-surface border border-rose-500/40 rounded-2xl p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold flex items-center gap-2 text-rose-500">
+                <RotateCcw className="w-5 h-5" />
+                <span>{lang === 'he' ? 'שחזור קטגוריות לברירת מחדל' : 'Restore Categories to Default'}</span>
+              </h3>
+              <button
+                onClick={() => { setShowResetModal(false); setResetConfirmText(''); setResetError(''); }}
+                disabled={resetLoading}
+                className="p-1 rounded-lg hover:bg-dark-surface-elevated text-dark-text-muted"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-dark-text-muted light:text-light-text-muted leading-relaxed">
+              {lang === 'he'
+                ? 'פעולה זו תשחזר את עץ הקטגוריות והאייקונים המקוריים של המערכת (MoneyApp). כל הקטגוריות, תתי-הקטגוריות והעיצובים המותאמים אישית יוחלפו במבנה ברירת המחדל.'
+                : 'This will restore all categories, subcategories, and icons back to system default (MoneyApp). Custom categories will be overwritten.'}
+            </p>
+
+            <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-xs space-y-2">
+              <div className="font-semibold text-rose-400">
+                {lang === 'he'
+                  ? 'כדי לאשר, הקלד "שחזר קטגוריות" למטה:'
+                  : 'To confirm, type "RESET" below:'}
+              </div>
+              <input
+                type="text"
+                value={resetConfirmText}
+                onChange={(e) => { setResetConfirmText(e.target.value); setResetError(''); }}
+                placeholder={lang === 'he' ? 'שחזר קטגוריות' : 'RESET'}
+                disabled={resetLoading}
+                className="w-full p-2.5 rounded-lg border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text text-xs font-semibold focus:border-rose-500 focus:outline-none"
+                autoFocus
+              />
+            </div>
+
+            {resetError && (
+              <div className="text-xs text-rose-500 font-semibold">{resetError}</div>
+            )}
+
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => { setShowResetModal(false); setResetConfirmText(''); setResetError(''); }}
+                disabled={resetLoading}
+                className="flex-1 py-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text text-xs font-medium hover:bg-dark-surface-elevated transition-colors"
+              >
+                {lang === 'he' ? 'ביטול' : 'Cancel'}
+              </button>
+              <button
+                type="button"
+                onClick={handleResetCategories}
+                disabled={resetLoading || !resetConfirmText.trim()}
+                className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold disabled:opacity-50 transition-colors shadow-sm flex items-center justify-center gap-2"
+              >
+                {resetLoading ? (lang === 'he' ? 'משחזר...' : 'Resetting...') : (lang === 'he' ? 'אשר שחזור מלא' : 'Confirm Reset')}
+              </button>
+            </div>
           </div>
         </div>
       )}

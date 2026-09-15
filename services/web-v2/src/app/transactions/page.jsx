@@ -36,7 +36,7 @@ import TransactionDrawer from '@/components/transactions/TransactionDrawer';
 import { CATEGORIES_DATA, getCategoryDetails } from '@/lib/categories';
 
 function TransactionsContent() {
-  const { t, lang } = useApp();
+  const { t, lang, expenseCategories, incomeCategories } = useApp();
   const searchParams = useSearchParams();
   const initialAccountId = searchParams?.get('accountId');
 
@@ -252,24 +252,53 @@ function TransactionsContent() {
   // Options for Category Multi-Select
   const categoryOptions = useMemo(() => {
     const list = [];
-    CATEGORIES_DATA.expenses.forEach((cat) => {
+    const expenses = (expenseCategories && expenseCategories.length > 0) ? expenseCategories : CATEGORIES_DATA.expenses;
+    const incomes = (incomeCategories && incomeCategories.length > 0) ? incomeCategories : CATEGORIES_DATA.incomes;
+
+    expenses.forEach((cat) => {
+      if (cat.isActive === false) return;
       list.push({
         id: cat.name,
         label: cat.name,
         secondaryLabel: 'הוצאה',
-        icon: <CategoryBadge category={cat.name} size={18} />,
+        icon: <CategoryBadge category={cat.name} customSvg={cat.customSvg} size={18} />,
       });
+      if (cat.subs && cat.subs.length > 0) {
+        cat.subs.forEach((sub) => {
+          if (sub.isActive === false) return;
+          list.push({
+            id: sub.name,
+            label: `  ↳ ${sub.name}`,
+            secondaryLabel: cat.name,
+            icon: <CategoryBadge category={sub.name} customSvg={sub.customSvg} size={16} />,
+          });
+        });
+      }
     });
-    CATEGORIES_DATA.incomes.forEach((cat) => {
+
+    incomes.forEach((cat) => {
+      if (cat.isActive === false) return;
       list.push({
         id: cat.name,
         label: cat.name,
         secondaryLabel: 'הכנסה',
-        icon: <CategoryBadge category={cat.name} size={18} />,
+        icon: <CategoryBadge category={cat.name} customSvg={cat.customSvg} size={18} />,
       });
+      if (cat.subs && cat.subs.length > 0) {
+        cat.subs.forEach((sub) => {
+          if (sub.isActive === false) return;
+          list.push({
+            id: sub.name,
+            label: `  ↳ ${sub.name}`,
+            secondaryLabel: cat.name,
+            icon: <CategoryBadge category={sub.name} customSvg={sub.customSvg} size={16} />,
+          });
+        });
+      }
     });
+
     return list;
-  }, []);
+  }, [expenseCategories, incomeCategories]);
 
   // Options for Currency Multi-Select
   const currencyOptions = useMemo(() => {

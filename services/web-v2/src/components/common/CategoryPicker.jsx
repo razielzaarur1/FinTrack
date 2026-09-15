@@ -2,7 +2,8 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { ChevronDown, ChevronLeft, ChevronRight, Search, Check, Sparkles } from 'lucide-react';
-import { CATEGORIES_DATA, getCategoryDetails } from '@/lib/categories';
+import { useApp } from '@/lib/app-context';
+import { CATEGORIES_DATA, getCategoryDetails, getDynamicCategories } from '@/lib/categories';
 import CategoryBadge from './CategoryBadge';
 
 export default function CategoryPicker({
@@ -17,6 +18,13 @@ export default function CategoryPicker({
   const [search, setSearch] = useState('');
   const [expandedCatId, setExpandedCatId] = useState(null);
   const containerRef = useRef(null);
+
+  let appData = null;
+  try {
+    appData = useApp();
+  } catch (e) {}
+
+  const dynamicTree = appData?.categories || getDynamicCategories();
 
   useEffect(() => {
     if (!isOpen) return;
@@ -38,8 +46,28 @@ export default function CategoryPicker({
     return getCategoryDetails(value);
   }, [value]);
 
-  // Categories list for current tab
-  const list = activeTab === 'expense' ? CATEGORIES_DATA.expenses : CATEGORIES_DATA.incomes;
+  // Categories list for current tab (active only, live synchronized)
+  const activeExpenseList = useMemo(() => {
+    const rawList = appData?.expenseCategories || (dynamicTree ? dynamicTree.filter(c => c.type === 'expense' || c.type === 'both' || !c.type) : CATEGORIES_DATA.expenses);
+    return rawList
+      .filter(cat => cat.isActive !== false)
+      .map(cat => ({
+        ...cat,
+        subs: (cat.subs || []).filter(sub => sub.isActive !== false)
+      }));
+  }, [appData?.expenseCategories, dynamicTree]);
+
+  const activeIncomeList = useMemo(() => {
+    const rawList = appData?.incomeCategories || (dynamicTree ? dynamicTree.filter(c => c.type === 'income') : CATEGORIES_DATA.incomes);
+    return rawList
+      .filter(cat => cat.isActive !== false)
+      .map(cat => ({
+        ...cat,
+        subs: (cat.subs || []).filter(sub => sub.isActive !== false)
+      }));
+  }, [appData?.incomeCategories, dynamicTree]);
+
+  const list = activeTab === 'expense' ? activeExpenseList : activeIncomeList;
 
   // Filtered categories
   const filteredCategories = useMemo(() => {

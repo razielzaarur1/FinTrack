@@ -31,6 +31,8 @@ const ICON_MAP = {
   Percent, TrendingDown, Tag, HelpCircle, Banknote
 };
 
+import * as LucideIcons from 'lucide-react';
+
 export default function CategoryBadge({
   category,
   customSvg = null,
@@ -41,7 +43,16 @@ export default function CategoryBadge({
   const { mainCat, subCat } = getCategoryDetails(category);
   const activeSvg = customSvg || subCat?.customSvg || mainCat?.customSvg;
   const iconName = subCat?.icon || mainCat?.icon || 'Tag';
-  const IconComponent = ICON_MAP[iconName] || Tag;
+  const IconComponent = ICON_MAP[iconName] || LucideIcons[iconName] || Tag;
+
+  // Determine effective color & background (supports hex colors and parent inheritance)
+  const rawColor = subCat?.color || mainCat?.color;
+  const isHex = rawColor && rawColor.startsWith('#');
+  const catColor = isHex ? rawColor : null;
+  const catBg = isHex ? `${rawColor}20` : null;
+
+  const colorClass = !isHex ? (subCat?.color || mainCat?.color || 'text-slate-500 dark:text-slate-400') : '';
+  const bgClass = !isHex ? (subCat?.bg || mainCat?.bg || 'bg-slate-500/10 dark:bg-slate-500/20') : '';
 
   const containerSizeClass =
     size <= 12
@@ -52,24 +63,16 @@ export default function CategoryBadge({
       ? 'w-7 h-7 rounded-lg text-xs'
       : 'w-10 h-10 rounded-xl';
 
-  const svgSizeClass =
-    size <= 12
-      ? '[&>svg]:w-3 [&>svg]:h-3'
-      : size <= 15
-      ? '[&>svg]:w-3.5 [&>svg]:h-3.5'
-      : size <= 18
-      ? '[&>svg]:w-4 [&>svg]:h-4'
-      : '[&>svg]:w-5 [&>svg]:h-5';
-
   return (
     <div className={`flex items-center gap-2 ${className}`}>
       <div
-        className={`${containerSizeClass} inline-flex items-center justify-center shrink-0 shadow-2xs border border-black/5 dark:border-white/5 transition-transform hover:scale-105 ${mainCat.bg} ${mainCat.color}`}
+        className={`${containerSizeClass} inline-flex items-center justify-center shrink-0 shadow-2xs border border-black/5 dark:border-white/5 transition-transform hover:scale-105 overflow-hidden ${colorClass} ${bgClass}`}
+        style={isHex ? { color: catColor, backgroundColor: catBg } : undefined}
         title={subCat?.name && subCat.name !== mainCat.name ? `${mainCat.name} • ${subCat.name}` : mainCat.name}
       >
         {activeSvg ? (
           <div
-            className={`flex items-center justify-center shrink-0 ${svgSizeClass} [&>svg]:w-full [&>svg]:h-full [&>svg]:stroke-current [&>svg_*]:stroke-current`}
+            className="w-full h-full flex items-center justify-center p-1 overflow-hidden [&>svg]:w-full [&>svg]:h-full [&>svg]:max-w-full [&>svg]:max-h-full [&>svg]:object-contain [&>svg]:stroke-current [&>svg_*]:stroke-current"
             dangerouslySetInnerHTML={{ __html: normalizeCategorySvg(activeSvg) }}
           />
         ) : (

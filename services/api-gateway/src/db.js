@@ -45,6 +45,182 @@ pool.on('error', (err) => {
   console.error('[PostgreSQL] Unexpected error on idle client:', err.message);
 });
 
+export const DEFAULT_MONEYAPP_CATS = [
+  // Incomes
+  { name: 'משכורת', nameEn: 'Salary', type: 'income', color: '#10b981', icon: 'Wallet', subs: [] },
+  { name: 'קצבה או מלגה', nameEn: 'Allowance', type: 'income', color: '#10b981', icon: 'Landmark', subs: [] },
+  { name: 'הכנסה מנכס', nameEn: 'Property Income', type: 'income', color: '#10b981', icon: 'Home', subs: [] },
+  { name: 'הכנסה מעסק', nameEn: 'Business Income', type: 'income', color: '#10b981', icon: 'Briefcase', subs: [] },
+  { name: 'דיווידנדים ורווחים', nameEn: 'Dividends', type: 'income', color: '#10b981', icon: 'TrendingUp', subs: [] },
+  { name: 'הכנסות שונות', nameEn: 'Misc Income', type: 'income', color: '#10b981', icon: 'MoreHorizontal', subs: [] },
+  // Expenses
+  {
+    name: 'משק בית', nameEn: 'Household', type: 'expense', color: '#6366f1', icon: 'Home',
+    subs: [
+      { name: 'טלפון ואינטרנט', icon: 'Tv' },
+      { name: 'משכנתא', icon: 'Key' },
+      { name: 'דמי שכירות', icon: 'Home' },
+      { name: 'ארנונה', icon: 'Landmark' },
+      { name: 'ועד בית', icon: 'Users' },
+      { name: 'מים', icon: 'Droplet' },
+      { name: 'גז והסקה', icon: 'Flame' },
+      { name: 'חשמל', icon: 'Zap' },
+      { name: 'ביטוח דירה', icon: 'Shield' },
+      { name: 'אחזקת בית', icon: 'Hammer' },
+      { name: 'ניקיון וכביסה', icon: 'Sparkles' },
+      { name: 'גינון ונוי', icon: 'Flower' },
+      { name: 'משק בית - שונות', icon: 'MoreHorizontal' },
+    ]
+  },
+  {
+    name: 'עושים קניות', nameEn: 'Shopping', type: 'expense', color: '#ec4899', icon: 'ShoppingBag',
+    subs: [
+      { name: 'סופר ומכולת', icon: 'ShoppingBag' },
+      { name: 'ריהוט לבית', icon: 'Sofa' },
+      { name: 'אלקטרוניקה', icon: 'Monitor' },
+      { name: 'בגדים והנעלה', icon: 'Shirt' },
+      { name: 'תכשיטים ושעונים', icon: 'Watch' },
+      { name: 'טבק ועישון', icon: 'Wind' },
+      { name: 'קניות - שונות', icon: 'MoreHorizontal' },
+    ]
+  },
+  {
+    name: 'רכב ותחבורה', nameEn: 'Transport', type: 'expense', color: '#f97316', icon: 'Car',
+    subs: [
+      { name: 'דלק וטעינה', icon: 'Fuel' },
+      { name: 'השכרת רכב', icon: 'Car' },
+      { name: 'תחבורה ציבורית', icon: 'Bus' },
+      { name: 'חנייה', icon: 'Map' },
+      { name: 'קנסות', icon: 'ScrollText' },
+      { name: 'מוסך ואחזקה', icon: 'Wrench' },
+      { name: 'כבישי אגרה', icon: 'Route' },
+      { name: 'ביטוח רכב', icon: 'Shield' },
+      { name: 'תחבורה - שונות', icon: 'MoreHorizontal' },
+    ]
+  },
+  {
+    name: 'בריאות וטיפוח', nameEn: 'Health', type: 'expense', color: '#f43f5e', icon: 'Heart',
+    subs: [
+      { name: 'רפואה משלימה', icon: 'Activity' },
+      { name: 'ייעוץ וטיפול', icon: 'Stethoscope' },
+      { name: 'ביטוחי בריאות', icon: 'HeartPulse' },
+      { name: 'רפואת שיניים', icon: 'Activity' },
+      { name: 'אופטיקה', icon: 'Eye' },
+      { name: 'בתי מרקחת', icon: 'Pill' },
+      { name: 'טיפולי יופי', icon: 'Scissors' },
+      { name: 'כושר', icon: 'Dumbbell' },
+      { name: 'בריאות - שונות', icon: 'MoreHorizontal' },
+    ]
+  },
+  {
+    name: 'משפחה והשכלה', nameEn: 'Family & Education', type: 'expense', color: '#14b8a6', icon: 'Users',
+    subs: [
+      { name: 'גן ובית ספר', icon: 'Baby' },
+      { name: 'השכלה גבוהה', icon: 'GraduationCap' },
+      { name: 'חוגים וקייטנות', icon: 'Tent' },
+      { name: 'בייביסיטר', icon: 'User' },
+      { name: 'משחקים ודמי כיס', icon: 'Gamepad2' },
+      { name: 'מוצרים לגיל הרך', icon: 'Package' },
+      { name: 'תמיכה ומזונות', icon: 'HandHeart' },
+      { name: 'חיות מחמד', icon: 'Dog' },
+      { name: 'משפחה - שונות', icon: 'MoreHorizontal' },
+    ]
+  },
+  {
+    name: 'פנאי ותרבות', nameEn: 'Leisure & Culture', type: 'expense', color: '#a855f7', icon: 'Ticket',
+    subs: [
+      { name: 'הופעות וקולנוע', icon: 'Ticket' },
+      { name: 'מתנות ואירועים', icon: 'Gift' },
+      { name: 'מוזיקה וקריאה', icon: 'Music' },
+      { name: 'סדנאות', icon: 'BookOpen' },
+      { name: 'תחביבים וספורט', icon: 'Bike' },
+      { name: 'אירועי ספורט', icon: 'Trophy' },
+      { name: 'פנאי - שונות', icon: 'MoreHorizontal' },
+    ]
+  },
+  {
+    name: 'אוכלים בחוץ', nameEn: 'Dining Out', type: 'expense', color: '#eab308', icon: 'Utensils',
+    subs: [
+      { name: 'מזון מהיר ומשלוחים', icon: 'Pizza' },
+      { name: 'מסעדות ופאבים', icon: 'Coffee' },
+      { name: 'אוכלים בחוץ - שונות', icon: 'Utensils' },
+    ]
+  },
+  {
+    name: 'חופשות וטיולים', nameEn: 'Travel & Vacation', type: 'expense', color: '#0ea5e9', icon: 'Plane',
+    subs: [
+      { name: 'טיסות', icon: 'Plane' },
+      { name: 'אטרקציות', icon: 'Map' },
+      { name: 'לינה', icon: 'Bed' },
+      { name: 'חופשות - שונות', icon: 'MoreHorizontal' },
+    ]
+  },
+  {
+    name: 'שירותים עיסקיים', nameEn: 'Business Services', type: 'expense', color: '#64748b', icon: 'Briefcase',
+    subs: [
+      { name: 'דואר ומשלוחים', icon: 'Mail' },
+      { name: 'הנה"ח ומשפטי', icon: 'FileText' },
+      { name: 'שיווק ופרסום', icon: 'Printer' },
+      { name: 'ייעוץ והשתלמויות', icon: 'Lightbulb' },
+      { name: 'עסקי - שונות', icon: 'MoreHorizontal' },
+    ]
+  },
+  {
+    name: 'שירותים פיננסיים', nameEn: 'Financial Services', type: 'expense', color: '#0891b2', icon: 'Landmark',
+    subs: [
+      { name: 'פירעון הלוואה', icon: 'Percent' },
+      { name: 'עמלות', icon: 'TrendingDown' },
+      { name: 'תשלומי ריביות', icon: 'TrendingDown' },
+      { name: 'פיננסי - שונות', icon: 'MoreHorizontal' },
+    ]
+  },
+  {
+    name: 'שונות', nameEn: 'Misc', type: 'expense', color: '#6b7280', icon: 'MoreHorizontal',
+    subs: [
+      { name: 'מיסים ורשויות', icon: 'Landmark' },
+      { name: 'דת ותרומות', icon: 'HandHeart' },
+      { name: 'הימורים', icon: 'Trophy' },
+      { name: 'ללא סיווג', icon: 'MoreHorizontal' },
+      { name: 'שונות', icon: 'MoreHorizontal' },
+    ]
+  },
+];
+
+export async function seedCategories(dbClient, userId = '00000000-0000-0000-0000-000000000001', forceReset = false) {
+  if (forceReset) {
+    await dbClient.query('DELETE FROM categories WHERE user_id = $1', [userId]);
+  } else {
+    const check = await dbClient.query('SELECT COUNT(*) FROM categories WHERE user_id = $1', [userId]);
+    if (parseInt(check.rows[0]?.count || '0', 10) > 0) {
+      return; // User already has categories; preserve all user customizations, additions and deletions
+    }
+  }
+
+  for (const mainCat of DEFAULT_MONEYAPP_CATS) {
+    const insertMainRes = await dbClient.query(
+      `INSERT INTO categories (user_id, name, name_en, type, color, icon, is_system, sort_order, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, true, 0, true)
+       ON CONFLICT (user_id, name) DO UPDATE 
+         SET color = EXCLUDED.color, icon = EXCLUDED.icon, name_en = EXCLUDED.name_en, is_active = EXCLUDED.is_active
+       RETURNING id`,
+      [userId, mainCat.name, mainCat.nameEn, mainCat.type, mainCat.color, mainCat.icon]
+    );
+    const parentId = insertMainRes.rows[0]?.id;
+
+    if (parentId && mainCat.subs && mainCat.subs.length > 0) {
+      for (const sub of mainCat.subs) {
+        await dbClient.query(
+          `INSERT INTO categories (user_id, name, name_en, type, color, icon, parent_id, is_system, sort_order, is_active)
+           VALUES ($1, $2, $2, $3, $4, $5, $6, true, 0, true)
+           ON CONFLICT (user_id, name) DO UPDATE
+             SET parent_id = EXCLUDED.parent_id, icon = EXCLUDED.icon, color = EXCLUDED.color, is_active = EXCLUDED.is_active`,
+          [userId, sub.name, mainCat.type, mainCat.color, sub.icon, parentId]
+        );
+      }
+    }
+  }
+}
+
 /**
  * Ensures all required tables and seed records exist.
  * Runs automatically on startup with retry logic.
@@ -217,6 +393,7 @@ async function ensureSchema() {
           ALTER TABLE transactions ADD COLUMN IF NOT EXISTS is_flagged BOOLEAN NOT NULL DEFAULT false;
           ALTER TABLE categories ADD COLUMN IF NOT EXISTS parent_id UUID REFERENCES categories(id) ON DELETE CASCADE;
           ALTER TABLE categories ADD COLUMN IF NOT EXISTS custom_svg TEXT;
+          ALTER TABLE categories ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true;
 
           CREATE INDEX IF NOT EXISTS idx_transactions_processed_date ON transactions(processed_date);
           CREATE INDEX IF NOT EXISTS idx_transactions_reviewed ON transactions(is_reviewed);
@@ -296,172 +473,8 @@ async function ensureSchema() {
 
           CREATE INDEX IF NOT EXISTS idx_receipts_transaction ON transaction_receipts(transaction_id);
         `);
-
-        // ── Seed MoneyApp Categories Hierarchy (11 main, 60+ subcategories) ──
-        const moneyAppCats = [
-            // Incomes
-            { name: 'משכורת', nameEn: 'Salary', type: 'income', color: '#10b981', icon: 'Wallet', subs: [] },
-            { name: 'קצבה או מלגה', nameEn: 'Allowance', type: 'income', color: '#10b981', icon: 'Landmark', subs: [] },
-            { name: 'הכנסה מנכס', nameEn: 'Property Income', type: 'income', color: '#10b981', icon: 'Home', subs: [] },
-            { name: 'הכנסה מעסק', nameEn: 'Business Income', type: 'income', color: '#10b981', icon: 'Briefcase', subs: [] },
-            { name: 'דיווידנדים ורווחים', nameEn: 'Dividends', type: 'income', color: '#10b981', icon: 'TrendingUp', subs: [] },
-            { name: 'הכנסות שונות', nameEn: 'Misc Income', type: 'income', color: '#10b981', icon: 'MoreHorizontal', subs: [] },
-            // Expenses
-            {
-              name: 'משק בית', nameEn: 'Household', type: 'expense', color: '#6366f1', icon: 'Home',
-              subs: [
-                { name: 'טלפון ואינטרנט', icon: 'Tv' },
-                { name: 'משכנתא', icon: 'Key' },
-                { name: 'דמי שכירות', icon: 'Home' },
-                { name: 'ארנונה', icon: 'Landmark' },
-                { name: 'ועד בית', icon: 'Users' },
-                { name: 'מים', icon: 'Droplet' },
-                { name: 'גז והסקה', icon: 'Flame' },
-                { name: 'חשמל', icon: 'Zap' },
-                { name: 'ביטוח דירה', icon: 'Shield' },
-                { name: 'אחזקת בית', icon: 'Hammer' },
-                { name: 'ניקיון וכביסה', icon: 'Sparkles' },
-                { name: 'גינון ונוי', icon: 'Flower' },
-                { name: 'משק בית - שונות', icon: 'MoreHorizontal' },
-              ]
-            },
-            {
-              name: 'עושים קניות', nameEn: 'Shopping', type: 'expense', color: '#ec4899', icon: 'ShoppingBag',
-              subs: [
-                { name: 'סופר ומכולת', icon: 'ShoppingBag' },
-                { name: 'ריהוט לבית', icon: 'Sofa' },
-                { name: 'אלקטרוניקה', icon: 'Monitor' },
-                { name: 'בגדים והנעלה', icon: 'Shirt' },
-                { name: 'תכשיטים ושעונים', icon: 'Watch' },
-                { name: 'טבק ועישון', icon: 'Wind' },
-                { name: 'קניות - שונות', icon: 'MoreHorizontal' },
-              ]
-            },
-            {
-              name: 'רכב ותחבורה', nameEn: 'Transport', type: 'expense', color: '#f97316', icon: 'Car',
-              subs: [
-                { name: 'דלק וטעינה', icon: 'Fuel' },
-                { name: 'השכרת רכב', icon: 'Car' },
-                { name: 'תחבורה ציבורית', icon: 'Bus' },
-                { name: 'חנייה', icon: 'Map' },
-                { name: 'קנסות', icon: 'ScrollText' },
-                { name: 'מוסך ואחזקה', icon: 'Wrench' },
-                { name: 'כבישי אגרה', icon: 'Route' },
-                { name: 'ביטוח רכב', icon: 'Shield' },
-                { name: 'תחבורה - שונות', icon: 'MoreHorizontal' },
-              ]
-            },
-            {
-              name: 'בריאות וטיפוח', nameEn: 'Health', type: 'expense', color: '#f43f5e', icon: 'Heart',
-              subs: [
-                { name: 'רפואה משלימה', icon: 'Activity' },
-                { name: 'ייעוץ וטיפול', icon: 'Stethoscope' },
-                { name: 'ביטוחי בריאות', icon: 'HeartPulse' },
-                { name: 'רפואת שיניים', icon: 'Activity' },
-                { name: 'אופטיקה', icon: 'Eye' },
-                { name: 'בתי מרקחת', icon: 'Pill' },
-                { name: 'טיפולי יופי', icon: 'Scissors' },
-                { name: 'כושר', icon: 'Dumbbell' },
-                { name: 'בריאות - שונות', icon: 'MoreHorizontal' },
-              ]
-            },
-            {
-              name: 'משפחה והשכלה', nameEn: 'Family & Education', type: 'expense', color: '#14b8a6', icon: 'Users',
-              subs: [
-                { name: 'גן ובית ספר', icon: 'Baby' },
-                { name: 'השכלה גבוהה', icon: 'GraduationCap' },
-                { name: 'חוגים וקייטנות', icon: 'Tent' },
-                { name: 'בייביסיטר', icon: 'User' },
-                { name: 'משחקים ודמי כיס', icon: 'Gamepad2' },
-                { name: 'מוצרים לגיל הרך', icon: 'Package' },
-                { name: 'תמיכה ומזונות', icon: 'HandHeart' },
-                { name: 'חיות מחמד', icon: 'Dog' },
-                { name: 'משפחה - שונות', icon: 'MoreHorizontal' },
-              ]
-            },
-            {
-              name: 'פנאי ותרבות', nameEn: 'Leisure & Culture', type: 'expense', color: '#a855f7', icon: 'Ticket',
-              subs: [
-                { name: 'הופעות וקולנוע', icon: 'Ticket' },
-                { name: 'מתנות ואירועים', icon: 'Gift' },
-                { name: 'מוזיקה וקריאה', icon: 'Music' },
-                { name: 'סדנאות', icon: 'BookOpen' },
-                { name: 'תחביבים וספורט', icon: 'Bike' },
-                { name: 'אירועי ספורט', icon: 'Trophy' },
-                { name: 'פנאי - שונות', icon: 'MoreHorizontal' },
-              ]
-            },
-            {
-              name: 'אוכלים בחוץ', nameEn: 'Dining Out', type: 'expense', color: '#eab308', icon: 'Utensils',
-              subs: [
-                { name: 'מזון מהיר ומשלוחים', icon: 'Pizza' },
-                { name: 'מסעדות ופאבים', icon: 'Coffee' },
-                { name: 'אוכלים בחוץ - שונות', icon: 'Utensils' },
-              ]
-            },
-            {
-              name: 'חופשות וטיולים', nameEn: 'Travel & Vacation', type: 'expense', color: '#0ea5e9', icon: 'Plane',
-              subs: [
-                { name: 'טיסות', icon: 'Plane' },
-                { name: 'אטרקציות', icon: 'Map' },
-                { name: 'לינה', icon: 'Bed' },
-                { name: 'חופשות - שונות', icon: 'MoreHorizontal' },
-              ]
-            },
-            {
-              name: 'שירותים עיסקיים', nameEn: 'Business Services', type: 'expense', color: '#64748b', icon: 'Briefcase',
-              subs: [
-                { name: 'דואר ומשלוחים', icon: 'Mail' },
-                { name: 'הנה"ח ומשפטי', icon: 'FileText' },
-                { name: 'שיווק ופרסום', icon: 'Printer' },
-                { name: 'ייעוץ והשתלמויות', icon: 'Lightbulb' },
-                { name: 'עסקי - שונות', icon: 'MoreHorizontal' },
-              ]
-            },
-            {
-              name: 'שירותים פיננסיים', nameEn: 'Financial Services', type: 'expense', color: '#0891b2', icon: 'Landmark',
-              subs: [
-                { name: 'פירעון הלוואה', icon: 'Percent' },
-                { name: 'עמלות', icon: 'TrendingDown' },
-                { name: 'תשלומי ריביות', icon: 'TrendingDown' },
-                { name: 'פיננסי - שונות', icon: 'MoreHorizontal' },
-              ]
-            },
-            {
-              name: 'שונות', nameEn: 'Misc', type: 'expense', color: '#6b7280', icon: 'MoreHorizontal',
-              subs: [
-                { name: 'מיסים ורשויות', icon: 'Landmark' },
-                { name: 'דת ותרומות', icon: 'HandHeart' },
-                { name: 'הימורים', icon: 'Trophy' },
-                { name: 'ללא סיווג', icon: 'MoreHorizontal' },
-                { name: 'שונות', icon: 'MoreHorizontal' },
-              ]
-            },
-          ];
-
-          for (const mainCat of moneyAppCats) {
-            const insertMainRes = await client.query(
-              `INSERT INTO categories (user_id, name, name_en, type, color, icon, is_system, sort_order)
-               VALUES ($1, $2, $3, $4, $5, $6, true, 0)
-               ON CONFLICT (user_id, name) DO UPDATE 
-                 SET color = EXCLUDED.color, icon = EXCLUDED.icon, name_en = EXCLUDED.name_en
-               RETURNING id`,
-              ['00000000-0000-0000-0000-000000000001', mainCat.name, mainCat.nameEn, mainCat.type, mainCat.color, mainCat.icon]
-            );
-            const parentId = insertMainRes.rows[0]?.id;
-
-            if (parentId && mainCat.subs && mainCat.subs.length > 0) {
-              for (const sub of mainCat.subs) {
-                await client.query(
-                  `INSERT INTO categories (user_id, name, name_en, type, color, icon, parent_id, is_system, sort_order)
-                   VALUES ($1, $2, $2, $3, $4, $5, $6, true, 0)
-                   ON CONFLICT (user_id, name) DO UPDATE
-                     SET parent_id = EXCLUDED.parent_id, icon = EXCLUDED.icon, color = EXCLUDED.color`,
-                  ['00000000-0000-0000-0000-000000000001', sub.name, mainCat.type, mainCat.color, sub.icon, parentId]
-                );
-              }
-            }
-          }
+        // ── Seed MoneyApp Categories Hierarchy (if 0 categories exist) ──
+        await seedCategories(client, '00000000-0000-0000-0000-000000000001', false);
 
           // ── Auto-split multiple cards under the same login in transactions ──
           const accountsWithCards = await client.query(`

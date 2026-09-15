@@ -33,6 +33,7 @@ import {
 import { api } from '@/lib/api';
 import CategoryBadge from '@/components/common/CategoryBadge';
 import CategoryPicker from '@/components/common/CategoryPicker';
+import { setDynamicCategories } from '@/lib/categories';
 import { formatILS, formatDate, cleanSpacedHebrew, getTransactionTitle } from '@/lib/formatters';
 
 function ChromeErrorPage() {
@@ -329,6 +330,11 @@ export default function TmaTransactionPage() {
         // Fetch initial list of transactions for linking
         api.getTmaLinkable(id, '', token, initData).then((res) => {
           if (isMounted && res.data?.data) setLinkableTxs(res.data.data);
+        }).catch(() => {});
+
+        // Fetch latest dynamic categories for accurate badge icons and colors
+        api.getCategories({ tree: 'true' }).then((res) => {
+          if (isMounted && res.data?.data) setDynamicCategories(res.data.data);
         }).catch(() => {});
 
       } catch (err) {

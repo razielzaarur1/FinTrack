@@ -128,6 +128,7 @@ export const api = {
   createCategory: (data) => request('/api/categories', { method: 'POST', body: JSON.stringify(data) }),
   updateCategory: (id, data) => request(`/api/categories/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteCategory: (id) => request(`/api/categories/${id}`, { method: 'DELETE' }),
+  resetCategoriesToDefault: () => request('/api/categories/reset-default', { method: 'POST' }),
   classifyTransaction: (data) => request('/api/categories/classify', { method: 'POST', body: JSON.stringify(data) }),
   getCategoryRules: () => request('/api/categories/rules'),
   saveCategoryRule: (data) => request('/api/categories/rules', { method: 'POST', body: JSON.stringify(data) }),

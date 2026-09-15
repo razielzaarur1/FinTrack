@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { pool } from '../db.js';
+import { pool, seedCategories } from '../db.js';
 import {
   classifyTransaction,
   saveUserRule,
@@ -17,6 +17,7 @@ const createCategorySchema = z.object({
   parentId: z.string().uuid().optional().nullable(),
   customSvg: z.string().optional().nullable(),
   sortOrder: z.number().int().optional().default(0),
+  isActive: z.boolean().optional().default(true),
 });
 
 const updateCategorySchema = z.object({
@@ -28,6 +29,7 @@ const updateCategorySchema = z.object({
   parentId: z.string().uuid().optional().nullable(),
   customSvg: z.string().optional().nullable(),
   sortOrder: z.number().int().optional(),
+  isActive: z.boolean().optional(),
 });
 
 const classifyBodySchema = z.object({
@@ -47,9 +49,13 @@ const saveRuleSchema = z.object({
 export default async function categoriesRoutes(fastify, options) {
   // GET /api/categories - List all categories (system & user custom) with optional type filter
   fastify.get('/', async (request, reply) => {
-    const { type, tree } = request.query;
+    const { type, tree, activeOnly } = request.query;
     const conditions = ['user_id = $1'];
     const values = [DEFAULT_USER_ID];
+
+    if (activeOnly === 'true') {
+      conditions.push('is_active = true');
+    }
 
     if (type && (type === 'income' || type === 'expense')) {
       values.push(type);
@@ -67,6 +73,7 @@ export default async function categoriesRoutes(fastify, options) {
         icon,
         custom_svg AS "customSvg",
         is_system AS "isSystem",
+        is_active AS "isActive",
         sort_order AS "sortOrder",
         created_at AS "createdAt"
       FROM categories
@@ -108,14 +115,14 @@ export default async function categoriesRoutes(fastify, options) {
       return reply.code(400).send({ error: 'Validation Error', details: parseResult.error.issues });
     }
 
-    const { name, nameEn, type, color, icon, parentId, customSvg, sortOrder } = parseResult.data;
+    const { name, nameEn, type, color, icon, parentId, customSvg, sortOrder, isActive } = parseResult.data;
 
     try {
       const result = await pool.query(
-        `INSERT INTO categories (user_id, name, name_en, type, color, icon, parent_id, custom_svg, is_system, sort_order)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, false, $9)
-         RETURNING id, name, name_en AS "nameEn", type, color, icon, parent_id AS "parentId", custom_svg AS "customSvg", is_system AS "isSystem", sort_order AS "sortOrder"`,
-        [DEFAULT_USER_ID, name, nameEn || null, type, color, icon, parentId || null, customSvg || null, sortOrder]
+        `INSERT INTO categories (user_id, name, name_en, type, color, icon, parent_id, custom_svg, is_system, sort_order, is_active)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, false, $9, $10)
+         RETURNING id, name, name_en AS "nameEn", type, color, icon, parent_id AS "parentId", custom_svg AS "customSvg", is_system AS "isSystem", is_active AS "isActive", sort_order AS "sortOrder"`,
+        [DEFAULT_USER_ID, name, nameEn || null, type, color, icon, parentId || null, customSvg || null, sortOrder, isActive ?? true]
       );
       return reply.code(201).send({ success: true, data: result.rows[0] });
     } catch (err) {
@@ -123,6 +130,53 @@ export default async function categoriesRoutes(fastify, options) {
         return reply.code(409).send({ error: 'Category with this name already exists' });
       }
       fastify.log.error(err, 'Failed to create category');
+      return reply.code(500).send({ error: 'Database error', message: err.message });
+    }
+  });
+
+  // POST /api/categories/reset-default - Restore all categories to factory default hierarchy
+  fastify.post('/reset-default', async (request, reply) => {
+    try {
+      await seedCategories(pool, DEFAULT_USER_ID, true);
+
+      // Return refreshed tree
+      const query = `
+        SELECT 
+          id,
+          parent_id AS "parentId",
+          name,
+          name_en AS "nameEn",
+          type,
+          color,
+          icon,
+          custom_svg AS "customSvg",
+          is_system AS "isSystem",
+          is_active AS "isActive",
+          sort_order AS "sortOrder",
+          created_at AS "createdAt"
+        FROM categories
+        WHERE user_id = $1
+        ORDER BY sort_order ASC, name ASC
+      `;
+      const result = await pool.query(query, [DEFAULT_USER_ID]);
+      const rows = result.rows;
+
+      const map = new Map();
+      const roots = [];
+      for (const r of rows) {
+        map.set(r.id, { ...r, subs: [] });
+      }
+      for (const r of rows) {
+        if (r.parentId && map.has(r.parentId)) {
+          map.get(r.parentId).subs.push(map.get(r.id));
+        } else {
+          roots.push(map.get(r.id));
+        }
+      }
+
+      return reply.code(200).send({ success: true, message: 'Categories restored to defaults', data: roots });
+    } catch (err) {
+      fastify.log.error(err, 'Failed to reset categories to default');
       return reply.code(500).send({ error: 'Database error', message: err.message });
     }
   });
@@ -135,7 +189,7 @@ export default async function categoriesRoutes(fastify, options) {
       return reply.code(400).send({ error: 'Validation Error', details: parseResult.error.issues });
     }
 
-    const { name, nameEn, type, color, icon, parentId, customSvg, sortOrder } = parseResult.data;
+    const { name, nameEn, type, color, icon, parentId, customSvg, sortOrder, isActive } = parseResult.data;
     const setClauses = [];
     const values = [];
 
@@ -171,6 +225,10 @@ export default async function categoriesRoutes(fastify, options) {
       values.push(sortOrder);
       setClauses.push(`sort_order = $${values.length}`);
     }
+    if (isActive !== undefined) {
+      values.push(isActive);
+      setClauses.push(`is_active = $${values.length}`);
+    }
 
     if (setClauses.length === 0) {
       return reply.code(400).send({ error: 'Nothing to update' });
@@ -181,7 +239,7 @@ export default async function categoriesRoutes(fastify, options) {
       UPDATE categories
       SET ${setClauses.join(', ')}
       WHERE id = $${values.length - 1} AND user_id = $${values.length}
-      RETURNING id, name, name_en AS "nameEn", type, color, icon, parent_id AS "parentId", custom_svg AS "customSvg", is_system AS "isSystem", sort_order AS "sortOrder"
+      RETURNING id, name, name_en AS "nameEn", type, color, icon, parent_id AS "parentId", custom_svg AS "customSvg", is_system AS "isSystem", is_active AS "isActive", sort_order AS "sortOrder"
     `;
 
     try {
@@ -189,6 +247,15 @@ export default async function categoriesRoutes(fastify, options) {
       if (result.rows.length === 0) {
         return reply.code(404).send({ error: 'Category not found' });
       }
+
+      // If color was changed, also cascade the color to all subcategories under this category
+      if (color !== undefined) {
+        await pool.query(
+          'UPDATE categories SET color = $1 WHERE parent_id = $2 AND user_id = $3',
+          [color, id, DEFAULT_USER_ID]
+        );
+      }
+
       return reply.code(200).send({ success: true, data: result.rows[0] });
     } catch (err) {
       return reply.code(500).send({ error: 'Database error', message: err.message });
