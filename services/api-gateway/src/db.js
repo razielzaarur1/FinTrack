@@ -278,6 +278,23 @@ async function ensureSchema() {
             0.00,
             true
           ) ON CONFLICT (id) DO NOTHING;
+
+          -- 13. Transaction Receipts
+          CREATE TABLE IF NOT EXISTS transaction_receipts (
+              id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+              transaction_id UUID NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+              file_name TEXT,
+              file_type VARCHAR(50),
+              file_size INT DEFAULT 0,
+              file_path TEXT,
+              source_url TEXT,
+              ai_analyzed BOOLEAN NOT NULL DEFAULT false,
+              ai_provider VARCHAR(50) DEFAULT 'gemini',
+              extracted_data JSONB DEFAULT '{}'::jsonb,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_receipts_transaction ON transaction_receipts(transaction_id);
         `);
 
         // ── Seed MoneyApp Categories Hierarchy (11 main, 60+ subcategories) ──
