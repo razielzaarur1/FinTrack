@@ -5,15 +5,20 @@ import { pool } from '../db.js';
 
 const DEFAULT_USER_ID = '00000000-0000-0000-0000-000000000001';
 
-const CANDIDATE_MODELS = [
+// Static fallback candidates if ListModels cannot be queried
+const DEFAULT_CANDIDATE_MODELS = [
+  'gemini-1.5-flash-002',
+  'gemini-1.5-flash-001',
   'gemini-1.5-flash',
   'gemini-1.5-flash-latest',
+  'gemini-2.0-flash-001',
   'gemini-2.0-flash',
   'gemini-2.0-flash-exp',
   'gemini-1.5-flash-8b',
+  'gemini-1.5-pro-002',
+  'gemini-1.5-pro-001',
   'gemini-1.5-pro',
-  'gemini-1.5-pro-latest',
-  'gemini-pro'
+  'gemini-1.5-pro-latest'
 ];
 
 /**
@@ -78,12 +83,56 @@ export async function getAvailableCategories() {
 }
 
 /**
- * Execute generateContent with automatic model fallback
+ * Query Google's ListModels API dynamically to get the exact authorized models for this key
  */
-async function generateWithFallback(genAI, contents, generationConfig = {}) {
+export async function getAvailableGeminiModels(apiKey) {
+  if (!apiKey) return [];
+  try {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`, {
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      const msg = errData.error?.message || `HTTP ${res.status}`;
+      console.warn('[AI-Analyzer] ListModels returned error:', msg);
+      return [];
+    }
+    const data = await res.json();
+    const list = (data.models || [])
+      .filter((m) => m.supportedGenerationMethods?.includes('generateContent'))
+      .map((m) => m.name.replace(/^models\//, ''));
+
+    if (list.length > 0) {
+      // Sort models: prioritize flash models, then 2.0 / 1.5, then pro
+      list.sort((a, b) => {
+        const aFlash = a.includes('flash') ? 0 : 1;
+        const bFlash = b.includes('flash') ? 0 : 1;
+        if (aFlash !== bFlash) return aFlash - bFlash;
+        return a.localeCompare(b);
+      });
+      return list;
+    }
+  } catch (err) {
+    console.warn('[AI-Analyzer] Failed to query ListModels:', err.message);
+  }
+  return [];
+}
+
+/**
+ * Execute generateContent with dynamic model discovery and automatic fallback
+ */
+async function generateWithFallback(apiKey, contents, generationConfig = {}) {
+  const genAI = new GoogleGenerativeAI(apiKey);
+
+  // 1. Discover actual models available for this specific API key
+  const dynamicModels = await getAvailableGeminiModels(apiKey);
+  const modelsToTry = dynamicModels.length > 0 
+    ? dynamicModels 
+    : DEFAULT_CANDIDATE_MODELS;
+
   let lastError = null;
 
-  for (const modelName of CANDIDATE_MODELS) {
+  for (const modelName of modelsToTry) {
     try {
       const config = {
         model: modelName,
@@ -99,17 +148,20 @@ async function generateWithFallback(genAI, contents, generationConfig = {}) {
     } catch (err) {
       lastError = err;
       const errMsg = String(err.message || '');
-      // If 404 or unsupported model for this API key/version, try next candidate
+      // If 404 or model not supported, try next model
       if (errMsg.includes('404') || errMsg.includes('not found') || errMsg.includes('not supported') || err.status === 404) {
-        console.warn(`[AI-Analyzer] Model '${modelName}' not available (${errMsg.slice(0, 120)}), trying next candidate...`);
+        console.warn(`[AI-Analyzer] Model '${modelName}' not available, trying next...`);
         continue;
       }
-      // If invalid API key or auth error, throw immediately
+      // If authentication failure / invalid key, throw immediately
+      if (errMsg.includes('API_KEY_INVALID') || errMsg.includes('PERMISSION_DENIED') || errMsg.includes('API key not valid')) {
+        throw new Error('מפתח ה-API של Gemini אינו תקין או שאינו מורשה.');
+      }
       throw err;
     }
   }
 
-  throw lastError || new Error('כל דגמי Gemini שנבדקו לא היו זמינים עבור מפתח זה.');
+  throw lastError || new Error('לא נמצא מודל Gemini זמין עבור מפתח זה.');
 }
 
 /**
@@ -121,13 +173,17 @@ export async function testGeminiApiKey(keyToTest) {
     throw new Error('לא הוזן מפתח API של Gemini');
   }
 
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const { text, modelName } = await generateWithFallback(genAI, 'שלום, ענה במילה אחת בלבד: פועל.');
-  return { success: true, response: text.trim(), model: modelName };
+  const { text, modelName } = await generateWithFallback(apiKey, 'שלום, ענה במילה אחת בלבד: פועל.');
+  return { 
+    success: true, 
+    response: text.trim(), 
+    model: modelName,
+    message: `החיבור ל-Gemini הצליח במודל ${modelName}! ה-AI מוכן לפעולה.`
+  };
 }
 
 /**
- * Analyze an image or PDF buffer using Gemini with automatic model fallback
+ * Analyze an image or PDF buffer using Gemini with automatic model discovery
  */
 export async function analyzeReceiptFile(fileBuffer, mimeType, originalName = '') {
   const { geminiApiKey, enableAiAnalysis } = await getAiSettings();
@@ -141,7 +197,6 @@ export async function analyzeReceiptFile(fileBuffer, mimeType, originalName = ''
   }
 
   const categories = await getAvailableCategories();
-  const genAI = new GoogleGenerativeAI(geminiApiKey);
 
   const prompt = `
 אתה מנתח חשבוניות וקבלות מומחה עבור אפליקציית ניהול פיננסי אישי (FinTrack).
@@ -192,7 +247,7 @@ ${JSON.stringify(categories)}
       },
     };
 
-    const { text, modelName } = await generateWithFallback(genAI, [prompt, part], {
+    const { text, modelName } = await generateWithFallback(geminiApiKey, [prompt, part], {
       responseMimeType: 'application/json'
     });
 
@@ -278,7 +333,6 @@ export async function analyzeReceiptUrl(url) {
     .slice(0, 50000); // keep first 50k chars which is plenty for receipt tables
 
   const categories = await getAvailableCategories();
-  const genAI = new GoogleGenerativeAI(geminiApiKey);
 
   const prompt = `
 אתה מנתח חשבוניות וקבלות דיגיטליות מומחה עבור אפליקציית FinTrack.
@@ -323,7 +377,7 @@ ${JSON.stringify(categories)}
 `;
 
   try {
-    const { text, modelName } = await generateWithFallback(genAI, prompt, {
+    const { text, modelName } = await generateWithFallback(geminiApiKey, prompt, {
       responseMimeType: 'application/json'
     });
 
