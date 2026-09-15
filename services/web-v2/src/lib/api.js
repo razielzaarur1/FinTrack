@@ -238,6 +238,120 @@ export const api = {
         ...(initData ? { 'x-telegram-init-data': initData } : {}),
       },
     }),
+  getTmaSimilar: (id, token, initData = '') =>
+    request(`/api/v2/transactions/tma/${id}/similar${token ? `?token=${encodeURIComponent(token)}` : ''}`, {
+      headers: {
+        ...(token ? { 'x-tma-token': token } : {}),
+        ...(initData ? { 'x-telegram-init-data': initData } : {}),
+      },
+    }),
+  getTmaSplits: (id, token, initData = '') =>
+    request(`/api/v2/transactions/tma/${id}/splits${token ? `?token=${encodeURIComponent(token)}` : ''}`, {
+      headers: {
+        ...(token ? { 'x-tma-token': token } : {}),
+        ...(initData ? { 'x-telegram-init-data': initData } : {}),
+      },
+    }),
+  saveTmaSplits: (id, splits, token, initData = '') =>
+    request(`/api/v2/transactions/tma/${id}/splits${token ? `?token=${encodeURIComponent(token)}` : ''}`, {
+      method: 'PUT',
+      headers: {
+        ...(token ? { 'x-tma-token': token } : {}),
+        ...(initData ? { 'x-telegram-init-data': initData } : {}),
+      },
+      body: JSON.stringify({ splits }),
+    }),
+  getTmaNotes: (id, token, initData = '') =>
+    request(`/api/v2/transactions/tma/${id}/notes${token ? `?token=${encodeURIComponent(token)}` : ''}`, {
+      headers: {
+        ...(token ? { 'x-tma-token': token } : {}),
+        ...(initData ? { 'x-telegram-init-data': initData } : {}),
+      },
+    }),
+  addTmaNote: (id, note, token, initData = '') =>
+    request(`/api/v2/transactions/tma/${id}/notes${token ? `?token=${encodeURIComponent(token)}` : ''}`, {
+      method: 'POST',
+      headers: {
+        ...(token ? { 'x-tma-token': token } : {}),
+        ...(initData ? { 'x-telegram-init-data': initData } : {}),
+      },
+      body: JSON.stringify({ note }),
+    }),
+  deleteTmaNote: (id, noteId, token, initData = '') =>
+    request(`/api/v2/transactions/tma/${id}/notes/${noteId}${token ? `?token=${encodeURIComponent(token)}` : ''}`, {
+      method: 'DELETE',
+      headers: {
+        ...(token ? { 'x-tma-token': token } : {}),
+        ...(initData ? { 'x-telegram-init-data': initData } : {}),
+      },
+    }),
+  getTmaLinks: (id, token, initData = '') =>
+    request(`/api/v2/transactions/tma/${id}/links${token ? `?token=${encodeURIComponent(token)}` : ''}`, {
+      headers: {
+        ...(token ? { 'x-tma-token': token } : {}),
+        ...(initData ? { 'x-telegram-init-data': initData } : {}),
+      },
+    }),
+  linkTmaTransaction: (id, data, token, initData = '') =>
+    request(`/api/v2/transactions/tma/${id}/links${token ? `?token=${encodeURIComponent(token)}` : ''}`, {
+      method: 'POST',
+      headers: {
+        ...(token ? { 'x-tma-token': token } : {}),
+        ...(initData ? { 'x-telegram-init-data': initData } : {}),
+      },
+      body: JSON.stringify(data),
+    }),
+  deleteTmaLink: (id, linkId, token, initData = '') =>
+    request(`/api/v2/transactions/tma/${id}/links/${linkId}${token ? `?token=${encodeURIComponent(token)}` : ''}`, {
+      method: 'DELETE',
+      headers: {
+        ...(token ? { 'x-tma-token': token } : {}),
+        ...(initData ? { 'x-telegram-init-data': initData } : {}),
+      },
+    }),
+  getTmaLinkable: (id, search = '', token, initData = '') =>
+    request(`/api/v2/transactions/tma/${id}/linkable?${search ? `search=${encodeURIComponent(search)}&` : ''}${token ? `token=${encodeURIComponent(token)}` : ''}`, {
+      headers: {
+        ...(token ? { 'x-tma-token': token } : {}),
+        ...(initData ? { 'x-telegram-init-data': initData } : {}),
+      },
+    }),
+  getTmaReceipts: (id, token, initData = '') =>
+    request(`/api/v2/transactions/tma/${id}/receipts${token ? `?token=${encodeURIComponent(token)}` : ''}`, {
+      headers: {
+        ...(token ? { 'x-tma-token': token } : {}),
+        ...(initData ? { 'x-telegram-init-data': initData } : {}),
+      },
+    }),
+  addTmaReceiptUrl: (id, url, token, initData = '') =>
+    request(`/api/v2/transactions/tma/${id}/receipts/url${token ? `?token=${encodeURIComponent(token)}` : ''}`, {
+      method: 'POST',
+      headers: {
+        ...(token ? { 'x-tma-token': token } : {}),
+        ...(initData ? { 'x-telegram-init-data': initData } : {}),
+      },
+      body: JSON.stringify({ url }),
+    }),
+  uploadTmaReceiptFile: (id, file, token, initData = '') => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return request(`/api/v2/transactions/tma/${id}/receipts/upload${token ? `?token=${encodeURIComponent(token)}` : ''}`, {
+      method: 'POST',
+      headers: {
+        ...(token ? { 'x-tma-token': token } : {}),
+        ...(initData ? { 'x-telegram-init-data': initData } : {}),
+      },
+      body: formData,
+    });
+  },
+  deleteTmaReceipt: (id, receiptId, token, initData = '') =>
+    request(`/api/v2/transactions/tma/${id}/receipts/${receiptId}${token ? `?token=${encodeURIComponent(token)}` : ''}`, {
+      method: 'DELETE',
+      headers: {
+        ...(token ? { 'x-tma-token': token } : {}),
+        ...(initData ? { 'x-telegram-init-data': initData } : {}),
+      },
+    }),
 
   // Scraper Trigger
   triggerScrape: (accountId = null, daysBack = null) =>

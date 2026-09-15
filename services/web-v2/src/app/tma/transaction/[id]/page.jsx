@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import Script from 'next/script';
 import { 
@@ -15,7 +15,20 @@ import {
   Save,
   Layers,
   Info,
-  Tag
+  Tag,
+  Receipt,
+  Link2,
+  Split,
+  Database,
+  Plus,
+  Trash2,
+  Upload,
+  Link as LinkIcon,
+  Search,
+  Copy,
+  RefreshCw,
+  Hash,
+  ExternalLink
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import CategoryBadge from '@/components/common/CategoryBadge';
@@ -33,20 +46,51 @@ export default function TmaTransactionPage() {
   const [error, setError] = useState('');
   const [tx, setTx] = useState(null);
 
-  // Form edit state (identical to TransactionDrawer)
+  // Tabs state: details | receipts | notes | links | splits | similar | scraper
+  const [activeTab, setActiveTab] = useState('details');
+
+  // Form edit state (Details tab)
   const [merchantName, setMerchantName] = useState('');
   const [category, setCategory] = useState('');
   const [userDescription, setUserDescription] = useState('');
   const [isIgnored, setIsIgnored] = useState(false);
   const [applyToSimilar, setApplyToSimilar] = useState(false);
-
-  // Active tab state (details)
-  const [activeTab, setActiveTab] = useState('details');
-
-  // Save feedback
-  const [saving, setSaving] = useState(false);
+  const [savingTx, setSavingTx] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [saveError, setSaveError] = useState('');
+
+  // Receipts state
+  const fileInputRef = useRef(null);
+  const [receipts, setReceipts] = useState([]);
+  const [uploadMode, setUploadMode] = useState('file'); // 'file' | 'url'
+  const [digitalUrl, setDigitalUrl] = useState('');
+  const [uploadingReceipt, setUploadingReceipt] = useState(false);
+  const [receiptFeedback, setReceiptFeedback] = useState(null);
+
+  // Notes state
+  const [notes, setNotes] = useState([]);
+  const [newNote, setNewNote] = useState('');
+  const [addingNote, setAddingNote] = useState(false);
+
+  // Links state
+  const [links, setLinks] = useState([]);
+  const [linkType, setLinkType] = useState('refund'); // 'refund' | 'related' | 'correction'
+  const [linkSearch, setLinkSearch] = useState('');
+  const [linkableTxs, setLinkableTxs] = useState([]);
+  const [loadingLinkable, setLoadingLinkable] = useState(false);
+  const [linkingSuccess, setLinkingSuccess] = useState('');
+
+  // Splits state
+  const [splits, setSplits] = useState([]);
+  const [savingSplits, setSavingSplits] = useState(false);
+  const [splitError, setSplitError] = useState('');
+
+  // Similar transactions state
+  const [similarTxs, setSimilarTxs] = useState([]);
+  const [loadingSimilar, setLoadingSimilar] = useState(false);
+
+  // Scraper raw data state
+  const [copiedRaw, setCopiedRaw] = useState(false);
 
   // Telegram WebApp state
   const [initData, setInitData] = useState('');
@@ -78,7 +122,6 @@ export default function TmaTransactionPage() {
       }
 
       if (attempts >= 10) {
-        // After ~1s, if no initData is present, detect if we're in a browser
         const tgData = (typeof window !== 'undefined' && window.Telegram?.WebApp?.initData) || '';
         setInitData(tgData);
         setIsTelegramEnv(Boolean(tgData));
@@ -96,7 +139,7 @@ export default function TmaTransactionPage() {
     };
   }, []);
 
-  // Fetch transaction using scoped zero-trust token and initData
+  // Fetch all transaction data & sub-records
   useEffect(() => {
     if (!id || isTelegramEnv === null) return;
     if (isTelegramEnv === false) {
@@ -110,6 +153,7 @@ export default function TmaTransactionPage() {
       setError('');
 
       try {
+        // 1. Fetch main transaction details
         const txRes = await api.getTmaTransaction(id, token, initData);
         if (!isMounted) return;
 
@@ -125,6 +169,33 @@ export default function TmaTransactionPage() {
         setCategory(data.category || '');
         setUserDescription(data.userDescription || '');
         setIsIgnored(Boolean(data.isIgnored));
+
+        // 2. Fetch sub-records in parallel
+        api.getTmaSimilar(id, token, initData).then((res) => {
+          if (isMounted && res.data?.data) setSimilarTxs(res.data.data);
+        }).catch(() => {});
+
+        api.getTmaSplits(id, token, initData).then((res) => {
+          if (isMounted && res.data?.data) setSplits(res.data.data);
+        }).catch(() => {});
+
+        api.getTmaNotes(id, token, initData).then((res) => {
+          if (isMounted && res.data?.data) setNotes(res.data.data);
+        }).catch(() => {});
+
+        api.getTmaLinks(id, token, initData).then((res) => {
+          if (isMounted && res.data?.data) setLinks(res.data.data);
+        }).catch(() => {});
+
+        api.getTmaReceipts(id, token, initData).then((res) => {
+          if (isMounted && res.data?.data) setReceipts(res.data.data);
+        }).catch(() => {});
+
+        // Fetch initial list of transactions for linking
+        api.getTmaLinkable(id, '', token, initData).then((res) => {
+          if (isMounted && res.data?.data) setLinkableTxs(res.data.data);
+        }).catch(() => {});
+
       } catch (err) {
         if (isMounted) {
           setError(err.message || 'שגיאת רשת בטעינת הנתונים');
@@ -141,9 +212,25 @@ export default function TmaTransactionPage() {
     };
   }, [id, token, isTelegramEnv, initData]);
 
-  const handleSave = async (e) => {
+  // Handle Search for Linkable Transactions
+  useEffect(() => {
+    if (!id || !isTelegramEnv || activeTab !== 'links') return;
+    const timer = setTimeout(() => {
+      setLoadingLinkable(true);
+      api.getTmaLinkable(id, linkSearch, token, initData)
+        .then((res) => {
+          if (res.data?.data) setLinkableTxs(res.data.data);
+        })
+        .finally(() => setLoadingLinkable(false));
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [id, linkSearch, activeTab, isTelegramEnv, token, initData]);
+
+  // Save Details
+  const handleSaveDetails = async (e) => {
     if (e) e.preventDefault();
-    setSaving(true);
+    setSavingTx(true);
     setSaveError('');
     setSaveSuccess(false);
 
@@ -171,7 +258,155 @@ export default function TmaTransactionPage() {
     } catch (err) {
       setSaveError(err.message || 'שגיאה בלתי צפויה בשמירה');
     } finally {
-      setSaving(false);
+      setSavingTx(false);
+    }
+  };
+
+  // Receipts handlers
+  const handleFileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingReceipt(true);
+    setReceiptFeedback(null);
+    try {
+      const res = await api.uploadTmaReceiptFile(id, file, token, initData);
+      if (res.data?.data) {
+        setReceipts([res.data.data, ...receipts]);
+        setReceiptFeedback({ type: 'success', text: 'הקבלה הועלתה ונותחה בהצלחה!' });
+      } else {
+        setReceiptFeedback({ type: 'error', text: res.error || 'נכשל בהעלאת הקבלה' });
+      }
+    } catch (err) {
+      setReceiptFeedback({ type: 'error', text: err.message || 'שגיאה בהעלאה' });
+    } finally {
+      setUploadingReceipt(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleUrlReceipt = async (e) => {
+    e.preventDefault();
+    if (!digitalUrl.trim()) return;
+    setUploadingReceipt(true);
+    setReceiptFeedback(null);
+    try {
+      const res = await api.addTmaReceiptUrl(id, digitalUrl.trim(), token, initData);
+      if (res.data?.data) {
+        setReceipts([res.data.data, ...receipts]);
+        setDigitalUrl('');
+        setReceiptFeedback({ type: 'success', text: 'קישור החשבונית נוסף בהצלחה!' });
+      } else {
+        setReceiptFeedback({ type: 'error', text: res.error || 'נכשל בהוספת הקישור' });
+      }
+    } catch (err) {
+      setReceiptFeedback({ type: 'error', text: err.message || 'שגיאה בהוספת הקישור' });
+    } finally {
+      setUploadingReceipt(false);
+    }
+  };
+
+  const handleDeleteReceipt = async (receiptId) => {
+    try {
+      await api.deleteTmaReceipt(id, receiptId, token, initData);
+      setReceipts(receipts.filter(r => r.id !== receiptId));
+    } catch (err) {
+      console.error('Delete receipt failed:', err);
+    }
+  };
+
+  // Notes handlers
+  const handleAddNote = async (e) => {
+    e.preventDefault();
+    if (!newNote.trim()) return;
+    setAddingNote(true);
+    try {
+      const res = await api.addTmaNote(id, newNote.trim(), token, initData);
+      if (res.data?.data) {
+        setNotes([res.data.data, ...notes]);
+        setNewNote('');
+      }
+    } finally {
+      setAddingNote(false);
+    }
+  };
+
+  const handleDeleteNote = async (noteId) => {
+    try {
+      await api.deleteTmaNote(id, noteId, token, initData);
+      setNotes(notes.filter(n => n.id !== noteId));
+    } catch (err) {
+      console.error('Delete note failed:', err);
+    }
+  };
+
+  // Links handlers
+  const handleLinkDirect = async (targetTxId) => {
+    setLinkingSuccess('');
+    try {
+      const res = await api.linkTmaTransaction(id, { targetTransactionId: targetTxId, linkType }, token, initData);
+      if (res.data) {
+        const updated = await api.getTmaLinks(id, token, initData);
+        if (updated.data?.data) setLinks(updated.data.data);
+        setLinkingSuccess('התנועה קושרה בהצלחה!');
+        if (typeof window !== 'undefined' && window.Telegram?.WebApp?.HapticFeedback) {
+          window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
+        }
+        setTimeout(() => setLinkingSuccess(''), 3000);
+      }
+    } catch (err) {
+      console.error('Link transaction failed:', err);
+    }
+  };
+
+  const handleUnlink = async (linkId) => {
+    try {
+      await api.deleteTmaLink(id, linkId, token, initData);
+      setLinks(links.filter(l => l.linkId !== linkId));
+    } catch (err) {
+      console.error('Unlink failed:', err);
+    }
+  };
+
+  // Splits handlers
+  const currentAmountNum = parseFloat(tx?.amount) || 0;
+  const parentAmount = Math.abs(currentAmountNum);
+  const splitsTotal = splits.reduce((acc, s) => acc + (parseFloat(s.amount) || 0), 0);
+  const splitsBalanced = Math.abs(parentAmount - splitsTotal) <= 0.01;
+  const remainingAmount = Number((parentAmount - splitsTotal).toFixed(2));
+
+  const handleAddSplitRow = () => {
+    setSplits([...splits, { amount: 0, category: tx?.category || 'אחר', description: '' }]);
+  };
+
+  const handleSplitChange = (index, field, value) => {
+    const updated = [...splits];
+    updated[index][field] = field === 'amount' ? parseFloat(value) || 0 : value;
+    setSplits(updated);
+  };
+
+  const handleRemoveSplitRow = (index) => {
+    setSplits(splits.filter((_, idx) => idx !== index));
+  };
+
+  const handleSaveSplits = async () => {
+    if (!splitsBalanced) {
+      setSplitError(`סכום הפיצולים חייב להיות שווה במדויק לסכום התנועה (נותרה יתרה: ${formatILS(remainingAmount)})`);
+      return;
+    }
+    setSplitError('');
+    setSavingSplits(true);
+    try {
+      const res = await api.saveTmaSplits(id, splits, token, initData);
+      if (res.error) {
+        setSplitError(res.error);
+      } else {
+        if (typeof window !== 'undefined' && window.Telegram?.WebApp?.HapticFeedback) {
+          window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
+        }
+        setActiveTab('details');
+      }
+    } finally {
+      setSavingSplits(false);
     }
   };
 
@@ -180,8 +415,6 @@ export default function TmaTransactionPage() {
       window.Telegram.WebApp.close();
     }
   };
-
-  const currentAmountNum = parseFloat(tx?.amount) || 0;
 
   return (
     <>
@@ -232,7 +465,7 @@ export default function TmaTransactionPage() {
         {!loading && tx && isTelegramEnv !== false && (
           <div className="w-full max-w-lg mx-auto min-h-screen flex flex-col justify-between bg-slate-950 border-x border-slate-800/80 shadow-2xl">
             {/* Header (Exact TransactionDrawer layout) */}
-            <div className="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between bg-slate-900/60 sticky top-0 backdrop-blur-md z-10">
+            <div className="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between bg-slate-900/60 sticky top-0 backdrop-blur-md z-20">
               <div className="flex items-center gap-3 min-w-0">
                 <CategoryBadge category={category || tx.category} size={22} />
                 <div className="min-w-0">
@@ -240,6 +473,11 @@ export default function TmaTransactionPage() {
                     <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-indigo-500/15 text-indigo-400">
                       {tx.accountDisplayName || tx.bankCompany?.toUpperCase()} {tx.cardLast4 ? `(••${tx.cardLast4})` : ''}
                     </span>
+                    {tx.status === 'pending' && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 font-medium">
+                        ממתין
+                      </span>
+                    )}
                   </div>
                   <div className="text-base sm:text-lg font-bold mt-0.5 truncate text-slate-100 max-w-[220px] sm:max-w-xs">
                     {userDescription || cleanSpacedHebrew(getTransactionTitle(tx))}
@@ -259,12 +497,12 @@ export default function TmaTransactionPage() {
               </button>
             </div>
 
-            {/* Tab Selector Bar */}
-            <div className="flex border-b border-slate-800 px-4 gap-2 text-xs font-medium bg-slate-900/30">
+            {/* Tab Selector Bar (All 7 TransactionDrawer tabs) */}
+            <div className="flex border-b border-slate-800 px-3 gap-1 text-xs font-medium bg-slate-900/40 overflow-x-auto no-scrollbar select-none sticky top-[73px] backdrop-blur-md z-10">
               <button
                 type="button"
                 onClick={() => setActiveTab('details')}
-                className={`py-3 px-3 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
+                className={`py-3 px-2.5 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
                   activeTab === 'details'
                     ? 'border-indigo-500 text-indigo-400 font-semibold'
                     : 'border-transparent text-slate-400 hover:text-slate-200'
@@ -273,127 +511,852 @@ export default function TmaTransactionPage() {
                 <FileText className="w-3.5 h-3.5" />
                 <span>פרטים</span>
               </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('receipts')}
+                className={`py-3 px-2.5 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
+                  activeTab === 'receipts'
+                    ? 'border-indigo-500 text-indigo-400 font-semibold'
+                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Receipt className="w-3.5 h-3.5" />
+                <span>חשבונית 🧾 {receipts.length > 0 && `(${receipts.length})`}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('notes')}
+                className={`py-3 px-2.5 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
+                  activeTab === 'notes'
+                    ? 'border-indigo-500 text-indigo-400 font-semibold'
+                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <span>💬</span>
+                <span>הערות ({notes.length})</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('links')}
+                className={`py-3 px-2.5 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
+                  activeTab === 'links'
+                    ? 'border-indigo-500 text-indigo-400 font-semibold'
+                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Link2 className="w-3.5 h-3.5" />
+                <span>קישור תנועה ({links.length})</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('splits')}
+                className={`py-3 px-2.5 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
+                  activeTab === 'splits'
+                    ? 'border-indigo-500 text-indigo-400 font-semibold'
+                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Split className="w-3.5 h-3.5" />
+                <span>פיצול ({splits.length})</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('similar')}
+                className={`py-3 px-2.5 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
+                  activeTab === 'similar'
+                    ? 'border-indigo-500 text-indigo-400 font-semibold'
+                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Layers className="w-3.5 h-3.5" />
+                <span>דומות ({similarTxs.length})</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('scraper')}
+                className={`py-3 px-2.5 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
+                  activeTab === 'scraper'
+                    ? 'border-indigo-500 text-indigo-400 font-semibold'
+                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Database className="w-3.5 h-3.5" />
+                <span>נתוני סקריפר</span>
+              </button>
             </div>
 
-            {/* Main Form Body */}
-            <form onSubmit={handleSave} className="flex-1 p-4 sm:p-5 space-y-4 overflow-y-auto">
-              {/* Custom Name / Nickname */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-400">
-                  כינוי מותאם אישית (יוצג ככותרת)
-                </label>
-                <input
-                  type="text"
-                  value={userDescription}
-                  onChange={(e) => setUserDescription(e.target.value)}
-                  placeholder={cleanSpacedHebrew(getTransactionTitle(tx))}
-                  className="w-full p-2.5 rounded-xl border border-slate-800 bg-slate-900 text-slate-100 text-sm font-semibold focus:outline-none focus:border-indigo-500 transition-colors"
-                />
-              </div>
-
-              {/* Read-Only Bank Merchant Name */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-400">
-                  שם בית העסק (מקור הבנק / כרטיס)
-                </label>
-                <div className="w-full p-2.5 rounded-xl border border-slate-800/80 bg-slate-900/60 text-slate-200 font-medium text-sm flex items-center justify-between">
-                  <span className="truncate">{cleanSpacedHebrew(merchantName || tx.merchantName || 'לא צוין בית עסק')}</span>
-                </div>
-              </div>
-
-              {/* Read-Only Financial Metadata Chips Grid */}
-              <div className="grid grid-cols-3 gap-2">
-                <div className="p-2.5 rounded-xl border border-slate-800/80 bg-slate-900/50 space-y-1">
-                  <div className="text-[10px] font-medium text-slate-400">סכום חיוב</div>
-                  <div className={`text-xs sm:text-sm font-bold font-mono ${currentAmountNum > 0 ? 'text-emerald-400' : 'text-slate-100'}`}>
-                    {formatILS(tx.amount, { showSign: true })}
+            {/* Main Tabs Content */}
+            <div className="flex-1 p-4 sm:p-5 overflow-y-auto space-y-4">
+              {/* 1. Details Tab */}
+              {activeTab === 'details' && (
+                <form onSubmit={handleSaveDetails} className="space-y-4">
+                  {/* Custom Name / Nickname */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-slate-400">
+                      כינוי מותאם אישית (יוצג ככותרת)
+                    </label>
+                    <input
+                      type="text"
+                      value={userDescription}
+                      onChange={(e) => setUserDescription(e.target.value)}
+                      placeholder={cleanSpacedHebrew(getTransactionTitle(tx))}
+                      className="w-full p-2.5 rounded-xl border border-slate-800 bg-slate-900 text-slate-100 text-sm font-semibold focus:outline-none focus:border-indigo-500 transition-colors"
+                    />
                   </div>
-                </div>
 
-                <div className="p-2.5 rounded-xl border border-slate-800/80 bg-slate-900/50 space-y-1">
-                  <div className="text-[10px] font-medium text-slate-400">תאריך עסקה</div>
-                  <div className="text-xs font-semibold text-slate-200 font-mono mt-0.5">
-                    {formatDate(tx.date, 'he')}
+                  {/* Read-Only Bank Merchant Name */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-slate-400">
+                      שם בית העסק (מקור הבנק / כרטיס)
+                    </label>
+                    <div className="w-full p-2.5 rounded-xl border border-slate-800/80 bg-slate-900/60 text-slate-200 font-medium text-sm flex items-center justify-between">
+                      <span className="truncate">{cleanSpacedHebrew(merchantName || tx.merchantName || 'לא צוין בית עסק')}</span>
+                      {similarTxs.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab('similar')}
+                          className="text-[11px] text-indigo-400 hover:underline shrink-0 mr-2 font-semibold"
+                        >
+                          הצג דומות ({similarTxs.length})
+                        </button>
+                      )}
+                    </div>
                   </div>
-                </div>
 
-                <div className="p-2.5 rounded-xl border border-slate-800/80 bg-slate-900/50 space-y-1">
-                  <div className="text-[10px] font-medium text-slate-400">חשבון / כרטיס</div>
-                  <div className="text-xs font-semibold text-slate-200 truncate mt-0.5" title={tx.accountDisplayName || tx.bankCompany}>
-                    {tx.accountDisplayName || tx.bankCompany?.toUpperCase() || 'ראשי'}
+                  {/* Read-Only Financial Metadata Chips Grid */}
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="p-2.5 rounded-xl border border-slate-800/80 bg-slate-900/50 space-y-1">
+                      <div className="text-[10px] font-medium text-slate-400">סכום חיוב</div>
+                      <div className={`text-xs sm:text-sm font-bold font-mono ${currentAmountNum > 0 ? 'text-emerald-400' : 'text-slate-100'}`}>
+                        {formatILS(tx.amount, { showSign: true })}
+                      </div>
+                    </div>
+
+                    <div className="p-2.5 rounded-xl border border-slate-800/80 bg-slate-900/50 space-y-1">
+                      <div className="text-[10px] font-medium text-slate-400">תאריך עסקה</div>
+                      <div className="text-xs font-semibold text-slate-200 font-mono mt-0.5">
+                        {formatDate(tx.date, 'he')}
+                      </div>
+                    </div>
+
+                    <div className="p-2.5 rounded-xl border border-slate-800/80 bg-slate-900/50 space-y-1">
+                      <div className="text-[10px] font-medium text-slate-400">חשבון / כרטיס</div>
+                      <div className="text-xs font-semibold text-slate-200 truncate mt-0.5" title={tx.accountDisplayName || tx.bankCompany}>
+                        {tx.accountDisplayName || tx.bankCompany?.toUpperCase() || 'ראשי'}
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
 
-              {/* Category Picker with Badges & Subcategories */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-400">
-                  קטגוריה
-                </label>
-                <CategoryPicker
-                  value={category}
-                  onChange={setCategory}
-                  placeholder="בחר קטגוריה או תת-קטגוריה..."
-                />
-              </div>
-
-              {/* Compact Checkboxes: Ignore & ApplyToSimilar */}
-              <div className="space-y-2 pt-1 border-t border-slate-800/60">
-                <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={isIgnored}
-                    onChange={(e) => setIsIgnored(e.target.checked)}
-                    className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-indigo-600 focus:ring-indigo-500 cursor-pointer shrink-0"
-                  />
-                  <span>התעלם מתנועה זו (לא תיכלל בחישובים וגרפים)</span>
-                </label>
-
-                <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={applyToSimilar}
-                    onChange={(e) => setApplyToSimilar(e.target.checked)}
-                    className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-indigo-600 focus:ring-indigo-500 cursor-pointer shrink-0"
-                  />
-                  <span>החל סיווג זה על כל התנועות הדומות בעתיד</span>
-                </label>
-              </div>
-
-              {/* Feedback Alerts */}
-              {saveSuccess && (
-                <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Check className="w-4 h-4 text-emerald-400" />
-                    <span>התנועה עודכנה בהצלחה!</span>
+                  {/* Category Picker */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-slate-400">
+                      קטגוריה
+                    </label>
+                    <CategoryPicker
+                      value={category}
+                      onChange={setCategory}
+                      placeholder="בחר קטגוריה או תת-קטגוריה..."
+                    />
                   </div>
+
+                  {/* Checkboxes: Ignore & ApplyToSimilar */}
+                  <div className="space-y-2 pt-1 border-t border-slate-800/60">
+                    <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={isIgnored}
+                        onChange={(e) => setIsIgnored(e.target.checked)}
+                        className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-indigo-600 focus:ring-indigo-500 cursor-pointer shrink-0"
+                      />
+                      <span>התעלם מתנועה זו (לא תיכלל בחישובים וגרפים)</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={applyToSimilar}
+                        onChange={(e) => setApplyToSimilar(e.target.checked)}
+                        className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-indigo-600 focus:ring-indigo-500 cursor-pointer shrink-0"
+                      />
+                      <span>החל סיווג זה על כל התנועות הדומות בעתיד {similarTxs.length > 0 && `(${similarTxs.length} תנועות)`}</span>
+                    </label>
+                  </div>
+
+                  {/* Feedback Alerts */}
+                  {saveSuccess && (
+                    <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Check className="w-4 h-4 text-emerald-400" />
+                        <span>התנועה עודכנה בהצלחה!</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleClose}
+                        className="text-[11px] underline hover:text-emerald-300 font-semibold"
+                      >
+                        סגור חלון
+                      </button>
+                    </div>
+                  )}
+
+                  {saveError && (
+                    <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 shrink-0" />
+                      <span>{saveError}</span>
+                    </div>
+                  )}
+
+                  {/* Submit Button */}
                   <button
-                    type="button"
-                    onClick={handleClose}
-                    className="text-[11px] underline hover:text-emerald-300 font-semibold"
+                    type="submit"
+                    disabled={savingTx}
+                    className="w-full mt-4 flex items-center justify-center gap-2 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-sm transition-all cursor-pointer shadow-lg shadow-indigo-600/20 disabled:opacity-50"
                   >
-                    סגור חלון
+                    <Save className="w-4 h-4" />
+                    <span>{savingTx ? 'שומר שינויים...' : 'שמור שינויים'}</span>
                   </button>
+                </form>
+              )}
+
+              {/* 2. Receipts Tab (Upload file or digital receipt link) */}
+              {activeTab === 'receipts' && (
+                <div className="space-y-4">
+                  {/* Mode Selector */}
+                  <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-slate-900 border border-slate-800 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setUploadMode('file')}
+                      className={`py-2 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-1.5 ${
+                        uploadMode === 'file'
+                          ? 'bg-indigo-600 text-white shadow-sm'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>העלאת תמונה / קובץ</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setUploadMode('url')}
+                      className={`py-2 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-1.5 ${
+                        uploadMode === 'url'
+                          ? 'bg-indigo-600 text-white shadow-sm'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      <LinkIcon className="w-3.5 h-3.5" />
+                      <span>קישור דיגיטלי</span>
+                    </button>
+                  </div>
+
+                  {/* Upload Action */}
+                  {uploadMode === 'file' ? (
+                    <div className="p-4 rounded-xl border border-dashed border-slate-800 bg-slate-900/50 text-center space-y-3">
+                      <input
+                        type="file"
+                        ref={fileInputRef}
+                        accept="image/*,.pdf"
+                        onChange={handleFileUpload}
+                        className="hidden"
+                      />
+                      <button
+                        type="button"
+                        disabled={uploadingReceipt}
+                        onClick={() => fileInputRef.current?.click()}
+                        className="w-full py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+                      >
+                        {uploadingReceipt ? (
+                          <>
+                            <RefreshCw className="w-4 h-4 animate-spin text-indigo-400" />
+                            <span>מעלה ומנתח באמצעות AI...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Upload className="w-4 h-4 text-indigo-400" />
+                            <span>בחר תמונה / צילום קבלה (עד 15MB)</span>
+                          </>
+                        )}
+                      </button>
+                      <p className="text-[10px] text-slate-500">תומך בתמונות (JPG, PNG) ובקובצי PDF</p>
+                    </div>
+                  ) : (
+                    <form onSubmit={handleUrlReceipt} className="flex gap-2">
+                      <input
+                        type="url"
+                        placeholder="הדבק קישור לחשבונית דיגיטלית (https://...)"
+                        value={digitalUrl}
+                        onChange={(e) => setDigitalUrl(e.target.value)}
+                        className="flex-1 p-2.5 rounded-xl border border-slate-800 bg-slate-900 text-slate-100 text-xs focus:outline-none focus:border-indigo-500"
+                      />
+                      <button
+                        type="submit"
+                        disabled={uploadingReceipt || !digitalUrl.trim()}
+                        className="px-4 py-2.5 rounded-xl bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-500 transition-colors disabled:opacity-50"
+                      >
+                        {uploadingReceipt ? 'טוען...' : 'הוסף'}
+                      </button>
+                    </form>
+                  )}
+
+                  {receiptFeedback && (
+                    <div className={`p-3 rounded-xl text-xs flex items-center gap-2 ${
+                      receiptFeedback.type === 'success'
+                        ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400'
+                        : 'bg-rose-500/10 border border-rose-500/30 text-rose-400'
+                    }`}>
+                      {receiptFeedback.type === 'success' ? <Check className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
+                      <span>{receiptFeedback.text}</span>
+                    </div>
+                  )}
+
+                  {/* List of Receipts */}
+                  <div className="space-y-2">
+                    <div className="text-xs font-semibold text-slate-400 px-1">
+                      קבלות וחשבוניות מקושרות ({receipts.length})
+                    </div>
+                    {receipts.length === 0 ? (
+                      <div className="p-6 rounded-xl border border-dashed border-slate-800 text-center text-xs text-slate-500 bg-slate-900/30">
+                        לא צורפו קבלות או חשבוניות לתנועה זו עדיין.
+                      </div>
+                    ) : (
+                      receipts.map((r) => (
+                        <div key={r.id} className="p-3 rounded-xl border border-slate-800 bg-slate-900/60 flex items-center justify-between gap-3 text-xs">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <Receipt className="w-4 h-4 text-indigo-400 shrink-0" />
+                            <div className="min-w-0">
+                              <div className="font-semibold text-slate-200 truncate">
+                                {r.file_name || 'קבלה'}
+                              </div>
+                              <div className="text-[11px] text-slate-500 flex items-center gap-2">
+                                <span>{r.source_url ? 'קישור דיגיטלי' : 'קובץ'}</span>
+                                {r.ai_analyzed && <span className="text-indigo-400">✨ נותח ע״י AI</span>}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {r.source_url ? (
+                              <a
+                                href={r.source_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="p-1.5 text-indigo-400 hover:text-indigo-300 rounded-lg"
+                                title="פתח קישור"
+                              >
+                                <ExternalLink className="w-4 h-4" />
+                              </a>
+                            ) : r.file_path ? (
+                              <a
+                                href={`/api/v2/transactions/tma/receipts/file/${r.file_path}?token=${encodeURIComponent(token)}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="p-1.5 text-indigo-400 hover:text-indigo-300 rounded-lg"
+                                title="הצג קובץ"
+                              >
+                                <ExternalLink className="w-4 h-4" />
+                              </a>
+                            ) : null}
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteReceipt(r.id)}
+                              className="p-1.5 text-rose-400 hover:text-rose-300 rounded-lg"
+                              title="מחק קבלה"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
                 </div>
               )}
 
-              {saveError && (
-                <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>{saveError}</span>
+              {/* 3. Notes Tab */}
+              {activeTab === 'notes' && (
+                <div className="space-y-4">
+                  <form onSubmit={handleAddNote} className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="הוסף הערה..."
+                      value={newNote}
+                      onChange={(e) => setNewNote(e.target.value)}
+                      className="flex-1 p-2.5 rounded-xl border border-slate-800 bg-slate-900 text-slate-100 text-xs focus:outline-none focus:border-indigo-500"
+                    />
+                    <button
+                      type="submit"
+                      disabled={addingNote || !newNote.trim()}
+                      className="px-4 py-2.5 rounded-xl bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-500 transition-colors disabled:opacity-50"
+                    >
+                      {addingNote ? 'מוסיף...' : 'הוסף'}
+                    </button>
+                  </form>
+
+                  <div className="space-y-2">
+                    {notes.length === 0 ? (
+                      <div className="text-center py-8 text-xs text-slate-500">
+                        אין הערות עדיין
+                      </div>
+                    ) : (
+                      notes.map((n) => (
+                        <div key={n.id} className="p-3 rounded-xl border border-slate-800 bg-slate-900 text-slate-200 flex items-center justify-between text-xs">
+                          <span>{n.note}</span>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteNote(n.id)}
+                            className="text-rose-400 hover:text-rose-300 p-1"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
                 </div>
               )}
 
-              {/* Submit Button (Identical to TransactionDrawer style) */}
-              <button
-                type="submit"
-                disabled={saving}
-                className="w-full mt-4 flex items-center justify-center gap-2 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-sm transition-all cursor-pointer shadow-lg shadow-indigo-600/20 disabled:opacity-50"
-              >
-                <Save className="w-4 h-4" />
-                <span>{saving ? 'שומר שינויים...' : 'שמור שינויים'}</span>
-              </button>
-            </form>
+              {/* 4. Links Tab (With integrated transaction search & link picker!) */}
+              {activeTab === 'links' && (
+                <div className="space-y-4">
+                  {/* Currently Linked Transactions */}
+                  <div className="space-y-2">
+                    <div className="text-xs font-semibold text-slate-400 px-1">
+                      תנועות מקושרות ({links.length})
+                    </div>
+                    {links.length === 0 ? (
+                      <div className="p-4 rounded-xl border border-dashed border-slate-800 text-center text-xs text-slate-500 bg-slate-900/30">
+                        אין תנועות מקושרות כרגע לתנועה זו.
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {links.map((lnk) => (
+                          <div key={lnk.linkId} className="p-3 rounded-xl border border-indigo-500/30 bg-indigo-500/5 flex items-center justify-between gap-3 text-xs">
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <Link2 className="w-4 h-4 text-indigo-400 shrink-0" />
+                              <div className="min-w-0">
+                                <div className="font-semibold text-slate-200 truncate">
+                                  {cleanSpacedHebrew(lnk.userDescription || lnk.merchantName || lnk.description || 'ללא תיאור')}
+                                </div>
+                                <div className="text-[11px] text-slate-400 flex items-center gap-2">
+                                  <span>{formatDate(lnk.date, 'he')}</span>
+                                  <span>•</span>
+                                  <span className={Number(lnk.amount) < 0 ? 'text-rose-400' : 'text-emerald-400 font-medium'}>
+                                    {formatILS(lnk.amount)}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-400 font-medium text-[10px]">
+                                {lnk.linkType === 'refund' ? 'זיכוי' : lnk.linkType === 'correction' ? 'תיקון' : 'קשורה'}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleUnlink(lnk.linkId)}
+                                className="p-1.5 text-rose-400 hover:text-rose-300 rounded-lg transition-colors"
+                                title="בטל קישור"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Linking Action Section with Picker */}
+                  <div className="pt-3 space-y-3 border-t border-slate-800">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold text-slate-400">
+                        סוג הקשר לחיבור
+                      </label>
+                      <div className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-slate-900 border border-slate-800 text-xs">
+                        <button
+                          type="button"
+                          onClick={() => setLinkType('refund')}
+                          className={`py-1.5 px-2 rounded-lg font-medium transition-all ${
+                            linkType === 'refund'
+                              ? 'bg-indigo-600 text-white shadow-sm'
+                              : 'text-slate-400 hover:text-slate-200'
+                          }`}
+                        >
+                          זיכוי / ביטול
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setLinkType('related')}
+                          className={`py-1.5 px-2 rounded-lg font-medium transition-all ${
+                            linkType === 'related'
+                              ? 'bg-indigo-600 text-white shadow-sm'
+                              : 'text-slate-400 hover:text-slate-200'
+                          }`}
+                        >
+                          תנועה קשורה
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setLinkType('correction')}
+                          className={`py-1.5 px-2 rounded-lg font-medium transition-all ${
+                            linkType === 'correction'
+                              ? 'bg-indigo-600 text-white shadow-sm'
+                              : 'text-slate-400 hover:text-slate-200'
+                          }`}
+                        >
+                          תיקון / התאמה
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Transaction Search & Picker */}
+                    <div className="space-y-2">
+                      <label className="text-xs font-semibold text-slate-400">
+                        בחר תנועה לקישור (חיפוש וסינון מהיר)
+                      </label>
+                      <div className="relative">
+                        <Search className="w-4 h-4 text-slate-500 absolute right-3 top-3" />
+                        <input
+                          type="text"
+                          value={linkSearch}
+                          onChange={(e) => setLinkSearch(e.target.value)}
+                          placeholder="חפש לפי שם בית עסק, תיאור, סכום..."
+                          className="w-full pr-9 pl-3 py-2.5 rounded-xl border border-slate-800 bg-slate-900 text-slate-100 text-xs focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+
+                      {linkingSuccess && (
+                        <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs flex items-center gap-2">
+                          <Check className="w-4 h-4 shrink-0" />
+                          <span>{linkingSuccess}</span>
+                        </div>
+                      )}
+
+                      {/* List of Linkable Transactions */}
+                      <div className="max-h-60 overflow-y-auto space-y-1.5 pr-1">
+                        {loadingLinkable ? (
+                          <div className="py-6 text-center text-xs text-slate-500 flex items-center justify-center gap-2">
+                            <RefreshCw className="w-4 h-4 animate-spin text-indigo-400" />
+                            <span>מחפש תנועות...</span>
+                          </div>
+                        ) : linkableTxs.length === 0 ? (
+                          <div className="py-6 text-center text-xs text-slate-500">
+                            לא נמצאו תנועות תואמות
+                          </div>
+                        ) : (
+                          linkableTxs.map((ltx) => (
+                            <button
+                              key={ltx.id}
+                              type="button"
+                              onClick={() => handleLinkDirect(ltx.id)}
+                              className="w-full text-right p-2.5 rounded-xl border border-slate-800/80 bg-slate-900/60 hover:bg-slate-800 hover:border-indigo-500/50 transition-all flex items-center justify-between gap-2.5 group"
+                            >
+                              <div className="flex items-center gap-2 min-w-0 flex-1">
+                                <CategoryBadge category={ltx.category} size={18} />
+                                <div className="min-w-0 flex-1">
+                                  <div className="font-semibold text-xs text-slate-200 truncate group-hover:text-indigo-400 transition-colors">
+                                    {cleanSpacedHebrew(ltx.userDescription || getTransactionTitle(ltx))}
+                                  </div>
+                                  <div className="text-[10px] text-slate-500 flex items-center gap-1.5 mt-0.5">
+                                    <span>{formatDate(ltx.date, 'he')}</span>
+                                    <span>•</span>
+                                    <span className="truncate">{ltx.accountDisplayName || ltx.bankCompany}</span>
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="text-left shrink-0">
+                                <div className={`text-xs font-bold font-mono ${ltx.amount > 0 ? 'text-emerald-400' : 'text-slate-200'}`}>
+                                  {formatILS(ltx.amount, { showSign: true })}
+                                </div>
+                                <span className="text-[10px] text-indigo-400 font-semibold group-hover:underline">
+                                  קשר +
+                                </span>
+                              </div>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* 5. Splits Tab */}
+              {activeTab === 'splits' && (
+                <div className="space-y-4">
+                  <div className="p-3.5 rounded-xl border border-slate-800 bg-slate-900 text-xs space-y-2">
+                    <div className="flex justify-between font-semibold">
+                      <span className="text-slate-400">סכום מקורי:</span>
+                      <span className="font-bold text-sm">{formatILS(parentAmount)}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-slate-400">סכום פיצולים נוכחי:</span>
+                      <span className={splitsBalanced ? 'text-emerald-400 font-bold text-sm' : 'text-rose-400 font-bold text-sm'}>
+                        {formatILS(splitsTotal)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center pt-2 border-t border-slate-800">
+                      <span className="font-semibold text-slate-200">יתרה לחלוקה:</span>
+                      <span className={`font-bold text-sm ${Math.abs(remainingAmount) < 0.01 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                        {formatILS(remainingAmount)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {splitError && (
+                    <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 shrink-0" />
+                      <span>{splitError}</span>
+                    </div>
+                  )}
+
+                  <div className="space-y-2.5">
+                    {splits.map((s, idx) => (
+                      <div key={idx} className="p-3 rounded-xl border border-slate-800 bg-slate-900/60 space-y-2">
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={s.amount || ''}
+                            onChange={(e) => handleSplitChange(idx, 'amount', e.target.value)}
+                            placeholder="0.00"
+                            className="w-28 p-2 rounded-lg border border-slate-800 bg-slate-950 text-xs font-mono text-slate-100"
+                          />
+                          <div className="flex-1 min-w-[130px]">
+                            <CategoryPicker
+                              value={s.category}
+                              onChange={(val) => handleSplitChange(idx, 'category', val)}
+                              placeholder="בחר קטגוריה..."
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveSplitRow(idx)}
+                            className="p-2 text-rose-400 hover:bg-slate-800 rounded-lg shrink-0"
+                            title="הסר שורה"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                        <input
+                          type="text"
+                          value={s.description || ''}
+                          onChange={(e) => handleSplitChange(idx, 'description', e.target.value)}
+                          placeholder="תיאור לפיצול (אופציונלי)..."
+                          className="w-full p-2 rounded-lg border border-slate-800 bg-slate-950 text-slate-200 text-xs"
+                        />
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="flex gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={handleAddSplitRow}
+                      className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-slate-800 bg-slate-900 hover:border-indigo-500 text-xs font-semibold text-slate-200 transition-colors"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>הוסף שורת פיצול</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSaveSplits}
+                      disabled={savingSplits || splits.length === 0 || !splitsBalanced}
+                      className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-white text-xs font-semibold transition-all ${
+                        splitsBalanced
+                          ? 'bg-indigo-600 hover:bg-indigo-500 shadow-md shadow-indigo-600/20'
+                          : 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                      }`}
+                    >
+                      <Check className="w-4 h-4" />
+                      <span>{savingSplits ? 'שומר...' : 'שמור פיצולים'}</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* 6. Similar Transactions Tab */}
+              {activeTab === 'similar' && (
+                <div className="space-y-4">
+                  <div className="p-3.5 rounded-xl border border-slate-800 bg-slate-900 text-xs space-y-1">
+                    <div className="font-semibold text-slate-200 flex items-center gap-1.5">
+                      <Layers className="w-4 h-4 text-indigo-400" />
+                      <span>תנועות נוספות עבור אותו בית עסק</span>
+                    </div>
+                    <div className="text-slate-400">
+                      בית עסק:{' '}
+                      <span className="font-bold text-slate-200">
+                        {cleanSpacedHebrew(merchantName || tx.merchantName)}
+                      </span>{' '}
+                      ({similarTxs.length} תנועות נוספות במערכת)
+                    </div>
+                  </div>
+
+                  {similarTxs.length === 0 ? (
+                    <div className="py-10 text-center text-xs text-slate-500 border border-dashed border-slate-800 rounded-xl p-6 bg-slate-900/30">
+                      <Layers className="w-8 h-8 mx-auto text-slate-600 mb-2" />
+                      <div className="font-semibold">לא נמצאו תנועות נוספות עבור בית עסק זה</div>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {similarTxs.map((stx) => (
+                        <div
+                          key={stx.id}
+                          className="p-3 rounded-xl border border-slate-800/80 bg-slate-900/60 flex items-center justify-between gap-3 text-xs"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                            <CategoryBadge category={stx.category} size={18} />
+                            <div className="min-w-0 flex-1">
+                              <div className="font-bold text-slate-200 truncate">
+                                {cleanSpacedHebrew(stx.userDescription || getTransactionTitle(stx))}
+                              </div>
+                              <div className="text-[11px] text-slate-500 flex items-center gap-2 mt-0.5">
+                                <span className="font-mono">{formatDate(stx.date, 'he')}</span>
+                                <span>•</span>
+                                <span className={parseFloat(stx.amount) < 0 ? 'text-slate-200 font-bold' : 'text-emerald-400 font-bold'}>
+                                  {formatILS(stx.amount, { showSign: true })}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 shrink-0">
+                            {stx.category || 'ללא סיווג'}
+                          </span>
+                        </div>
+                      ))}
+
+                      {/* Total of all similar transactions */}
+                      <div className="mt-3 p-3.5 rounded-xl border border-slate-800 bg-slate-900 flex items-center justify-between text-xs font-semibold">
+                        <span className="text-slate-400">
+                          סך הכל ({similarTxs.length + 1} תנועות):
+                        </span>
+                        <span className="text-sm font-bold font-mono text-slate-100" dir="ltr">
+                          {formatILS(
+                            (parseFloat(tx.amount) || 0) + similarTxs.reduce((acc, stx) => acc + (parseFloat(stx.amount) || 0), 0),
+                            { showSign: true }
+                          )}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 7. Scraper Raw Data Tab */}
+              {activeTab === 'scraper' && (() => {
+                let parsedRaw = tx.rawData;
+                if (typeof parsedRaw === 'string') {
+                  try { parsedRaw = JSON.parse(parsedRaw); } catch (e) { parsedRaw = null; }
+                }
+                const rawObj = parsedRaw || {};
+                const rawJsonString = JSON.stringify(tx.rawData ? (typeof tx.rawData === 'string' ? JSON.parse(tx.rawData) : tx.rawData) : {
+                  id: tx.id,
+                  identifier: tx.identifier,
+                  date: tx.date,
+                  processedDate: tx.processedDate,
+                  originalAmount: tx.originalAmount,
+                  originalCurrency: tx.originalCurrency,
+                  chargedAmount: tx.chargedAmount,
+                  description: tx.description,
+                  memo: tx.memo,
+                  category: tx.category,
+                  status: tx.status,
+                  type: tx.type,
+                  installments: tx.installments
+                }, null, 2);
+
+                const handleCopyJson = () => {
+                  navigator.clipboard.writeText(rawJsonString);
+                  setCopiedRaw(true);
+                  setTimeout(() => setCopiedRaw(false), 2000);
+                };
+
+                const scraperFields = [
+                  { label: 'מזהה תנועה (Identifier)', value: tx.identifier || rawObj.identifier || tx.id, icon: <Hash className="w-3.5 h-3.5 text-indigo-400" /> },
+                  { label: 'סטטוס תנועה (Status)', value: tx.status || rawObj.status || 'completed', badge: tx.status === 'pending' ? 'bg-amber-500/20 text-amber-400' : 'bg-emerald-500/20 text-emerald-400' },
+                  { label: 'סוג תנועה (Type)', value: tx.type || rawObj.type || (parseFloat(tx.amount) < 0 ? 'expense' : 'income') },
+                  { label: 'סכום מקורי (Original Amount)', value: rawObj.originalAmount != null ? `${rawObj.originalAmount} ${rawObj.originalCurrency || tx.originalCurrency || 'ILS'}` : (tx.originalAmount ? `${tx.originalAmount} ${tx.originalCurrency || 'ILS'}` : 'לא צוין') },
+                  { label: 'סכום חיוב (Charged Amount)', value: rawObj.chargedAmount != null ? `${rawObj.chargedAmount} ILS` : (tx.chargedAmount ? `${tx.chargedAmount} ILS` : formatILS(tx.amount)) },
+                  { label: 'תאריך עסקה (Tx Date)', value: formatDate(tx.date, 'he') },
+                  { label: 'תאריך עיבוד/חיוב (Processed Date)', value: tx.processedDate || rawObj.processedDate ? formatDate(tx.processedDate || rawObj.processedDate, 'he') : 'לא זמין' },
+                  { label: 'סיווג ראשוני מהסקריפר', value: rawObj.category || 'לא סווג ע״י המקור' },
+                  { 
+                    label: 'תשלומי קרדיט/תשלומים', 
+                    value: rawObj.installments 
+                      ? `תשלום ${rawObj.installments.number || 1} מתוך ${rawObj.installments.total || 1}` 
+                      : (tx.installments ? JSON.stringify(tx.installments) : 'תשלום רגיל (תשלום יחיד)') 
+                  },
+                  { label: 'חשבון / כרטיס מקור', value: `${tx.accountDisplayName || tx.bankCompany || ''} (${tx.cardLast4 ? `••${tx.cardLast4}` : 'ראשי'})` }
+                ];
+
+                return (
+                  <div className="space-y-4">
+                    {/* Prominent Original Description & Memo Card */}
+                    <div className="p-3.5 rounded-xl border border-indigo-500/30 bg-indigo-500/5 space-y-2">
+                      <div className="text-[11px] font-bold text-indigo-400">
+                        פירוט מקורי מהבנק / כרטיס אשראי (Original Description):
+                      </div>
+                      <div className="text-sm font-semibold text-slate-100 select-all">
+                        {cleanSpacedHebrew(tx.description) || 'ללא תיאור נוסף'}
+                      </div>
+                      {tx.memo && (
+                        <div className="text-xs text-slate-400 pt-1.5 border-t border-indigo-500/20">
+                          <span className="font-semibold">הערות ספק (Memo):</span> {cleanSpacedHebrew(tx.memo)}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <div className="text-xs font-semibold text-slate-400 flex items-center gap-1.5">
+                        <Database className="w-4 h-4 text-indigo-400" />
+                        <span>כל המידע הגולמי שנשלף מסקריפר הבנק/האשראי</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleCopyJson}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-800 bg-slate-900 text-xs font-medium hover:border-indigo-500 transition-colors text-slate-300"
+                      >
+                        {copiedRaw ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-slate-400" />}
+                        <span>{copiedRaw ? 'הועתק!' : 'העתק JSON'}</span>
+                      </button>
+                    </div>
+
+                    {/* Structured Fields Grid */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {scraperFields.map((field, idx) => (
+                        <div key={idx} className="p-3 rounded-xl border border-slate-800/80 bg-slate-900/50 space-y-1">
+                          <div className="text-[11px] font-medium text-slate-400 flex items-center gap-1">
+                            {field.icon}
+                            <span>{field.label}</span>
+                          </div>
+                          <div className="text-xs font-semibold break-all text-slate-200">
+                            {field.badge ? (
+                              <span className={`px-2 py-0.5 rounded text-[11px] ${field.badge}`}>{field.value}</span>
+                            ) : (
+                              field.value
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Raw JSON Code Block */}
+                    <div className="space-y-1.5">
+                      <div className="text-xs font-semibold text-slate-400">
+                        JSON גולמי מלא (Full Raw Scraper Object):
+                      </div>
+                      <pre className="p-3 rounded-xl border border-slate-800 bg-slate-900 text-[11px] font-mono text-emerald-400 overflow-x-auto max-h-60 leading-relaxed text-left" dir="ltr">
+                        {rawJsonString}
+                      </pre>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
 
             {/* Footer Notice */}
             <div className="p-3 text-center border-t border-slate-900 bg-slate-950">
@@ -408,3 +1371,4 @@ export default function TmaTransactionPage() {
     </>
   );
 }
+

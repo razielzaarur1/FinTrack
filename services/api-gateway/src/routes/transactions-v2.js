@@ -1,7 +1,20 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
 import { z } from 'zod';
 import { pool } from '../db.js';
 import { saveUserRule } from '../services/classifier.js';
 import { verifyTmaToken, verifyTelegramWebAppData } from '../crypto.js';
+import { analyzeReceiptFile, analyzeReceiptUrl } from '../services/ai-analyzer.js';
+
+const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(process.cwd(), 'uploads');
+if (!fs.existsSync(UPLOADS_DIR)) {
+  try {
+    fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+  } catch (err) {
+    console.error('[TMA Receipts] Failed to create uploads directory:', err.message);
+  }
+}
 
 const bulkUpdateSchema = z.object({
   transactionIds: z.array(z.string().uuid()).min(1, 'At least one transaction ID is required'),
@@ -1344,6 +1357,16 @@ export default async function transactionsV2Routes(fastify, options) {
           t.category,
           t.user_description AS "userDescription",
           t.is_ignored AS "isIgnored",
+          t.identifier,
+          t.processed_date AS "processedDate",
+          t.original_amount AS "originalAmount",
+          t.original_currency AS "originalCurrency",
+          t.charged_amount AS "chargedAmount",
+          t.memo,
+          t.status,
+          t.type,
+          t.installments,
+          t.raw_data AS "rawData",
           b.display_name AS "accountDisplayName",
           b.bank_company AS "bankCompany",
           RIGHT(COALESCE(b.account_number, '0000'), 4) AS "cardLast4"
@@ -1368,6 +1391,16 @@ export default async function transactionsV2Routes(fastify, options) {
           category: row.category,
           userDescription: cleanSpacedHebrew(row.userDescription),
           isIgnored: Boolean(row.isIgnored),
+          identifier: row.identifier,
+          processedDate: row.processedDate,
+          originalAmount: row.originalAmount,
+          originalCurrency: row.originalCurrency,
+          chargedAmount: row.chargedAmount,
+          memo: cleanSpacedHebrew(row.memo),
+          status: row.status,
+          type: row.type,
+          installments: row.installments,
+          rawData: row.rawData,
           accountDisplayName: row.accountDisplayName || row.bankCompany,
           bankCompany: row.bankCompany,
           cardLast4: row.cardLast4,
@@ -1450,5 +1483,540 @@ export default async function transactionsV2Routes(fastify, options) {
       fastify.log.error(err, 'Failed to update TMA transaction');
       return reply.code(500).send({ error: 'Database error', message: err.message });
     }
+  });
+
+  // GET /api/v2/transactions/tma/:id/similar - Similar transactions
+  fastify.get('/tma/:id/similar', async (request, reply) => {
+    const isTgAuthorized = await validateTelegramAccess(request, reply);
+    if (!isTgAuthorized) return;
+
+    const { id } = request.params;
+    const token = request.query?.token || request.headers['x-tma-token'];
+    if (!verifyTmaToken(token, id)) {
+      return reply.code(401).send({ error: 'Unauthorized', message: 'טוקן לא תקין' });
+    }
+
+    try {
+      const txRes = await pool.query('SELECT merchant_name, description, raw_data FROM transactions WHERE id = $1', [id]);
+      if (txRes.rows.length === 0) return reply.code(404).send({ error: 'Not Found' });
+      const currentTx = txRes.rows[0];
+      const merchantName = currentTx.merchant_name?.trim();
+
+      if (!merchantName) {
+        return reply.send({ success: true, data: [] });
+      }
+
+      const res = await pool.query(
+        `SELECT t.id, t.date, t.amount, t.currency, t.merchant_name AS "merchantName",
+                t.description, t.category, t.user_description AS "userDescription",
+                b.display_name AS "accountDisplayName", b.bank_company AS "bankCompany"
+         FROM transactions t
+         JOIN bank_accounts b ON t.account_id = b.id
+         WHERE t.id != $1 AND t.merchant_name = $2
+         ORDER BY t.date DESC
+         LIMIT 50`,
+        [id, merchantName]
+      );
+      const rows = res.rows.map(r => ({
+        ...r,
+        amount: parseFloat(r.amount),
+        merchantName: cleanSpacedHebrew(r.merchantName),
+        description: cleanSpacedHebrew(r.description),
+        userDescription: cleanSpacedHebrew(r.userDescription),
+      }));
+      return reply.send({ success: true, data: rows });
+    } catch (err) {
+      return reply.code(500).send({ error: 'Database error', message: err.message });
+    }
+  });
+
+  // GET /api/v2/transactions/tma/:id/splits - Get splits
+  fastify.get('/tma/:id/splits', async (request, reply) => {
+    const isTgAuthorized = await validateTelegramAccess(request, reply);
+    if (!isTgAuthorized) return;
+
+    const { id } = request.params;
+    const token = request.query?.token || request.headers['x-tma-token'];
+    if (!verifyTmaToken(token, id)) return reply.code(401).send({ error: 'Unauthorized' });
+
+    try {
+      const res = await pool.query(
+        `SELECT id, category, amount, description FROM transaction_splits WHERE transaction_id = $1 ORDER BY id ASC`,
+        [id]
+      );
+      const splits = res.rows.map(s => ({ ...s, amount: parseFloat(s.amount) }));
+      return reply.send({ success: true, data: splits });
+    } catch (err) {
+      return reply.code(500).send({ error: 'Database error', message: err.message });
+    }
+  });
+
+  // PUT /api/v2/transactions/tma/:id/splits - Save splits
+  fastify.put('/tma/:id/splits', async (request, reply) => {
+    const isTgAuthorized = await validateTelegramAccess(request, reply);
+    if (!isTgAuthorized) return;
+
+    const { id } = request.params;
+    const token = request.query?.token || request.headers['x-tma-token'];
+    if (!verifyTmaToken(token, id)) return reply.code(401).send({ error: 'Unauthorized' });
+
+    const { splits } = request.body || {};
+    if (!Array.isArray(splits) || splits.length === 0) {
+      return reply.code(400).send({ error: 'At least one split required' });
+    }
+
+    const txRes = await pool.query('SELECT amount FROM transactions WHERE id = $1', [id]);
+    if (txRes.rows.length === 0) return reply.code(404).send({ error: 'Not Found' });
+
+    const parentAmount = Math.abs(parseFloat(txRes.rows[0].amount));
+    const splitsTotal = splits.reduce((acc, s) => acc + (parseFloat(s.amount) || 0), 0);
+    if (Math.abs(parentAmount - splitsTotal) > 0.01) {
+      return reply.code(400).send({
+        error: `סכום הפיצולים (${splitsTotal.toFixed(2)} ₪) חייב להיות שווה לסכום התנועה (${parentAmount.toFixed(2)} ₪)`,
+      });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('DELETE FROM transaction_splits WHERE transaction_id = $1', [id]);
+
+      for (const s of splits) {
+        await client.query(
+          `INSERT INTO transaction_splits (transaction_id, category, amount, description) VALUES ($1, $2, $3, $4)`,
+          [id, s.category, parseFloat(s.amount), s.description || null]
+        );
+      }
+      await client.query('UPDATE transactions SET is_split = true WHERE id = $1', [id]);
+      await client.query('COMMIT');
+
+      return reply.send({ success: true, message: 'הפיצולים נשמרו בהצלחה' });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      return reply.code(500).send({ error: 'Database error', message: err.message });
+    } finally {
+      client.release();
+    }
+  });
+
+  // GET /api/v2/transactions/tma/:id/notes - Get notes
+  fastify.get('/tma/:id/notes', async (request, reply) => {
+    const isTgAuthorized = await validateTelegramAccess(request, reply);
+    if (!isTgAuthorized) return;
+
+    const { id } = request.params;
+    const token = request.query?.token || request.headers['x-tma-token'];
+    if (!verifyTmaToken(token, id)) return reply.code(401).send({ error: 'Unauthorized' });
+
+    try {
+      const res = await pool.query(
+        `SELECT id, note, created_at AS "createdAt" FROM transaction_notes WHERE transaction_id = $1 ORDER BY created_at DESC`,
+        [id]
+      );
+      return reply.send({ success: true, data: res.rows });
+    } catch (err) {
+      return reply.code(500).send({ error: 'Database error', message: err.message });
+    }
+  });
+
+  // POST /api/v2/transactions/tma/:id/notes - Add note
+  fastify.post('/tma/:id/notes', async (request, reply) => {
+    const isTgAuthorized = await validateTelegramAccess(request, reply);
+    if (!isTgAuthorized) return;
+
+    const { id } = request.params;
+    const token = request.query?.token || request.headers['x-tma-token'];
+    if (!verifyTmaToken(token, id)) return reply.code(401).send({ error: 'Unauthorized' });
+
+    const { note } = request.body || {};
+    if (!note || !note.trim()) return reply.code(400).send({ error: 'תוכן הערה נדרש' });
+
+    try {
+      const res = await pool.query(
+        `INSERT INTO transaction_notes (transaction_id, note) VALUES ($1, $2) RETURNING id, note, created_at AS "createdAt"`,
+        [id, note.trim()]
+      );
+      return reply.code(201).send({ success: true, data: res.rows[0] });
+    } catch (err) {
+      return reply.code(500).send({ error: 'Database error', message: err.message });
+    }
+  });
+
+  // DELETE /api/v2/transactions/tma/:id/notes/:noteId - Delete note
+  fastify.delete('/tma/:id/notes/:noteId', async (request, reply) => {
+    const isTgAuthorized = await validateTelegramAccess(request, reply);
+    if (!isTgAuthorized) return;
+
+    const { id, noteId } = request.params;
+    const token = request.query?.token || request.headers['x-tma-token'];
+    if (!verifyTmaToken(token, id)) return reply.code(401).send({ error: 'Unauthorized' });
+
+    try {
+      await pool.query(`DELETE FROM transaction_notes WHERE id = $1 AND transaction_id = $2`, [noteId, id]);
+      return reply.send({ success: true });
+    } catch (err) {
+      return reply.code(500).send({ error: 'Database error', message: err.message });
+    }
+  });
+
+  // GET /api/v2/transactions/tma/:id/links - Get linked transactions
+  fastify.get('/tma/:id/links', async (request, reply) => {
+    const isTgAuthorized = await validateTelegramAccess(request, reply);
+    if (!isTgAuthorized) return;
+
+    const { id } = request.params;
+    const token = request.query?.token || request.headers['x-tma-token'];
+    if (!verifyTmaToken(token, id)) return reply.code(401).send({ error: 'Unauthorized' });
+
+    try {
+      const query = `
+        SELECT 
+          tl.id AS "linkId",
+          tl.link_type AS "linkType",
+          tl.note AS "linkNote",
+          t.id AS "id",
+          t.date AS "date",
+          t.amount AS "amount",
+          t.currency AS "currency",
+          t.merchant_name AS "merchantName",
+          t.description AS "description",
+          t.user_description AS "userDescription",
+          t.category AS "category",
+          b.display_name AS "accountDisplayName",
+          b.bank_company AS "bankCompany"
+        FROM transaction_links tl
+        JOIN transactions t ON (
+          CASE WHEN tl.transaction_id = $1 THEN tl.linked_transaction_id ELSE tl.transaction_id END = t.id
+        )
+        JOIN bank_accounts b ON t.account_id = b.id
+        WHERE tl.transaction_id = $1 OR tl.linked_transaction_id = $1
+        ORDER BY t.date DESC
+      `;
+      const res = await pool.query(query, [id]);
+      const data = res.rows.map(r => ({
+        ...r,
+        amount: parseFloat(r.amount),
+        merchantName: cleanSpacedHebrew(r.merchantName),
+        description: cleanSpacedHebrew(r.description),
+        userDescription: cleanSpacedHebrew(r.userDescription),
+      }));
+      return reply.send({ success: true, data });
+    } catch (err) {
+      return reply.code(500).send({ error: 'Database error', message: err.message });
+    }
+  });
+
+  // POST /api/v2/transactions/tma/:id/links - Link this transaction to another
+  fastify.post('/tma/:id/links', async (request, reply) => {
+    const isTgAuthorized = await validateTelegramAccess(request, reply);
+    if (!isTgAuthorized) return;
+
+    const { id } = request.params;
+    const token = request.query?.token || request.headers['x-tma-token'];
+    if (!verifyTmaToken(token, id)) return reply.code(401).send({ error: 'Unauthorized' });
+
+    const { targetTransactionId, linkType = 'related', note = null } = request.body || {};
+    if (!targetTransactionId || targetTransactionId === id) {
+      return reply.code(400).send({ error: 'מזהה תנועה לקישור אינו תקין' });
+    }
+
+    try {
+      const res = await pool.query(
+        `INSERT INTO transaction_links (transaction_id, linked_transaction_id, link_type, note, user_id)
+         VALUES ($1, $2, $3, $4, '00000000-0000-0000-0000-000000000001')
+         RETURNING id AS "linkId", link_type AS "linkType", note`,
+        [id, targetTransactionId, linkType, note]
+      );
+      return reply.code(201).send({ success: true, data: res.rows[0] });
+    } catch (err) {
+      return reply.code(500).send({ error: 'Database error', message: err.message });
+    }
+  });
+
+  // DELETE /api/v2/transactions/tma/:id/links/:linkId - Delete link
+  fastify.delete('/tma/:id/links/:linkId', async (request, reply) => {
+    const isTgAuthorized = await validateTelegramAccess(request, reply);
+    if (!isTgAuthorized) return;
+
+    const { id, linkId } = request.params;
+    const token = request.query?.token || request.headers['x-tma-token'];
+    if (!verifyTmaToken(token, id)) return reply.code(401).send({ error: 'Unauthorized' });
+
+    try {
+      await pool.query(
+        `DELETE FROM transaction_links WHERE id = $1 AND (transaction_id = $2 OR linked_transaction_id = $2)`,
+        [linkId, id]
+      );
+      return reply.send({ success: true });
+    } catch (err) {
+      return reply.code(500).send({ error: 'Database error', message: err.message });
+    }
+  });
+
+  // GET /api/v2/transactions/tma/:id/linkable - Search and list transactions available to link
+  fastify.get('/tma/:id/linkable', async (request, reply) => {
+    const isTgAuthorized = await validateTelegramAccess(request, reply);
+    if (!isTgAuthorized) return;
+
+    const { id } = request.params;
+    const token = request.query?.token || request.headers['x-tma-token'];
+    if (!verifyTmaToken(token, id)) return reply.code(401).send({ error: 'Unauthorized' });
+
+    const search = request.query?.search?.trim() || '';
+    const limit = Math.min(parseInt(request.query?.limit || '50', 10), 100);
+
+    try {
+      let query;
+      let values;
+      if (search) {
+        query = `
+          SELECT 
+            t.id,
+            t.date,
+            t.amount,
+            t.currency,
+            t.merchant_name AS "merchantName",
+            t.description,
+            t.user_description AS "userDescription",
+            t.category,
+            b.display_name AS "accountDisplayName",
+            b.bank_company AS "bankCompany"
+          FROM transactions t
+          JOIN bank_accounts b ON t.account_id = b.id
+          WHERE t.id != $1
+            AND (
+              t.merchant_name ILIKE $2
+              OR t.description ILIKE $2
+              OR t.user_description ILIKE $2
+              OR t.category ILIKE $2
+              OR CAST(t.amount AS TEXT) ILIKE $2
+            )
+          ORDER BY t.date DESC, t.id DESC
+          LIMIT $3
+        `;
+        values = [id, `%${search}%`, limit];
+      } else {
+        query = `
+          SELECT 
+            t.id,
+            t.date,
+            t.amount,
+            t.currency,
+            t.merchant_name AS "merchantName",
+            t.description,
+            t.user_description AS "userDescription",
+            t.category,
+            b.display_name AS "accountDisplayName",
+            b.bank_company AS "bankCompany"
+          FROM transactions t
+          JOIN bank_accounts b ON t.account_id = b.id
+          WHERE t.id != $1
+          ORDER BY t.date DESC, t.id DESC
+          LIMIT $2
+        `;
+        values = [id, limit];
+      }
+
+      const res = await pool.query(query, values);
+      const data = res.rows.map(r => ({
+        ...r,
+        amount: parseFloat(r.amount),
+        merchantName: cleanSpacedHebrew(r.merchantName),
+        description: cleanSpacedHebrew(r.description),
+        userDescription: cleanSpacedHebrew(r.userDescription),
+      }));
+      return reply.send({ success: true, data });
+    } catch (err) {
+      return reply.code(500).send({ error: 'Database error', message: err.message });
+    }
+  });
+
+  // GET /api/v2/transactions/tma/:id/receipts - List receipts for transaction
+  fastify.get('/tma/:id/receipts', async (request, reply) => {
+    const isTgAuthorized = await validateTelegramAccess(request, reply);
+    if (!isTgAuthorized) return;
+
+    const { id } = request.params;
+    const token = request.query?.token || request.headers['x-tma-token'];
+    if (!verifyTmaToken(token, id)) return reply.code(401).send({ error: 'Unauthorized' });
+
+    try {
+      const res = await pool.query(
+        `SELECT id, transaction_id, file_path, file_name, file_type, file_size, source_url, 
+                ai_analyzed, ai_provider, extracted_data, created_at
+         FROM transaction_receipts
+         WHERE transaction_id = $1
+         ORDER BY created_at DESC`,
+        [id]
+      );
+      return reply.send({ success: true, data: res.rows });
+    } catch (err) {
+      return reply.code(500).send({ error: 'Database error', message: err.message });
+    }
+  });
+
+  // POST /api/v2/transactions/tma/:id/receipts/url - Add digital receipt URL
+  fastify.post('/tma/:id/receipts/url', async (request, reply) => {
+    const isTgAuthorized = await validateTelegramAccess(request, reply);
+    if (!isTgAuthorized) return;
+
+    const { id } = request.params;
+    const token = request.query?.token || request.headers['x-tma-token'];
+    if (!verifyTmaToken(token, id)) return reply.code(401).send({ error: 'Unauthorized' });
+
+    const { url } = request.body || {};
+    if (!url || typeof url !== 'string' || !url.startsWith('http')) {
+      return reply.code(400).send({ error: 'כתובת URL לא תקינה' });
+    }
+
+    try {
+      let aiResult;
+      try {
+        aiResult = await analyzeReceiptUrl(url);
+      } catch (err) {
+        aiResult = { ai_analyzed: false, extracted_data: { vendor: null, total: null, items: [] } };
+      }
+
+      const parsedVendor = aiResult.extracted_data?.vendor || 'חשבונית דיגיטלית';
+      const insertRes = await pool.query(
+        `INSERT INTO transaction_receipts 
+         (transaction_id, file_name, file_type, file_size, source_url, ai_analyzed, ai_provider, extracted_data)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING id, transaction_id, file_name, file_type, file_size, source_url, 
+                   ai_analyzed, ai_provider, extracted_data, created_at`,
+        [
+          id,
+          `${parsedVendor} (קישור דיגיטלי)`,
+          'url',
+          0,
+          url,
+          aiResult.ai_analyzed || false,
+          aiResult.ai_provider || 'gemini',
+          JSON.stringify(aiResult.extracted_data || {}),
+        ]
+      );
+
+      return reply.code(201).send({ success: true, data: insertRes.rows[0] });
+    } catch (err) {
+      return reply.code(500).send({ error: 'Database error', message: err.message });
+    }
+  });
+
+  // POST /api/v2/transactions/tma/:id/receipts/upload - Upload receipt file
+  fastify.post('/tma/:id/receipts/upload', async (request, reply) => {
+    const isTgAuthorized = await validateTelegramAccess(request, reply);
+    if (!isTgAuthorized) return;
+
+    const { id } = request.params;
+    const token = request.query?.token || request.headers['x-tma-token'];
+    if (!verifyTmaToken(token, id)) return reply.code(401).send({ error: 'Unauthorized' });
+
+    let data;
+    try {
+      data = await request.file();
+    } catch (err) {
+      return reply.code(400).send({ error: 'שגיאה בקריאת הקובץ', details: err.message });
+    }
+    if (!data) return reply.code(400).send({ error: 'לא נבחר קובץ' });
+
+    const fileBuffer = await data.toBuffer();
+    const originalName = data.filename || 'receipt.jpg';
+    const mimeType = data.mimetype || 'image/jpeg';
+    const fileSize = fileBuffer.length;
+
+    if (fileSize > 15 * 1024 * 1024) {
+      return reply.code(400).send({ error: 'גודל הקובץ חורג מ-15MB' });
+    }
+
+    const ext = path.extname(originalName) || (mimeType === 'application/pdf' ? '.pdf' : '.jpg');
+    const storageFileName = `${id}_${Date.now()}_${crypto.randomBytes(4).toString('hex')}${ext}`;
+    const storagePath = path.join(UPLOADS_DIR, storageFileName);
+
+    try {
+      fs.writeFileSync(storagePath, fileBuffer);
+    } catch (err) {
+      return reply.code(500).send({ error: 'שגיאה בשמירת הקובץ בדיסק' });
+    }
+
+    let aiResult = { ai_analyzed: false, extracted_data: { vendor: null, total: null, items: [] } };
+    try {
+      aiResult = await analyzeReceiptFile(storagePath, mimeType);
+    } catch (aiErr) {
+      fastify.log.warn(`TMA Receipt AI analysis error: ${aiErr.message}`);
+    }
+
+    try {
+      const insertRes = await pool.query(
+        `INSERT INTO transaction_receipts 
+         (transaction_id, file_path, file_name, file_type, file_size, ai_analyzed, ai_provider, extracted_data)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING id, transaction_id, file_name, file_type, file_size, source_url, 
+                   ai_analyzed, ai_provider, extracted_data, created_at`,
+        [
+          id,
+          storageFileName,
+          originalName,
+          mimeType,
+          fileSize,
+          aiResult.ai_analyzed || false,
+          aiResult.ai_provider || 'gemini',
+          JSON.stringify(aiResult.extracted_data || {}),
+        ]
+      );
+      return reply.code(201).send({ success: true, data: insertRes.rows[0] });
+    } catch (err) {
+      return reply.code(500).send({ error: 'Database error', message: err.message });
+    }
+  });
+
+  // DELETE /api/v2/transactions/tma/:id/receipts/:receiptId - Delete receipt
+  fastify.delete('/tma/:id/receipts/:receiptId', async (request, reply) => {
+    const isTgAuthorized = await validateTelegramAccess(request, reply);
+    if (!isTgAuthorized) return;
+
+    const { id, receiptId } = request.params;
+    const token = request.query?.token || request.headers['x-tma-token'];
+    if (!verifyTmaToken(token, id)) return reply.code(401).send({ error: 'Unauthorized' });
+
+    try {
+      const res = await pool.query('SELECT file_path FROM transaction_receipts WHERE id = $1 AND transaction_id = $2', [receiptId, id]);
+      if (res.rows.length === 0) return reply.code(404).send({ error: 'Receipt not found' });
+
+      const filePath = res.rows[0].file_path;
+      if (filePath) {
+        const fullPath = path.join(UPLOADS_DIR, path.basename(filePath));
+        if (fs.existsSync(fullPath)) {
+          try { fs.unlinkSync(fullPath); } catch (_) {}
+        }
+      }
+
+      await pool.query('DELETE FROM transaction_receipts WHERE id = $1 AND transaction_id = $2', [receiptId, id]);
+      return reply.send({ success: true });
+    } catch (err) {
+      return reply.code(500).send({ error: 'Database error', message: err.message });
+    }
+  });
+
+  // GET /api/v2/transactions/tma/receipts/file/:filename - View receipt image in TMA
+  fastify.get('/tma/receipts/file/:filename', async (request, reply) => {
+    const { filename } = request.params;
+    const safeFilename = path.basename(filename);
+    const filePath = path.join(UPLOADS_DIR, safeFilename);
+
+    if (!fs.existsSync(filePath)) {
+      return reply.code(404).send({ error: 'הקובץ לא נמצא' });
+    }
+
+    const ext = path.extname(safeFilename).toLowerCase();
+    let mime = 'application/octet-stream';
+    if (ext === '.jpg' || ext === '.jpeg') mime = 'image/jpeg';
+    else if (ext === '.png') mime = 'image/png';
+    else if (ext === '.webp') mime = 'image/webp';
+    else if (ext === '.pdf') mime = 'application/pdf';
+
+    reply.header('Content-Type', mime);
+    reply.header('Cache-Control', 'public, max-age=86400');
+    const stream = fs.createReadStream(filePath);
+    return reply.send(stream);
   });
 }
