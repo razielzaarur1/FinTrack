@@ -495,11 +495,11 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
                         <Globe className="w-4 h-4" />
                       </div>
                       <div className="text-xs font-bold text-dark-text light:text-light-text">
-                        עסקת מט״ח ({fxDetails.foreignCurrency}) ועלויות המרה
+                        עסקת מט״ח ({fxDetails.foreignCurrency || fxDetails.originalCurrency || 'מט״ח'}) ועלויות המרה
                       </div>
                     </div>
                     <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-blue-500/15 text-blue-500 dark:text-blue-400 font-mono" dir="ltr">
-                      {fxDetails.foreignCurrency} / ILS
+                      {fxDetails.foreignCurrency || fxDetails.originalCurrency} / ILS
                     </span>
                   </div>
 
@@ -510,7 +510,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
                         סכום במטבע מקורי
                       </div>
                       <div className="text-sm font-bold font-mono text-dark-text light:text-light-text" dir="ltr">
-                        {formatCurrency(fxDetails.foreignAmount, fxDetails.foreignCurrency)}
+                        {formatCurrency(fxDetails.foreignAmount, fxDetails.foreignCurrency || fxDetails.originalCurrency)}
                       </div>
                     </div>
 
@@ -531,7 +531,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
                         שער יציג לתאריך העסקה ({formatDate(fxDetails.rateDate || activeTx.date, lang)}):
                       </span>
                       <span className="font-mono font-semibold" dir="ltr">
-                        1 {fxDetails.foreignCurrency} = ₪{Number(fxDetails.representativeRate).toFixed(4)}
+                        1 {fxDetails.foreignCurrency || fxDetails.originalCurrency} = ₪{Number(fxDetails.representativeRate).toFixed(4)}
                       </span>
                     </div>
 
@@ -549,29 +549,49 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
                         שער חיוב אפקטיבי של הכרטיס:
                       </span>
                       <span className="font-mono font-semibold text-amber-600 dark:text-amber-400" dir="ltr">
-                        1 {fxDetails.foreignCurrency} = ₪{Number(fxDetails.effectiveRate).toFixed(4)}
+                        1 {fxDetails.foreignCurrency || fxDetails.originalCurrency} = ₪{Number(fxDetails.effectiveRate).toFixed(4)}
                       </span>
                     </div>
                   </div>
 
                   {/* Breakdown Banner for Conversion Fee */}
-                  <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs space-y-1">
-                    <div className="flex items-center justify-between font-bold">
-                      <span className="text-amber-600 dark:text-amber-400">
-                        {fxDetails.isPositiveFee ? 'עמלת המרה ששולמה:' : 'הפרש מול שער יציג:'}
-                      </span>
-                      <span className="font-mono text-amber-600 dark:text-amber-400 text-sm" dir="ltr">
-                        {formatILS(fxDetails.conversionFeeILS)}
-                        {fxDetails.feePercent > 0 && ` (+${fxDetails.feePercent}%)`}
-                      </span>
+                  {fxDetails.isPositiveFee ? (
+                    <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs space-y-1">
+                      <div className="flex items-center justify-between font-bold">
+                        <span className="text-amber-600 dark:text-amber-400">
+                          עמלת המרה ששולמה:
+                        </span>
+                        <span className="font-mono text-amber-600 dark:text-amber-400 text-sm" dir="ltr">
+                          +{formatILS(fxDetails.conversionFeeILS)}
+                          {fxDetails.feePercent > 0 && ` (+${fxDetails.feePercent}%)`}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-dark-text-muted light:text-light-text-muted flex items-center justify-between pt-0.5">
+                        <span>עלות עמלה ליחידת מטבע:</span>
+                        <span className="font-semibold text-dark-text light:text-light-text font-mono" dir="rtl">
+                          {Math.abs(fxDetails.feePerUnitAgorot)} אגורות לכל {fxDetails.foreignCurrency || fxDetails.originalCurrency} (+{formatILS(Math.abs(fxDetails.feePerUnit))})
+                        </span>
+                      </div>
                     </div>
-                    <div className="text-[11px] text-dark-text-muted light:text-light-text-muted flex items-center justify-between pt-0.5">
-                      <span>עלות עמלה ליחידת מטבע:</span>
-                      <span className="font-semibold text-dark-text light:text-light-text font-mono" dir="rtl">
-                        {fxDetails.feePerUnitAgorot} אגורות לכל {fxDetails.foreignCurrency} ({formatILS(fxDetails.feePerUnit)})
-                      </span>
+                  ) : (
+                    <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs space-y-1">
+                      <div className="flex items-center justify-between font-bold">
+                        <span className="text-emerald-600 dark:text-emerald-400">
+                          הפרש לטובתך (חיוב נמוך מהשער היציג):
+                        </span>
+                        <span className="font-mono text-emerald-600 dark:text-emerald-400 text-sm" dir="ltr">
+                          {formatILS(Math.abs(fxDetails.conversionFeeILS))}
+                          {fxDetails.feePercent !== 0 && ` (${fxDetails.feePercent}%)`}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-dark-text-muted light:text-light-text-muted flex items-center justify-between pt-0.5">
+                        <span>הפרש ליחידת מטבע:</span>
+                        <span className="font-semibold text-emerald-600 dark:text-emerald-400 font-mono" dir="rtl">
+                          {Math.abs(fxDetails.feePerUnitAgorot)} אגורות לכל {fxDetails.foreignCurrency || fxDetails.originalCurrency} ({formatILS(Math.abs(fxDetails.feePerUnit))})
+                        </span>
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
               ) : null}
 

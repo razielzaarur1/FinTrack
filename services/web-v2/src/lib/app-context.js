@@ -1,9 +1,10 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { translations } from './i18n';
 import { api } from './api';
 import LockScreen from '@/components/auth/LockScreen';
+import { CATEGORIES_DATA, setDynamicCategories } from './categories';
 
 const AppContext = createContext(null);
 
@@ -11,6 +12,50 @@ export function AppProvider({ children }) {
   const [lang, setLang] = useState('he');
   const [theme, setTheme] = useState('dark');
   const [mounted, setMounted] = useState(false);
+
+  // Global Categories State
+  const [categoriesTree, setCategoriesTree] = useState(null);
+  const [loadingCategories, setLoadingCategories] = useState(false);
+
+  const loadCategories = useCallback(async () => {
+    try {
+      setLoadingCategories(true);
+      const res = await api.getCategories({ tree: 'true' });
+      if (res.data?.data && Array.isArray(res.data.data) && res.data.data.length > 0) {
+        setCategoriesTree(res.data.data);
+        setDynamicCategories(res.data.data);
+      }
+    } catch (err) {
+      console.error('[AppContext] Failed to fetch categories:', err);
+    } finally {
+      setLoadingCategories(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadCategories();
+
+    const handleCategoryUpdate = () => {
+      loadCategories();
+    };
+
+    window.addEventListener('fintrack_categories_updated', handleCategoryUpdate);
+    return () => {
+      window.removeEventListener('fintrack_categories_updated', handleCategoryUpdate);
+    };
+  }, [loadCategories]);
+
+  const expenseCategories = useMemo(() => {
+    if (!categoriesTree || categoriesTree.length === 0) return CATEGORIES_DATA.expenses;
+    const filtered = categoriesTree.filter((c) => c.type === 'expense' || c.type === 'both' || !c.type);
+    return filtered.length > 0 ? filtered : CATEGORIES_DATA.expenses;
+  }, [categoriesTree]);
+
+  const incomeCategories = useMemo(() => {
+    if (!categoriesTree || categoriesTree.length === 0) return CATEGORIES_DATA.incomes;
+    const filtered = categoriesTree.filter((c) => c.type === 'income');
+    return filtered.length > 0 ? filtered : CATEGORIES_DATA.incomes;
+  }, [categoriesTree]);
 
   // Security & Authentication State
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -177,6 +222,10 @@ export function AppProvider({ children }) {
         setupPasscode,
         lock,
         bypassLock,
+        categories: categoriesTree,
+        expenseCategories,
+        incomeCategories,
+        refreshCategories: loadCategories,
       }}
     >
       {/* If mounted and not authenticated, render secure LockScreen (except for scoped TMA views) */}
