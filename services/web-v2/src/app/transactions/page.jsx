@@ -25,6 +25,7 @@ import {
   Receipt,
   Coins
 } from 'lucide-react';
+import { api } from '@/lib/api';
 import { formatILS, formatDate, cleanSpacedHebrew, getTransactionTitle, formatCurrency, extractInstallmentInfo } from '@/lib/formatters';
 import { useApp } from '@/lib/app-context';
 import CategoryBadge from '@/components/common/CategoryBadge';
