@@ -187,56 +187,136 @@ export async function processPendingNotifications(logger = console) {
     const notifyOnAnomaly = settings.notifyOnAnomaly !== false;
     const notifyOnBudget = settings.notifyOnBudgetExceeded !== false;
     const anomalyMinAmount = parseInt(settings.anomalyMinAmount, 10) || 300;
+    const notifyMaxAgeDays = Math.max(1, parseInt(settings.notifyMaxAgeDays, 10) || 7);
     const tmaBaseUrl = (settings.tmaBaseUrl || '').trim();
     const notifiedBudgets = settings.notified_budgets || {};
 
     if (!telegramEnabled) {
+      // Auto-mark all transactions as notified if notifications are disabled
+      await client.query(
+        `UPDATE transactions t
+         SET is_notified = true
+         FROM bank_accounts b
+         WHERE t.account_id = b.id AND b.user_id = $1 AND t.is_notified = false`,
+        [DEFAULT_USER_ID]
+      );
       return { processed: 0, message: 'Telegram notifications disabled' };
     }
 
-    // 2. Fetch unnotified transactions
+    // 2. Proactive Cleanup: Auto-mark all historical transactions older than notifyMaxAgeDays as notified
+    const cutoffDate = new Date(Date.now() - notifyMaxAgeDays * 24 * 60 * 60 * 1000);
+    const cutoffDateStr = cutoffDate.toISOString().split('T')[0];
+
+    const cleanupRes = await client.query(
+      `UPDATE transactions t
+       SET is_notified = true
+       FROM bank_accounts b
+       WHERE t.account_id = b.id
+         AND b.user_id = $1
+         AND t.is_notified = false
+         AND t.date < $2::date`,
+      [DEFAULT_USER_ID, cutoffDateStr]
+    );
+
+    if (cleanupRes.rowCount > 0) {
+      logger.info?.(`[NotifierEngine] Auto-marked ${cleanupRes.rowCount} historical transactions older than ${notifyMaxAgeDays} days (${cutoffDateStr}) as notified.`);
+    }
+
+/**
+ * Extracts installment details from transaction and raw_data
+ */
+function extractInstallmentDetails(tx) {
+  let raw = tx.raw_data;
+  if (typeof raw === 'string') {
+    try { raw = JSON.parse(raw); } catch (e) { raw = {}; }
+  }
+  if (!raw || typeof raw !== 'object') raw = {};
+
+  const inst = raw.installments;
+  if (inst) {
+    if (typeof inst === 'object' && inst !== null) {
+      const num = parseInt(inst.number ?? inst.current ?? inst.num ?? 1, 10);
+      const total = parseInt(inst.total ?? inst.count ?? 1, 10);
+      if (total > 1) {
+        return {
+          isInstallment: true,
+          number: num,
+          total: total,
+          text: `תשלום ${num} מתוך ${total}`,
+          totalAmount: Math.abs(parseFloat(raw.originalAmount || 0)),
+        };
+      }
+    }
+  }
+
+  const candidates = [tx.description, tx.merchant_name, raw.description, raw.memo, raw.originalDescription].filter(Boolean);
+  for (const str of candidates) {
+    const cleanStr = String(str).replace(/\s+/g, ' ');
+    const match = cleanStr.match(/(?:תשלום|תשלומים|עסקה)?\s*\(?(\d{1,2})\s*(?:מתוך|\/)\s*(\d{1,2})\)?/);
+    if (match) {
+      const num = parseInt(match[1], 10);
+      const total = parseInt(match[2], 10);
+      if (total > 1 && total <= 120 && num <= total) {
+        return {
+          isInstallment: true,
+          number: num,
+          total: total,
+          text: `תשלום ${num} מתוך ${total}`,
+          totalAmount: Math.abs(parseFloat(raw.originalAmount || 0)),
+        };
+      }
+    }
+  }
+
+  const origAmt = Math.abs(parseFloat(raw.originalAmount || 0));
+  const chargedAmt = Math.abs(parseFloat(raw.chargedAmount || tx.amount || 0));
+  if (origAmt > 0 && chargedAmt > 0 && origAmt > chargedAmt * 1.5) {
+    const ratio = Math.round(origAmt / chargedAmt);
+    if (ratio >= 2 && ratio <= 60 && Math.abs(origAmt - chargedAmt * ratio) < (chargedAmt * 0.15)) {
+      return {
+        isInstallment: true,
+        number: 1,
+        total: ratio,
+        text: `עסקת תשלומים (תשלום 1 מתוך ${ratio})`,
+        totalAmount: origAmt,
+      };
+    }
+  }
+
+  return { isInstallment: false };
+}
+
+    // 3. Fetch only unnotified transactions within the active window (t.date >= cutoffDate)
     const unnotifiedRes = await client.query(
       `SELECT
          t.id, t.amount, t.date, t.currency, t.merchant_name, t.description,
-         t.category, t.status, t.user_description, t.is_ignored, t.created_at,
+         t.category, t.status, t.user_description, t.is_ignored, t.raw_data, t.created_at,
          b.display_name, b.bank_company, b.account_number
        FROM transactions t
        JOIN bank_accounts b ON t.account_id = b.id
-       WHERE b.user_id = $1 AND t.is_notified = false
-       ORDER BY t.date ASC, t.created_at ASC`,
-      [DEFAULT_USER_ID]
+       WHERE b.user_id = $1
+         AND t.is_notified = false
+         AND t.date >= $2::date
+       ORDER BY t.date DESC, t.created_at DESC`,
+      [DEFAULT_USER_ID, cutoffDateStr]
     );
 
     const rows = unnotifiedRes.rows;
     if (rows.length === 0) {
-      return { processed: 0, message: 'No unnotified transactions' };
+      return { processed: 0, message: 'No unnotified transactions in active window' };
     }
 
-    logger.info?.(`[NotifierEngine] Found ${rows.length} unnotified transactions.`);
+    logger.info?.(`[NotifierEngine] Found ${rows.length} unnotified transactions within last ${notifyMaxAgeDays} days.`);
 
-    // UX Safeguard: If user just imported 20+ historical transactions,
-    // mark historical transactions older than 48 hours as notified to avoid spamming
+    // Rate-limit safeguard: send at most 10 most recent notifications per batch to prevent flooding
     let toNotify = rows;
-    if (rows.length > 20) {
-      const cutoff = new Date(Date.now() - 48 * 3600 * 1000);
-      const oldIds = [];
-      const recentRows = [];
-
-      for (const r of rows) {
-        const txDate = new Date(r.date);
-        if (txDate < cutoff) {
-          oldIds.push(r.id);
-        } else {
-          recentRows.push(r);
-        }
+    if (rows.length > 10) {
+      toNotify = rows.slice(0, 10);
+      const excessIds = rows.slice(10).map((r) => r.id);
+      if (excessIds.length > 0) {
+        await client.query(`UPDATE transactions SET is_notified = true WHERE id = ANY($1)`, [excessIds]);
+        logger.info?.(`[NotifierEngine] Auto-marked ${excessIds.length} excess transactions as notified to prevent flood.`);
       }
-
-      if (oldIds.length > 0) {
-        await client.query(`UPDATE transactions SET is_notified = true WHERE id = ANY($1)`, [oldIds]);
-        logger.info?.(`[NotifierEngine] Auto-marked ${oldIds.length} historical transactions as notified.`);
-      }
-
-      toNotify = recentRows.slice(0, 10); // Cap at 10 recent notifications
     }
 
     let notifiedCount = 0;
@@ -247,6 +327,7 @@ export async function processPendingNotifications(logger = console) {
       const anomalyResult = await analyzeAnomalyForTransaction(client, DEFAULT_USER_ID, tx, anomalyMinAmount);
       const isAnomaly = Boolean(anomalyResult.isAnomaly);
       const anomalyReason = anomalyResult.anomalyReason || null;
+      const installmentInfo = extractInstallmentDetails(tx);
 
       // 2. Build secure scoped TMA link (Least-Privilege Token)
       let tmaUrl = null;
@@ -267,6 +348,7 @@ export async function processPendingNotifications(logger = console) {
               description: tx.description,
               category: tx.category,
               currency: tx.currency || 'ILS',
+              installments: installmentInfo,
             },
             account: {
               displayName: tx.display_name,

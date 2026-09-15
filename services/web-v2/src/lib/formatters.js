@@ -166,3 +166,119 @@ export const getTransactionTitle = (tx) => {
   return cleanSpacedHebrew(tx.merchantName || tx.description || 'ללא תיאור');
 };
 
+/**
+ * Intelligently extracts installment metadata from transaction object, rawData, and text descriptions.
+ * Handles Israeli credit card statement formats:
+ * - Structured installments object: { number, total } or { current, count }
+ * - Text patterns: "תשלום 1 מתוך 12", "תשלום 1/12", "(1/10)", "1 מתוך 5", "עסקה 1/3"
+ * - Discrepancy between originalAmount (total deal sum) and chargedAmount (monthly installment charge)
+ */
+export const extractInstallmentInfo = (tx, rawOverride = null) => {
+  if (!tx) {
+    return { isInstallment: false, number: 1, total: 1, text: 'תשלום רגיל (תשלום יחיד)' };
+  }
+
+  let raw = rawOverride;
+  if (!raw && tx.rawData) {
+    raw = typeof tx.rawData === 'string' ? (() => { try { return JSON.parse(tx.rawData); } catch(e) { return {}; } })() : tx.rawData;
+  }
+  if (!raw || typeof raw !== 'object') raw = {};
+
+  // 1. Check structured installments in tx or rawData
+  const inst = tx.installments || raw.installments;
+  if (inst) {
+    if (typeof inst === 'object' && inst !== null) {
+      const num = parseInt(inst.number ?? inst.current ?? inst.num ?? 1, 10);
+      const total = parseInt(inst.total ?? inst.count ?? 1, 10);
+      if (total > 1) {
+        return {
+          isInstallment: true,
+          number: num,
+          total: total,
+          text: `תשלום ${num} מתוך ${total}`,
+          chargedAmount: Math.abs(parseFloat(tx.chargedAmount || raw.chargedAmount || tx.amount || 0)),
+          totalAmount: Math.abs(parseFloat(tx.originalAmount || raw.originalAmount || 0)),
+        };
+      }
+    } else if (typeof inst === 'string' && inst.trim()) {
+      const m = inst.match(/(\d+)\s*(?:מתוך|\/)\s*(\d+)/);
+      if (m) {
+        const num = parseInt(m[1], 10);
+        const total = parseInt(m[2], 10);
+        if (total > 1) {
+          return {
+            isInstallment: true,
+            number: num,
+            total: total,
+            text: `תשלום ${num} מתוך ${total}`,
+            chargedAmount: Math.abs(parseFloat(tx.chargedAmount || raw.chargedAmount || tx.amount || 0)),
+            totalAmount: Math.abs(parseFloat(tx.originalAmount || raw.originalAmount || 0)),
+          };
+        }
+      }
+    }
+  }
+
+  // 2. Search for installment patterns in Hebrew descriptions / memos
+  const textCandidates = [
+    tx.description,
+    tx.memo,
+    tx.userDescription,
+    raw.description,
+    raw.memo,
+    raw.originalDescription,
+  ].filter(Boolean);
+
+  for (const str of textCandidates) {
+    const cleanStr = cleanSpacedHebrew(String(str));
+    // Matches: "תשלום 2 מתוך 12", "תשלום 2/12", "תשלומים 2/12", "(2/12)", "2 מתוך 12", "2/12"
+    const match = cleanStr.match(/(?:תשלום|תשלומים|עסקה)?\s*\(?(\d{1,2})\s*(?:מתוך|\/)\s*(\d{1,2})\)?/);
+    if (match) {
+      const num = parseInt(match[1], 10);
+      const total = parseInt(match[2], 10);
+      if (total > 1 && total <= 120 && num <= total) {
+        return {
+          isInstallment: true,
+          number: num,
+          total: total,
+          text: `תשלום ${num} מתוך ${total}`,
+          chargedAmount: Math.abs(parseFloat(tx.chargedAmount || raw.chargedAmount || tx.amount || 0)),
+          totalAmount: Math.abs(parseFloat(tx.originalAmount || raw.originalAmount || 0)),
+        };
+      }
+    }
+  }
+
+  // 3. Check for amount discrepancy in credit cards (original total deal vs single installment)
+  const origAmt = Math.abs(parseFloat(raw.originalAmount || tx.originalAmount || 0));
+  const chargedAmt = Math.abs(parseFloat(raw.chargedAmount || tx.chargedAmount || tx.amount || 0));
+  if (origAmt > 0 && chargedAmt > 0 && origAmt > chargedAmt * 1.5) {
+    const ratio = Math.round(origAmt / chargedAmt);
+    if (ratio >= 2 && ratio <= 60 && Math.abs(origAmt - chargedAmt * ratio) < (chargedAmt * 0.15)) {
+      return {
+        isInstallment: true,
+        number: 1,
+        total: ratio,
+        text: `עסקת ${ratio} תשלומים (${formatILS(chargedAmt)} / תשלום)`,
+        chargedAmount: chargedAmt,
+        totalAmount: origAmt,
+      };
+    }
+  }
+
+  // 4. Check if type explicitly says installments
+  const typeStr = String(raw.type || tx.type || '').toLowerCase();
+  if (typeStr.includes('installment') || typeStr.includes('תשלום')) {
+    return {
+      isInstallment: true,
+      number: 1,
+      total: 1,
+      text: 'עסקה בתשלומים',
+      chargedAmount: chargedAmt || Math.abs(parseFloat(tx.amount || 0)),
+      totalAmount: origAmt || Math.abs(parseFloat(tx.amount || 0)),
+    };
+  }
+
+  return { isInstallment: false, number: 1, total: 1, text: 'תשלום רגיל (תשלום יחיד)' };
+};
+

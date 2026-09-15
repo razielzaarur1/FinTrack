@@ -77,6 +77,7 @@ export default function SettingsPage() {
   const [notifyOnAnomaly, setNotifyOnAnomaly] = useState(true);
   const [notifyOnBudget, setNotifyOnBudget] = useState(true);
   const [anomalyMinAmount, setAnomalyMinAmount] = useState(300);
+  const [notifyMaxAgeDays, setNotifyMaxAgeDays] = useState(7);
 
   // Bank Account CC Billing Anomaly Flags
   const [flagLowCcBillings, setFlagLowCcBillings] = useState(true);
@@ -143,6 +144,7 @@ export default function SettingsPage() {
         if (s.notifyOnAnomaly !== undefined) setNotifyOnAnomaly(s.notifyOnAnomaly);
         if (s.notifyOnBudgetExceeded !== undefined) setNotifyOnBudget(s.notifyOnBudgetExceeded);
         if (s.anomalyMinAmount !== undefined) setAnomalyMinAmount(parseInt(s.anomalyMinAmount, 10) || 300);
+        if (s.notifyMaxAgeDays !== undefined) setNotifyMaxAgeDays(parseInt(s.notifyMaxAgeDays, 10) || 7);
         if (s.flagLowCcBillings !== undefined) setFlagLowCcBillings(s.flagLowCcBillings);
         if (s.ccBillingMinThreshold !== undefined) setCcBillingMinThreshold(parseInt(s.ccBillingMinThreshold, 10) || 500);
         if (s.ccBillingLookbackDays !== undefined) setCcBillingLookbackDays(parseInt(s.ccBillingLookbackDays, 10) || 60);
@@ -197,6 +199,7 @@ export default function SettingsPage() {
         notifyOnAnomaly,
         notifyOnBudgetExceeded: notifyOnBudget,
         anomalyMinAmount: Math.max(50, parseInt(anomalyMinAmount, 10) || 300),
+        notifyMaxAgeDays: Math.max(1, parseInt(notifyMaxAgeDays, 10) || 7),
         flagLowCcBillings,
         ccBillingMinThreshold: Math.max(0, parseInt(ccBillingMinThreshold, 10) || 500),
         ccBillingLookbackDays: Math.max(1, parseInt(ccBillingLookbackDays, 10) || 60),
@@ -923,6 +926,43 @@ export default function SettingsPage() {
               />
               <span className="text-[10px] text-dark-text-muted light:text-light-text-muted block">
                 תנועות מתחת לסכום זה לא ייחשבו כחריגות (ברירת מחדל: 300 ₪)
+              </span>
+            </div>
+
+            {/* Max Notification Age Limit (Days) */}
+            <div className="p-2.5 rounded-lg border border-dark-border/60 light:border-light-border/60 bg-dark-surface light:bg-light-surface space-y-1.5">
+              <label className="font-medium text-dark-text light:text-light-text text-[11px] block flex items-center justify-between">
+                <span>טווח ימים מקסימלי לשליחת התראה</span>
+                <span className="font-bold text-brand-primary">{notifyMaxAgeDays} ימים</span>
+              </label>
+              <div className="flex gap-1.5 items-center">
+                <input
+                  type="number"
+                  min="1"
+                  max="365"
+                  value={notifyMaxAgeDays}
+                  onChange={(e) => setNotifyMaxAgeDays(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                  className="w-16 p-1.5 rounded-lg border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs focus:ring-1 focus:ring-brand-primary font-mono"
+                />
+                <div className="flex gap-1 flex-1 overflow-x-auto no-scrollbar">
+                  {[1, 3, 7, 14, 30].map((days) => (
+                    <button
+                      key={days}
+                      type="button"
+                      onClick={() => setNotifyMaxAgeDays(days)}
+                      className={`px-2 py-1 rounded text-[10px] font-medium border transition-colors ${
+                        notifyMaxAgeDays === days
+                          ? 'bg-brand-primary/20 border-brand-primary text-brand-primary font-bold'
+                          : 'border-dark-border/60 light:border-light-border/60 text-dark-text-muted hover:text-dark-text'
+                      }`}
+                    >
+                      {days === 7 ? '7 ימים (מומלץ)' : `${days} ימים`}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <span className="text-[10px] text-dark-text-muted light:text-light-text-muted block">
+                עסקאות ישנות יותר מטווח זה יסומנו אוטומטית כנקראו ולא יישלחו לטלגרם (ברירת מחדל: 7 ימים).
               </span>
             </div>
 

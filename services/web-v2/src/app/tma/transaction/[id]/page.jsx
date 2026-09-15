@@ -34,8 +34,7 @@ import {
 import { api } from '@/lib/api';
 import CategoryBadge from '@/components/common/CategoryBadge';
 import CategoryPicker from '@/components/common/CategoryPicker';
-import { setDynamicCategories } from '@/lib/categories';
-import { formatILS, formatDate, cleanSpacedHebrew, getTransactionTitle, formatCurrency } from '@/lib/formatters';
+import { formatILS, formatDate, cleanSpacedHebrew, getTransactionTitle, formatCurrency, extractInstallmentInfo } from '@/lib/formatters';
 
 function ChromeErrorPage() {
   const [currentHost, setCurrentHost] = useState('');
@@ -595,7 +594,9 @@ export default function TmaTransactionPage() {
         )}
 
         {/* Main Content (Matching TransactionDrawer UI) */}
-        {!loading && tx && isTelegramEnv !== false && (
+        {!loading && tx && isTelegramEnv !== false && (() => {
+          const instInfo = extractInstallmentInfo(tx);
+          return (
           <div className="w-full max-w-lg mx-auto min-h-screen flex flex-col justify-between bg-slate-950 border-x border-slate-800/80 shadow-2xl">
             {/* Header (Exact TransactionDrawer layout) */}
             <div className="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between bg-slate-900/60 sticky top-0 backdrop-blur-md z-20">
@@ -615,8 +616,22 @@ export default function TmaTransactionPage() {
                   <div className="text-base sm:text-lg font-bold mt-0.5 truncate text-slate-100 max-w-[220px] sm:max-w-xs">
                     {userDescription || cleanSpacedHebrew(getTransactionTitle(tx))}
                   </div>
-                  <div className="text-xs text-slate-400 font-mono">
-                    {formatDate(tx.date, 'he')} • {formatILS(tx.amount, { showSign: true })}
+                  <div className="text-xs text-slate-400 font-mono flex items-center gap-1.5 flex-wrap">
+                    <span>{formatDate(tx.date, 'he')}</span>
+                    <span>•</span>
+                    <span className="font-bold text-slate-200">{formatILS(tx.amount, { showSign: true })}</span>
+                    {instInfo.isInstallment && (
+                      <>
+                        <span className="px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 text-[10px] font-semibold">
+                          💳 {instInfo.text}
+                        </span>
+                        {instInfo.totalAmount > Math.abs(parseFloat(tx.amount) || 0) && (
+                          <span className="text-[10px] text-slate-400 font-sans">
+                            (מתוך {formatILS(instInfo.totalAmount)})
+                          </span>
+                        )}
+                      </>
+                    )}
                   </div>
                 </div>
               </div>
@@ -876,6 +891,25 @@ export default function TmaTransactionPage() {
                           </div>
                         </div>
                       )}
+                    </div>
+                  )}
+
+                  {/* Installment Banner */}
+                  {instInfo.isInstallment && (
+                    <div className="p-3.5 rounded-2xl border border-indigo-500/30 bg-indigo-500/10 flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-2.5">
+                        <CreditCard className="w-4 h-4 text-indigo-400 shrink-0" />
+                        <div>
+                          <div className="font-bold text-slate-200">עסקת תשלומים: {instInfo.text}</div>
+                          <div className="text-[11px] text-slate-400 mt-0.5">
+                            סכום חיוב חודשי: {formatILS(tx.amount)}
+                            {instInfo.totalAmount > 0 && ` • סך כולל של העסקה: ${formatILS(instInfo.totalAmount)}`}
+                          </div>
+                        </div>
+                      </div>
+                      <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-mono">
+                        {instInfo.number}/{instInfo.total}
+                      </span>
                     </div>
                   )}
 
@@ -1512,9 +1546,10 @@ export default function TmaTransactionPage() {
                   { label: 'סיווג ראשוני מהסקריפר', value: rawObj.category || 'לא סווג ע״י המקור' },
                   { 
                     label: 'תשלומי קרדיט/תשלומים', 
-                    value: rawObj.installments 
-                      ? `תשלום ${rawObj.installments.number || 1} מתוך ${rawObj.installments.total || 1}` 
-                      : (tx.installments ? JSON.stringify(tx.installments) : 'תשלום רגיל (תשלום יחיד)') 
+                    value: instInfo.isInstallment 
+                      ? `${instInfo.text}${instInfo.totalAmount > 0 ? ` (סך כולל: ${formatILS(instInfo.totalAmount)})` : ''}` 
+                      : 'תשלום רגיל (תשלום יחיד)',
+                    badge: instInfo.isInstallment ? 'bg-indigo-500/20 text-indigo-300' : null
                   },
                   { label: 'חשבון / כרטיס מקור', value: `${tx.accountDisplayName || tx.bankCompany || ''} (${tx.cardLast4 ? `••${tx.cardLast4}` : 'ראשי'})` }
                 ];
@@ -1592,7 +1627,8 @@ export default function TmaTransactionPage() {
               </p>
             </div>
           </div>
-        )}
+          );
+        })()}
       </div>
     </>
   );

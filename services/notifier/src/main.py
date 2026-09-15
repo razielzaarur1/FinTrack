@@ -297,6 +297,15 @@ async def notify_transaction(payload: TransactionNotifyPayload):
     tx_date = html.escape(str(tx.get("date") or ""))
     acc_name = html.escape(str(acc.get("displayName") or acc.get("display_name") or acc.get("bankCompany") or "חשבון"))
 
+    inst = tx.get("installments") or {}
+    is_installment = bool(inst.get("isInstallment") or inst.get("is_installment"))
+    installment_line = ""
+    if is_installment:
+        inst_text = html.escape(str(inst.get("text") or "תשלומים"))
+        total_deal_amount = float(inst.get("totalAmount") or inst.get("total_amount") or 0.0)
+        total_clause = f" (מתוך סך כולל של ₪{total_deal_amount:,.2f})" if total_deal_amount > abs_amount else ""
+        installment_line = f"\n💳 <b>תשלומים:</b> {inst_text}{total_clause}"
+
     if payload.isAnomaly:
         header = "🚨 <b>התראה על תנועה חריגה!</b>"
         reason = html.escape(payload.anomalyReason or "תנועה גדולה שאינה תואמת את דפוסי העבר ההיסטוריים")
@@ -308,6 +317,7 @@ async def notify_transaction(payload: TransactionNotifyPayload):
             f"🏷️ <b>קטגוריה:</b> {category}\n"
             f"📅 <b>תאריך:</b> {tx_date}\n"
             f"🏦 <b>חשבון:</b> {acc_name}"
+            f"{installment_line}"
         )
     else:
         header = "💳 <b>תנועה חדשה זוהתה!</b>"
@@ -318,6 +328,7 @@ async def notify_transaction(payload: TransactionNotifyPayload):
             f"🏷️ <b>קטגוריה:</b> {category}\n"
             f"📅 <b>תאריך:</b> {tx_date}\n"
             f"🏦 <b>חשבון:</b> {acc_name}"
+            f"{installment_line}"
         )
 
     reply_markup = None

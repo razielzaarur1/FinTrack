@@ -28,7 +28,7 @@ import {
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useApp } from '@/lib/app-context';
-import { formatILS, formatDate, cleanSpacedHebrew, getTransactionTitle, isBitTransaction, formatCurrency } from '@/lib/formatters';
+import { formatILS, formatDate, cleanSpacedHebrew, getTransactionTitle, isBitTransaction, formatCurrency, extractInstallmentInfo } from '@/lib/formatters';
 import CategoryBadge from '@/components/common/CategoryBadge';
 import CategoryPicker from '@/components/common/CategoryPicker';
 import { CATEGORIES_DATA } from '@/lib/categories';
@@ -152,6 +152,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
 
   if (!tx || !activeTx) return null;
 
+  const instInfo = extractInstallmentInfo(activeTx);
   const currentAmountNum = parseFloat(activeTx.amount) || 0;
   const parentAmount = Math.abs(currentAmountNum);
   const splitsTotal = splits.reduce((acc, s) => acc + (Math.abs(parseFloat(s.amount)) || 0), 0);
@@ -330,8 +331,22 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
               <div className="text-lg font-bold mt-0.5 truncate max-w-sm text-dark-text light:text-light-text">
                 {userDesc || cleanSpacedHebrew(getTransactionTitle(activeTx))}
               </div>
-              <div className="text-xs text-dark-text-muted light:text-light-text-muted">
-                {formatDate(activeTx.date, lang)} • {formatILS(activeTx.amount, { showSign: true })}
+              <div className="text-xs text-dark-text-muted light:text-light-text-muted flex items-center gap-1.5 flex-wrap">
+                <span>{formatDate(activeTx.date, lang)}</span>
+                <span>•</span>
+                <span className="font-bold text-dark-text light:text-light-text">{formatILS(activeTx.amount, { showSign: true })}</span>
+                {instInfo.isInstallment && (
+                  <>
+                    <span className="px-1.5 py-0.5 rounded bg-brand-primary/15 text-brand-primary text-[10px] font-semibold">
+                      💳 {instInfo.text}
+                    </span>
+                    {instInfo.totalAmount > Math.abs(parseFloat(activeTx.amount) || 0) && (
+                      <span className="text-[10px] text-dark-text-muted light:text-light-text-muted">
+                        (מתוך {formatILS(instInfo.totalAmount)})
+                      </span>
+                    )}
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -648,6 +663,25 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
                   >
                     פצל לארנק/הוצאה
                   </button>
+                </div>
+              )}
+
+              {/* Installment Deal Banner */}
+              {instInfo.isInstallment && (
+                <div className="p-3.5 rounded-2xl border border-brand-primary/30 bg-brand-primary/10 flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2.5">
+                    <CreditCard className="w-4 h-4 text-brand-primary shrink-0" />
+                    <div>
+                      <div className="font-bold text-dark-text light:text-light-text">עסקת תשלומים: {instInfo.text}</div>
+                      <div className="text-[11px] text-dark-text-muted light:text-light-text-muted mt-0.5">
+                        סכום חיוב חודשי: {formatILS(activeTx.amount)}
+                        {instInfo.totalAmount > 0 && ` • סך כולל של העסקה: ${formatILS(instInfo.totalAmount)}`}
+                      </div>
+                    </div>
+                  </div>
+                  <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-brand-primary/20 text-brand-primary font-mono">
+                    {instInfo.number}/{instInfo.total}
+                  </span>
                 </div>
               )}
 
@@ -1170,9 +1204,10 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
               { label: 'סיווג ראשוני מהסקריפר (Scraper Category)', value: rawObj.category || 'לא סווג ע״י המקור' },
               { 
                 label: 'תשלומי קרדיט/תשלומים (Installments)', 
-                value: rawObj.installments 
-                  ? `תשלום ${rawObj.installments.number || 1} מתוך ${rawObj.installments.total || 1}` 
-                  : (activeTx.installments ? JSON.stringify(activeTx.installments) : 'תשלום רגיל (תשלום יחיד)') 
+                value: instInfo.isInstallment 
+                  ? `${instInfo.text}${instInfo.totalAmount > 0 ? ` (סך כולל: ${formatILS(instInfo.totalAmount)})` : ''}` 
+                  : 'תשלום רגיל (תשלום יחיד)',
+                badge: instInfo.isInstallment ? 'bg-brand-primary/20 text-brand-primary font-bold' : null
               },
               { label: 'חשבון / כרטיס מקור', value: `${activeTx.accountDisplayName || activeTx.bankCompany || ''} (${activeTx.accountNumber || 'ראשי'})` },
               ...(fxDetails ? [

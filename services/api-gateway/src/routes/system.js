@@ -223,6 +223,10 @@ export default async function systemRoutes(fastify, options) {
       const val = parseFloat(settings.scrapeIntervalBanksHours);
       settings.scrapeIntervalBanksHours = Math.max(3, isNaN(val) ? 8 : val);
     }
+    if (settings.notifyMaxAgeDays !== undefined) {
+      const val = parseInt(settings.notifyMaxAgeDays, 10);
+      settings.notifyMaxAgeDays = Math.max(1, isNaN(val) ? 7 : val);
+    }
 
     try {
       const result = await pool.query(
