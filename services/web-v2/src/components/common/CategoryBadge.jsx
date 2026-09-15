@@ -15,6 +15,7 @@ import {
   Percent, TrendingDown, Tag, HelpCircle, Banknote
 } from 'lucide-react';
 import { getCategoryDetails } from '@/lib/categories';
+import { normalizeCategorySvg } from '@/lib/svg-normalizer';
 
 const ICON_MAP = {
   Wallet, Landmark, Home, Briefcase, TrendingUp, MoreHorizontal,
@@ -68,8 +69,8 @@ export default function CategoryBadge({
       >
         {activeSvg ? (
           <div
-            className={`flex items-center justify-center shrink-0 ${svgSizeClass} [&>svg]:stroke-current`}
-            dangerouslySetInnerHTML={{ __html: activeSvg }}
+            className={`flex items-center justify-center shrink-0 ${svgSizeClass} [&>svg]:w-full [&>svg]:h-full [&>svg]:stroke-current [&>svg_*]:stroke-current`}
+            dangerouslySetInnerHTML={{ __html: normalizeCategorySvg(activeSvg) }}
           />
         ) : (
           <IconComponent size={size} strokeWidth={2} />

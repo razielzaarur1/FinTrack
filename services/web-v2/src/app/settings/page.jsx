@@ -23,6 +23,7 @@ import { useApp } from '@/lib/app-context';
 import CategoryBadge from '@/components/common/CategoryBadge';
 import { CATEGORIES_DATA } from '@/lib/categories';
 import { generateDesignSystemPrompt } from '@/lib/designSystemPrompt';
+import { normalizeCategorySvg } from '@/lib/svg-normalizer';
 
 export default function SettingsPage() {
   const { lang, t, theme, toggleTheme, toggleLanguage } = useApp();
@@ -227,7 +228,8 @@ export default function SettingsPage() {
     reader.onload = (event) => {
       const text = event.target?.result;
       if (typeof text === 'string') {
-        setFormSvg(text.trim());
+        const normalized = normalizeCategorySvg(text.trim());
+        setFormSvg(normalized);
       }
     };
     reader.readAsText(file);
@@ -240,6 +242,7 @@ export default function SettingsPage() {
     setSubmittingCat(true);
 
     try {
+      const normalizedSvg = formSvg.trim() ? normalizeCategorySvg(formSvg.trim()) : undefined;
       const payload = {
         name: formName.trim(),
         nameEn: formNameEn.trim() || undefined,
@@ -247,7 +250,7 @@ export default function SettingsPage() {
         color: formColor,
         icon: formIcon,
         parentId: modalParentId || undefined,
-        customSvg: formSvg.trim() || undefined,
+        customSvg: normalizedSvg,
       };
 
       if (editingCat && editingCat.id && !editingCat.id.startsWith('exp_') && !editingCat.id.startsWith('inc_')) {
@@ -886,6 +889,9 @@ export default function SettingsPage() {
                   rows={3}
                   value={formSvg}
                   onChange={(e) => setFormSvg(e.target.value)}
+                  onBlur={() => {
+                    if (formSvg.trim()) setFormSvg(normalizeCategorySvg(formSvg.trim()));
+                  }}
                   placeholder="<svg viewBox='0 0 24 24' stroke='currentColor' fill='none' stroke-width='2'>...</svg>"
                   className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text font-mono text-[11px] focus:border-brand-primary focus:outline-none"
                   dir="ltr"
@@ -896,8 +902,9 @@ export default function SettingsPage() {
                   <div className="flex items-center gap-3 pt-1">
                     <span className="text-[11px] text-dark-text-muted light:text-light-text-muted">תצוגה מקדימה:</span>
                     <div
-                      className="w-10 h-10 rounded-xl bg-brand-primary/10 text-brand-primary flex items-center justify-center p-2 border border-brand-primary/30 [&>svg]:w-full [&>svg]:h-full [&>svg]:stroke-current"
-                      dangerouslySetInnerHTML={{ __html: formSvg }}
+                      className="w-10 h-10 rounded-xl flex items-center justify-center p-2 border border-black/5 dark:border-white/10 [&>svg]:w-full [&>svg]:h-full [&>svg]:stroke-current [&>svg_*]:stroke-current transition-colors"
+                      style={{ color: formColor, backgroundColor: `${formColor}20` }}
+                      dangerouslySetInnerHTML={{ __html: normalizeCategorySvg(formSvg) }}
                     />
                   </div>
                 )}

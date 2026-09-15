@@ -21,7 +21,8 @@ import {
   Hash,
   Search,
   Unlink,
-  CheckCircle2
+  CheckCircle2,
+  RefreshCw
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { formatILS, formatDate, cleanSpacedHebrew } from '@/lib/formatters';
@@ -32,11 +33,8 @@ import { CATEGORIES_DATA } from '@/lib/categories';
 
 export default function TransactionDrawer({ tx, onClose, onUpdate }) {
   const { lang, t } = useApp();
-  const [activeTab, setActiveTab] = useState('details'); // details, splits, links, notes, scraper
-  const [merchantName, setMerchantName] = useState(tx?.merchantName || '');
-  const [description, setDescription] = useState(tx?.description || '');
-  const [amount, setAmount] = useState(tx?.amount ?? '');
-  const [txDate, setTxDate] = useState(tx?.date ? String(tx.date).slice(0, 10) : '');
+  const [activeTx, setActiveTx] = useState(tx);
+  const [activeTab, setActiveTab] = useState('details'); // details, similar, splits, links, notes, scraper
   const [category, setCategory] = useState(tx?.category || '');
   const [userDesc, setUserDesc] = useState(tx?.userDescription || '');
   const [isIgnored, setIsIgnored] = useState(tx?.isIgnored || false);
@@ -56,6 +54,11 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
     };
   }, []);
 
+  // Synchronize activeTx with prop
+  useEffect(() => {
+    if (tx) setActiveTx(tx);
+  }, [tx]);
+
   // Categories list
   const [categories, setCategories] = useState([]);
 
@@ -70,26 +73,19 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
 
   // Links state
   const [links, setLinks] = useState([]);
-  const [candidateSearch, setCandidateSearch] = useState('');
-  const [candidateTxs, setCandidateTxs] = useState([]);
-  const [loadingCandidates, setLoadingCandidates] = useState(false);
   const [linkType, setLinkType] = useState('refund'); // 'refund' | 'related' | 'correction'
 
   useEffect(() => {
-    if (!tx) return;
+    if (!activeTx) return;
 
-    setMerchantName(tx.merchantName || '');
-    setDescription(tx.description || '');
-    setAmount(tx.amount ?? '');
-    setTxDate(tx.date ? String(tx.date).slice(0, 10) : '');
-    setCategory(tx.category || '');
-    setUserDesc(tx.userDescription || '');
-    setIsIgnored(tx.isIgnored || false);
+    setCategory(activeTx.category || '');
+    setUserDesc(activeTx.userDescription || '');
+    setIsIgnored(activeTx.isIgnored || false);
     setApplyToSimilar(false);
 
-    // Fetch similar transactions sharing merchant name or description
+    // Fetch similar transactions sharing merchant name
     setLoadingSimilar(true);
-    api.getSimilarTransactions(tx.id)
+    api.getSimilarTransactions(activeTx.id)
       .then((res) => {
         if (res.data) setSimilarTxs(res.data.data || []);
       })
@@ -102,63 +98,43 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
     });
 
     // Fetch splits
-    api.getSplits(tx.id).then((res) => {
+    api.getSplits(activeTx.id).then((res) => {
       if (res.data) setSplits(res.data.data || []);
     });
 
     // Fetch notes
-    api.getNotes(tx.id).then((res) => {
+    api.getNotes(activeTx.id).then((res) => {
       if (res.data) setNotes(res.data.data || []);
     });
 
     // Fetch links
-    api.getLinks(tx.id).then((res) => {
+    api.getLinks(activeTx.id).then((res) => {
       if (res.data) setLinks(res.data.data || []);
     });
-  }, [tx]);
+  }, [activeTx]);
 
-  // Fetch candidate transactions for linking
-  useEffect(() => {
-    if (activeTab !== 'links' || !tx) return;
-    setLoadingCandidates(true);
-    const timeoutId = setTimeout(() => {
-      api.getTransactionsV2({
-        search: candidateSearch.trim() || undefined,
-        limit: 25,
-      }).then((res) => {
-        if (res.data) {
-          const linkedIds = new Set(links.map((l) => l.id));
-          const list = (res.data.data || []).filter((t) => t.id !== tx.id && !linkedIds.has(t.id));
-          setCandidateTxs(list);
-        }
-      }).finally(() => {
-        setLoadingCandidates(false);
-      });
-    }, candidateSearch ? 300 : 0);
+  if (!tx || !activeTx) return null;
 
-    return () => clearTimeout(timeoutId);
-  }, [activeTab, candidateSearch, links, tx]);
-
-  if (!tx) return null;
-
-  const parentAmount = Math.abs(parseFloat(tx.amount));
+  const currentAmountNum = parseFloat(activeTx.amount) || 0;
+  const parentAmount = Math.abs(currentAmountNum);
   const splitsTotal = splits.reduce((acc, s) => acc + (parseFloat(s.amount) || 0), 0);
   const splitsBalanced = Math.abs(parentAmount - splitsTotal) <= 0.01;
   const remainingAmount = Number((parentAmount - splitsTotal).toFixed(2));
 
   const isAtmWithdrawal = Boolean(
-    tx.isCashWithdrawal ||
-    (tx.merchantName && tx.merchantName.includes('משיכת מזומן')) ||
-    (tx.description && tx.description.includes('משיכת מזומן')) ||
-    (tx.merchantName && tx.merchantName.includes('כספומט'))
+    activeTx.isCashWithdrawal ||
+    activeTx?.raw_data?.isAtm ||
+    (activeTx.merchantName && activeTx.merchantName.includes('משיכת מזומן')) ||
+    (activeTx.description && activeTx.description.includes('משיכת מזומן')) ||
+    (activeTx.merchantName && activeTx.merchantName.includes('כספומט')) ||
+    (activeTx.description && activeTx.description.includes('כספומט'))
   );
 
   const handleSetupAtmSplit = () => {
     setActiveTab('splits');
-    const total = Math.abs(parseFloat(tx.amount) || 0);
     if (splits.length === 0) {
       setSplits([
-        { amount: total, category: tx.category && tx.category !== 'ללא סיווג' ? tx.category : '', description: '' },
+        { amount: parentAmount, category: activeTx.category && activeTx.category !== 'ללא סיווג' ? activeTx.category : '', description: '' },
       ]);
     }
   };
@@ -166,30 +142,21 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
   const handleSaveDetails = async () => {
     setSavingTx(true);
     try {
-      const parsedAmount = parseFloat(amount);
-      const res = await api.updateTransaction(tx.id, {
-        merchantName: merchantName.trim() || undefined,
-        description: description.trim() || undefined,
-        amount: !isNaN(parsedAmount) ? parsedAmount : undefined,
-        date: txDate || undefined,
+      const res = await api.updateTransaction(activeTx.id, {
         category,
-        userDescription: userDesc,
+        userDescription: userDesc.trim(),
         isIgnored,
         applyToSimilar,
       });
       if (res.data) {
         onUpdate?.({
-          ...tx,
-          merchantName: merchantName.trim() || tx.merchantName,
-          description: description.trim() || tx.description,
-          amount: !isNaN(parsedAmount) ? parsedAmount : tx.amount,
-          date: txDate || tx.date,
+          ...activeTx,
           category,
-          userDescription: userDesc,
+          userDescription: userDesc.trim(),
           isIgnored,
         });
         if (typeof window !== 'undefined') {
-          window.dispatchEvent(new Event('fintrack_tx_updated'));
+          window.dispatchEvent(new CustomEvent('fintrack_tx_updated'));
         }
         onClose?.(); // Automatically close drawer on save
       }
@@ -201,7 +168,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
   const handleAddSplitRow = () => {
     setSplits([
       ...splits,
-      { amount: 0, category: tx.category || 'אחר', description: '' },
+      { amount: 0, category: activeTx.category || 'אחר', description: '' },
     ]);
   };
 
@@ -227,13 +194,13 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
     setSplitError('');
     setSavingSplits(true);
     try {
-      const res = await api.saveSplits(tx.id, splits);
+      const res = await api.saveSplits(activeTx.id, splits);
       if (res.error) {
         setSplitError(res.error);
       } else {
-        onUpdate?.({ ...tx, isSplit: true });
+        onUpdate?.({ ...activeTx, isSplit: true });
         if (typeof window !== 'undefined') {
-          window.dispatchEvent(new Event('fintrack_tx_updated'));
+          window.dispatchEvent(new CustomEvent('fintrack_tx_updated'));
         }
         onClose?.(); // Automatically close drawer on save
       }
@@ -245,7 +212,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
   const handleAddNote = async (e) => {
     e.preventDefault();
     if (!newNote.trim()) return;
-    const res = await api.addNote(tx.id, newNote.trim());
+    const res = await api.addNote(activeTx.id, newNote.trim());
     if (res.data) {
       setNotes([res.data.data, ...notes]);
       setNewNote('');
@@ -259,15 +226,15 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
 
   const handleLinkDirect = async (targetTxId) => {
     try {
-      const res = await api.linkTransaction(tx.id, {
+      const res = await api.linkTransaction(activeTx.id, {
         targetTransactionId: targetTxId,
         linkType,
       });
       if (res.data) {
-        const updated = await api.getLinks(tx.id);
+        const updated = await api.getLinks(activeTx.id);
         if (updated.data) setLinks(updated.data.data || []);
         if (typeof window !== 'undefined') {
-          window.dispatchEvent(new Event('fintrack_tx_updated'));
+          window.dispatchEvent(new CustomEvent('fintrack_tx_updated'));
         }
       }
     } catch (err) {
@@ -280,7 +247,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
       await api.deleteLink(linkId);
       setLinks((prev) => prev.filter((l) => l.linkId !== linkId));
       if (typeof window !== 'undefined') {
-        window.dispatchEvent(new Event('fintrack_tx_updated'));
+        window.dispatchEvent(new CustomEvent('fintrack_tx_updated'));
       }
     } catch (err) {
       console.error('Failed to unlink transaction:', err);
@@ -293,23 +260,23 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
         {/* Header */}
         <div className="p-5 border-b border-dark-border light:border-light-border flex items-center justify-between">
           <div className="flex items-center gap-3 min-w-0">
-            <CategoryBadge category={category || tx.category} size={22} />
+            <CategoryBadge category={category || activeTx.category} size={22} />
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <span className="text-xs font-semibold px-2 py-0.5 rounded bg-brand-primary/15 text-brand-primary">
-                  {tx.accountDisplayName || tx.bankCompany?.toUpperCase()}
+                  {activeTx.accountDisplayName || activeTx.bankCompany?.toUpperCase()}
                 </span>
-                {tx.status === 'pending' && (
+                {activeTx.status === 'pending' && (
                   <span className="text-[11px] px-2 py-0.5 rounded bg-amber-500/15 text-amber-400 font-medium">
                     ממתין
                   </span>
                 )}
               </div>
               <div className="text-lg font-bold mt-0.5 truncate max-w-sm text-dark-text light:text-light-text">
-                {userDesc || cleanSpacedHebrew(tx.merchantName || tx.description)}
+                {userDesc || cleanSpacedHebrew(activeTx.merchantName || activeTx.description)}
               </div>
               <div className="text-xs text-dark-text-muted light:text-light-text-muted">
-                {formatDate(tx.date, lang)} • {formatILS(tx.amount, { showSign: true })}
+                {formatDate(activeTx.date, lang)} • {formatILS(activeTx.amount, { showSign: true })}
               </div>
             </div>
           </div>
@@ -336,6 +303,18 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
           </button>
 
           <button
+            onClick={() => setActiveTab('similar')}
+            className={`py-3 px-2.5 sm:px-3 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
+              activeTab === 'similar'
+                ? 'border-brand-primary text-brand-primary font-semibold'
+                : 'border-transparent text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5" />
+            <span>תנועות דומות ({similarTxs.length})</span>
+          </button>
+
+          <button
             onClick={() => setActiveTab('splits')}
             className={`py-3 px-2.5 sm:px-3 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
               activeTab === 'splits'
@@ -348,18 +327,6 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
           </button>
 
           <button
-            onClick={() => setActiveTab('links')}
-            className={`py-3 px-2.5 sm:px-3 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
-              activeTab === 'links'
-                ? 'border-brand-primary text-brand-primary font-semibold'
-                : 'border-transparent text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
-            }`}
-          >
-            <Link2 className="w-3.5 h-3.5" />
-            <span>{t('linkTransaction')} ({links.length})</span>
-          </button>
-
-          <button
             onClick={() => setActiveTab('notes')}
             className={`py-3 px-2.5 sm:px-3 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
               activeTab === 'notes'
@@ -369,6 +336,18 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
           >
             <span>💬</span>
             <span>{t('notes')} ({notes.length})</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('links')}
+            className={`py-3 px-2.5 sm:px-3 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
+              activeTab === 'links'
+                ? 'border-brand-primary text-brand-primary font-semibold'
+                : 'border-transparent text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
+            }`}
+          >
+            <Link2 className="w-3.5 h-3.5" />
+            <span>{t('linkTransaction')} ({links.length})</span>
           </button>
 
           <button
@@ -389,82 +368,72 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
           {/* 1. Details Tab */}
           {activeTab === 'details' && (
             <div className="space-y-4">
-              {/* Merchant Name Input */}
+              {/* Custom Name / Nickname (Editable at top) */}
               <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">
-                  שם בית העסק
-                </label>
-                <input
-                  type="text"
-                  value={merchantName}
-                  onChange={(e) => setMerchantName(e.target.value)}
-                  placeholder="שם בית העסק..."
-                  className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text font-semibold text-sm focus:outline-none focus:border-brand-primary"
-                />
-              </div>
-
-              {/* Amount & Date Grid */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">
-                    סכום העסקה (₪)
-                  </label>
-                  <input
-                    type="number"
-                    step="any"
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-sm font-mono focus:outline-none focus:border-brand-primary"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">
-                    תאריך עסקה
-                  </label>
-                  <input
-                    type="date"
-                    value={txDate}
-                    onChange={(e) => setTxDate(e.target.value)}
-                    className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-sm focus:outline-none focus:border-brand-primary"
-                  />
-                </div>
-              </div>
-
-              {/* Transaction Description / Memo */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">
-                  פירוט מקורי (מהבנק / חברת האשראי)
-                </label>
-                <input
-                  type="text"
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  placeholder="פירוט מקורי מהבנק..."
-                  className="w-full p-2.5 rounded-xl border border-dark-border/60 light:border-light-border/60 bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs opacity-90 font-mono focus:outline-none focus:border-brand-primary"
-                />
-              </div>
-
-              {/* User Description */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">
-                  כינוי מותאם אישית (יוצג ככותרת)
+                <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted flex items-center justify-between">
+                  <span>כינוי מותאם אישית (יוצג ככותרת)</span>
+                  <span className="text-[10px] text-dark-text-muted">ניתן לעריכה</span>
                 </label>
                 <input
                   type="text"
                   value={userDesc}
                   onChange={(e) => setUserDesc(e.target.value)}
-                  placeholder={cleanSpacedHebrew(merchantName || description)}
-                  className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-sm focus:outline-none focus:border-brand-primary"
+                  placeholder={cleanSpacedHebrew(activeTx.merchantName || activeTx.description || 'ללא שם')}
+                  className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-sm font-semibold focus:outline-none focus:border-brand-primary"
                 />
               </div>
 
-              {tx.status === 'pending' && (
+              {/* Read-Only Bank Merchant Name */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted flex items-center justify-between">
+                  <span>שם בית העסק (מקור הבנק / כרטיס)</span>
+                  <span className="text-[10px] text-dark-text-muted">לקריאה בלבד</span>
+                </label>
+                <div className="w-full p-2.5 rounded-xl border border-dark-border/60 light:border-light-border/60 bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40 text-dark-text light:text-light-text font-medium text-sm flex items-center justify-between">
+                  <span className="truncate">{cleanSpacedHebrew(activeTx.merchantName || 'לא צוין בית עסק')}</span>
+                  {activeTx.merchantName && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('similar')}
+                      className="text-[11px] text-brand-primary hover:underline shrink-0 mr-2 cursor-pointer font-semibold"
+                    >
+                      הצג דומות ({similarTxs.length})
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Read-Only Financial Metadata Chips */}
+              <div className="grid grid-cols-3 gap-2.5">
+                <div className="p-2.5 rounded-xl border border-dark-border/60 light:border-light-border/60 bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40 space-y-1">
+                  <div className="text-[10px] font-medium text-dark-text-muted light:text-light-text-muted">סכום חיוב</div>
+                  <div className={`text-sm font-bold font-mono ${currentAmountNum < 0 ? 'text-brand-expense' : 'text-brand-income'}`}>
+                    {formatILS(activeTx.amount, { showSign: true })}
+                  </div>
+                </div>
+
+                <div className="p-2.5 rounded-xl border border-dark-border/60 light:border-light-border/60 bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40 space-y-1">
+                  <div className="text-[10px] font-medium text-dark-text-muted light:text-light-text-muted">תאריך עסקה</div>
+                  <div className="text-xs font-semibold text-dark-text light:text-light-text font-mono mt-0.5">
+                    {formatDate(activeTx.date, lang)}
+                  </div>
+                </div>
+
+                <div className="p-2.5 rounded-xl border border-dark-border/60 light:border-light-border/60 bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40 space-y-1">
+                  <div className="text-[10px] font-medium text-dark-text-muted light:text-light-text-muted">חשבון / כרטיס</div>
+                  <div className="text-xs font-semibold text-dark-text light:text-light-text truncate mt-0.5" title={activeTx.accountDisplayName || activeTx.bankCompany}>
+                    {activeTx.accountDisplayName || activeTx.bankCompany?.toUpperCase() || 'ראשי'}
+                  </div>
+                </div>
+              </div>
+
+              {activeTx.status === 'pending' && (
                 <div className="p-3 rounded-xl border border-amber-500/30 bg-amber-500/10 flex items-start gap-2.5 text-xs text-amber-300">
                   <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                   <div>
                     <div className="font-bold text-amber-400">עסקה זמנית (Pending)</div>
                     <div className="text-[11px] text-dark-text-muted light:text-light-text-muted mt-0.5">
-                      הסכום המוצג ({formatILS(tx.amount)}) מבוסס על סכום העסקה המקורי עד למועד החיוב הסופי.
+                      הסכום המוצג ({formatILS(activeTx.amount)}) מבוסס על סכום העסקה המקורי עד למועד החיוב הסופי.
                     </div>
                   </div>
                 </div>
@@ -505,92 +474,212 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
                 />
               </div>
 
-              {/* Ignore Checkbox */}
-              <div className="flex items-center gap-2 pt-1">
-                <input
-                  type="checkbox"
-                  id="ignore-tx"
-                  checked={isIgnored}
-                  onChange={(e) => setIsIgnored(e.target.checked)}
-                  className="w-4 h-4 rounded text-brand-primary focus:ring-brand-primary cursor-pointer"
-                />
-                <label htmlFor="ignore-tx" className="text-xs font-medium cursor-pointer text-dark-text light:text-light-text">
-                  {lang === 'he' ? 'התעלם מתנועה זו בחישובי דשבורד ותקציבים' : 'Ignore this transaction in dashboard calculations'}
-                </label>
-              </div>
-
-              {/* Apply to All Similar Transactions & Preview */}
-              <div className="space-y-2">
+              {/* Checkboxes: Uniform Clean Cards (Ignore & ApplyToSimilar) */}
+              <div className="space-y-2 pt-1">
+                {/* 1. Ignore Toggle */}
                 <div 
-                  onClick={() => setApplyToSimilar(!applyToSimilar)}
-                  className={`p-3.5 rounded-2xl border transition-all cursor-pointer select-none space-y-1 ${
-                    applyToSimilar 
-                      ? 'border-brand-primary bg-brand-primary/15 shadow-sm ring-1 ring-brand-primary/30' 
-                      : 'border-brand-primary/30 bg-brand-primary/5 hover:bg-brand-primary/10'
+                  onClick={() => setIsIgnored(!isIgnored)}
+                  className={`p-3 rounded-xl border transition-all cursor-pointer select-none flex items-start gap-3 ${
+                    isIgnored
+                      ? 'border-brand-primary/60 bg-brand-primary/10'
+                      : 'border-dark-border/70 light:border-light-border/70 bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40 hover:bg-dark-surface-elevated'
                   }`}
                 >
-                  <div className="flex items-center gap-2.5">
-                    <input
-                      type="checkbox"
-                      checked={applyToSimilar}
-                      onChange={(e) => setApplyToSimilar(e.target.checked)}
-                      onClick={(e) => e.stopPropagation()}
-                      className="w-4 h-4 rounded text-brand-primary focus:ring-brand-primary cursor-pointer shrink-0"
-                    />
-                    <div className="text-xs font-bold text-dark-text light:text-light-text flex items-center gap-1.5 flex-1">
-                      <span>⚡</span>
-                      <span>החל את השינויים על כל התנועות הדומות</span>
-                      {applyToSimilar && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-brand-primary text-white font-bold mr-auto">
-                          פעיל
+                  <input
+                    type="checkbox"
+                    checked={isIgnored}
+                    onChange={(e) => setIsIgnored(e.target.checked)}
+                    onClick={(e) => e.stopPropagation()}
+                    className="w-4 h-4 mt-0.5 rounded text-brand-primary focus:ring-brand-primary cursor-pointer shrink-0"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-bold text-dark-text light:text-light-text">
+                      התעלם מתנועה זו בחישובי דשבורד ותקציבים
+                    </div>
+                    <div className="text-[11px] text-dark-text-muted light:text-light-text-muted mt-0.5">
+                      התנועה תישמר בהיסטוריה אך לא תיכלל בסך ההוצאות והחישובים החודשיים.
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. Apply to Similar Toggle - Exactly same styling, no flashy lightning/yellow */}
+                <div 
+                  onClick={() => setApplyToSimilar(!applyToSimilar)}
+                  className={`p-3 rounded-xl border transition-all cursor-pointer select-none flex items-start gap-3 ${
+                    applyToSimilar
+                      ? 'border-brand-primary/60 bg-brand-primary/10'
+                      : 'border-dark-border/70 light:border-light-border/70 bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40 hover:bg-dark-surface-elevated'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={applyToSimilar}
+                    onChange={(e) => setApplyToSimilar(e.target.checked)}
+                    onClick={(e) => e.stopPropagation()}
+                    className="w-4 h-4 mt-0.5 rounded text-brand-primary focus:ring-brand-primary cursor-pointer shrink-0"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-bold text-dark-text light:text-light-text flex items-center justify-between">
+                      <span>החל על כל התנועות הדומות</span>
+                      {similarTxs.length > 0 && (
+                        <span className="text-[10px] px-1.5 py-0.2 rounded bg-dark-surface light:bg-light-surface border border-dark-border/40 text-dark-text-muted">
+                          {similarTxs.length} תנועות נוספות
                         </span>
                       )}
                     </div>
+                    <div className="text-[11px] text-dark-text-muted light:text-light-text-muted mt-0.5">
+                      {applyToSimilar
+                        ? `הסיווג וההגדרות יוחלו על כל ${similarTxs.length + 1} התנועות של אותו בית עסק ויילמדו להבא.`
+                        : 'השינויים יישמרו רק על תנועה ספציפית זו.'}
+                    </div>
                   </div>
-                  <p className="text-[11px] text-dark-text-muted light:text-light-text-muted mr-6 leading-relaxed">
-                    {applyToSimilar
-                      ? `השינויים יוחלו על כל ${similarTxs.length + 1} התנועות הדומות ויילמדו לתנועות הבאות.`
-                      : 'כאשר אינו פעיל, השינויים יישמרו רק על תנועה ספציפית זו בלבד ללא שינוי תנועות אחרות.'}
-                  </p>
                 </div>
-
-                {/* Similar transactions list preview */}
-                {similarTxs.length > 0 && (
-                  <div className="p-3 rounded-xl border border-dark-border/60 light:border-light-border/60 bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40 space-y-2 text-xs">
-                    <div className="flex items-center justify-between text-dark-text-muted font-medium">
-                      <span>תנועות דומות במערכת ({similarTxs.length})</span>
-                      <span className="text-[10px]">
-                        {applyToSimilar ? 'יעודכנו יחד' : 'לא יושפעו'}
-                      </span>
-                    </div>
-                    <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
-                      {similarTxs.slice(0, 8).map((stx) => (
-                        <div key={stx.id} className="flex items-center justify-between text-[11px] p-1.5 rounded-lg bg-dark-surface/50 border border-dark-border/30">
-                          <div className="flex items-center gap-2 truncate">
-                            <span className="text-dark-text-muted font-mono">{formatDate(stx.date, lang)}</span>
-                            <span className="truncate">{cleanSpacedHebrew(stx.userDescription || stx.merchantName || stx.description)}</span>
-                          </div>
-                          <div className="flex items-center gap-2 shrink-0">
-                            <span className="text-[10px] text-dark-text-muted">{stx.category || 'ללא סיווג'}</span>
-                            <span className={`font-medium ${parseFloat(stx.amount) < 0 ? 'text-brand-expense' : 'text-brand-income'}`}>
-                              {formatILS(stx.amount)}
-                            </span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
 
+              {/* Sub-records Quick Access Indicators */}
+              {(splits.length > 0 || notes.length > 0 || links.length > 0 || similarTxs.length > 0) && (
+                <div className="pt-2 border-t border-dark-border/40 light:border-light-border/40 space-y-1.5">
+                  <div className="text-[11px] font-semibold text-dark-text-muted light:text-light-text-muted">
+                    רשומות מקושרות לתנועה:
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {similarTxs.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('similar')}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-dark-surface-elevated light:bg-light-surface-elevated border border-dark-border/70 light:border-light-border/70 text-dark-text light:text-light-text text-xs hover:border-brand-primary transition-colors cursor-pointer"
+                      >
+                        <Layers className="w-3 h-3 text-brand-primary" />
+                        <span>{similarTxs.length} תנועות דומות</span>
+                      </button>
+                    )}
+                    {splits.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('splits')}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-dark-surface-elevated light:bg-light-surface-elevated border border-dark-border/70 light:border-light-border/70 text-dark-text light:text-light-text text-xs hover:border-brand-primary transition-colors cursor-pointer"
+                      >
+                        <Split className="w-3 h-3 text-brand-primary" />
+                        <span>{splits.length} פיצולים</span>
+                      </button>
+                    )}
+                    {notes.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('notes')}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-dark-surface-elevated light:bg-light-surface-elevated border border-dark-border/70 light:border-light-border/70 text-dark-text light:text-light-text text-xs hover:border-brand-primary transition-colors cursor-pointer"
+                      >
+                        <span>💬</span>
+                        <span>{notes.length} הערות</span>
+                      </button>
+                    )}
+                    {links.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('links')}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-dark-surface-elevated light:bg-light-surface-elevated border border-dark-border/70 light:border-light-border/70 text-dark-text light:text-light-text text-xs hover:border-brand-primary transition-colors cursor-pointer"
+                      >
+                        <Link2 className="w-3 h-3 text-brand-primary" />
+                        <span>{links.length} תנועות מקושרות</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Save Button */}
               <button
                 onClick={handleSaveDetails}
                 disabled={savingTx}
-                className="w-full mt-4 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-brand-primary text-white font-medium text-sm hover:bg-brand-primary-hover transition-all cursor-pointer shadow-md shadow-brand-primary/20"
+                className="w-full mt-4 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-brand-primary text-white font-medium text-sm hover:bg-brand-primary-hover transition-all cursor-pointer shadow-md shadow-brand-primary/20 disabled:opacity-50"
               >
                 <Save className="w-4 h-4" />
                 <span>{savingTx ? (lang === 'he' ? 'שומר...' : 'Saving...') : t('save')}</span>
               </button>
+            </div>
+          )}
+
+          {/* Dedicated Similar Transactions Tab */}
+          {activeTab === 'similar' && (
+            <div className="space-y-4">
+              <div className="p-3.5 rounded-xl border border-dark-border/70 light:border-light-border/70 bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40 text-xs space-y-1">
+                <div className="font-semibold text-dark-text light:text-light-text flex items-center gap-1.5">
+                  <Layers className="w-4 h-4 text-brand-primary" />
+                  <span>תנועות נוספות עבור אותו בית עסק</span>
+                </div>
+                <div className="text-dark-text-muted light:text-light-text-muted">
+                  בית עסק:{' '}
+                  <span className="font-bold text-dark-text light:text-light-text">
+                    {cleanSpacedHebrew(activeTx.merchantName || activeTx.description || 'ללא שם')}
+                  </span>{' '}
+                  ({similarTxs.length} תנועות נוספות במערכת)
+                </div>
+              </div>
+
+              {loadingSimilar ? (
+                <div className="py-16 text-center text-xs text-dark-text-muted flex flex-col items-center justify-center gap-2">
+                  <RefreshCw className="w-5 h-5 animate-spin text-brand-primary" />
+                  <span>טוען תנועות דומות...</span>
+                </div>
+              ) : similarTxs.length === 0 ? (
+                <div className="py-14 text-center text-xs text-dark-text-muted border border-dashed border-dark-border light:border-light-border rounded-xl p-6 bg-dark-surface-elevated/20 light:bg-light-surface-elevated/20">
+                  <Layers className="w-8 h-8 mx-auto text-dark-text-muted/40 mb-2" />
+                  <div className="font-semibold">לא נמצאו תנועות נוספות עבור בית עסק זה</div>
+                  <div className="text-[11px] text-dark-text-muted mt-1">
+                    כל התנועות של אותו בית עסק יוצגו כאן.
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="text-[11px] text-dark-text-muted px-1">
+                    לחץ על תנועה כדי לפתוח אותה ולערוך את פרטיה:
+                  </div>
+                  {similarTxs.map((stx) => {
+                    const stxAmt = parseFloat(stx.amount);
+                    return (
+                      <div
+                        key={stx.id}
+                        onClick={() => {
+                          setActiveTx(stx);
+                          setActiveTab('details');
+                        }}
+                        className="p-3 rounded-xl border border-dark-border/70 light:border-light-border/70 bg-dark-surface-elevated/50 light:bg-light-surface-elevated/50 hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated hover:border-brand-primary/50 transition-all cursor-pointer flex items-center justify-between gap-3 text-xs group"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                          <CategoryBadge category={stx.category} size={18} />
+                          <div className="min-w-0 flex-1">
+                            <div className="font-bold text-dark-text light:text-light-text truncate group-hover:text-brand-primary transition-colors">
+                              {cleanSpacedHebrew(stx.userDescription || stx.merchantName || stx.description || 'ללא תיאור')}
+                            </div>
+                            <div className="text-[11px] text-dark-text-muted light:text-light-text-muted flex items-center gap-2 mt-0.5">
+                              <span className="font-mono">{formatDate(stx.date, lang)}</span>
+                              <span>•</span>
+                              <span className={stxAmt < 0 ? 'text-brand-expense font-bold' : 'text-brand-income font-bold'}>
+                                {formatILS(stx.amount, { showSign: true })}
+                              </span>
+                              {stx.accountDisplayName && (
+                                <>
+                                  <span>•</span>
+                                  <span className="truncate">{stx.accountDisplayName}</span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-dark-surface light:bg-light-surface border border-dark-border/40 text-dark-text-muted">
+                            {stx.category || 'ללא סיווג'}
+                          </span>
+                          <span className="text-dark-text-muted group-hover:text-brand-primary transition-colors text-xs font-bold">
+                            ←
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 
@@ -707,7 +796,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
                 </div>
                 {links.length === 0 ? (
                   <div className="p-4 rounded-xl border border-dashed border-dark-border light:border-light-border text-center text-xs text-dark-text-muted light:text-light-text-muted bg-dark-surface-elevated/30 light:bg-light-surface-elevated/30">
-                    אין תנועות מקושרות כרגע. בחר תנועה מהרשימה מטה כדי לקשר.
+                    אין תנועות מקושרות כרגע לתנועה זו.
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -717,7 +806,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
                           <Link2 className="w-4 h-4 text-brand-primary shrink-0" />
                           <div className="min-w-0">
                             <div className="font-semibold text-dark-text light:text-light-text truncate">
-                              {cleanSpacedHebrew(lnk.description || 'ללא תיאור')}
+                              {cleanSpacedHebrew(lnk.userDescription || lnk.merchantName || lnk.description || 'ללא תיאור')}
                             </div>
                             <div className="text-[11px] text-dark-text-muted light:text-light-text-muted flex items-center gap-2">
                               <span>{formatDate(lnk.date, lang)}</span>
@@ -734,7 +823,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
                           </span>
                           <button
                             onClick={() => handleUnlink(lnk.linkId)}
-                            className="p-1.5 text-rose-400 hover:text-rose-500 hover:bg-rose-500/10 rounded-lg transition-colors"
+                            className="p-1.5 text-rose-400 hover:text-rose-500 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer"
                             title="בטל קישור"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -746,129 +835,58 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
                 )}
               </div>
 
-              {/* Link Type & Search Controls */}
-              <div className="pt-2 space-y-2.5 border-t border-dark-border/40 light:border-light-border/40">
-                <div className="flex items-center justify-between px-1">
+              {/* Clean Link Action Section */}
+              <div className="pt-3 space-y-3 border-t border-dark-border/40 light:border-light-border/40">
+                <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">
-                    קשר תנועה חדשה
+                    סוג הקשר לחיבור
                   </label>
-                  <button
-                    type="button"
-                    onClick={() => setShowFullLinkerModal(true)}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-brand-primary text-white text-[11px] font-bold shadow-xs hover:bg-brand-primary-hover transition-colors cursor-pointer"
-                  >
-                    <Layers className="w-3.5 h-3.5" />
-                    <span>פתח מסך תנועות מלא</span>
-                  </button>
-                </div>
-
-                {/* Link Type Selector */}
-                <div className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-dark-surface-elevated light:bg-light-surface-elevated border border-dark-border light:border-light-border text-xs">
-                  <button
-                    type="button"
-                    onClick={() => setLinkType('refund')}
-                    className={`py-1.5 px-2 rounded-lg font-medium transition-all ${
-                      linkType === 'refund'
-                        ? 'bg-brand-primary text-white shadow-sm'
-                        : 'text-dark-text-muted light:text-light-text-muted hover:text-dark-text'
-                    }`}
-                  >
-                    זיכוי / ביטול
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setLinkType('related')}
-                    className={`py-1.5 px-2 rounded-lg font-medium transition-all ${
-                      linkType === 'related'
-                        ? 'bg-brand-primary text-white shadow-sm'
-                        : 'text-dark-text-muted light:text-light-text-muted hover:text-dark-text'
-                    }`}
-                  >
-                    תנועה קשורה
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setLinkType('correction')}
-                    className={`py-1.5 px-2 rounded-lg font-medium transition-all ${
-                      linkType === 'correction'
-                        ? 'bg-brand-primary text-white shadow-sm'
-                        : 'text-dark-text-muted light:text-light-text-muted hover:text-dark-text'
-                    }`}
-                  >
-                    תיקון / התאמה
-                  </button>
-                </div>
-
-                {/* Search candidate transactions */}
-                <div className="relative">
-                  <Search className="w-4 h-4 absolute right-3 rtl:right-3 ltr:left-3 top-2.5 text-dark-text-muted light:text-light-text-muted pointer-events-none" />
-                  <input
-                    type="text"
-                    placeholder="חפש לפי שם בית עסק, פירוט, או סכום..."
-                    value={candidateSearch}
-                    onChange={(e) => setCandidateSearch(e.target.value)}
-                    className="w-full py-2 pr-9 pl-3 rtl:pr-9 rtl:pl-3 ltr:pl-9 ltr:pr-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs focus:outline-none focus:border-brand-primary"
-                  />
-                </div>
-              </div>
-
-              {/* Candidate Transactions Scrollable List */}
-              <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
-                {loadingCandidates ? (
-                  <div className="text-center py-6 text-xs text-dark-text-muted light:text-light-text-muted">
-                    מחפש תנועות...
+                  {/* Link Type Selector */}
+                  <div className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-dark-surface-elevated light:bg-light-surface-elevated border border-dark-border light:border-light-border text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setLinkType('refund')}
+                      className={`py-1.5 px-2 rounded-lg font-medium transition-all ${
+                        linkType === 'refund'
+                          ? 'bg-brand-primary text-white shadow-sm'
+                          : 'text-dark-text-muted light:text-light-text-muted hover:text-dark-text'
+                      }`}
+                    >
+                      זיכוי / ביטול
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setLinkType('related')}
+                      className={`py-1.5 px-2 rounded-lg font-medium transition-all ${
+                        linkType === 'related'
+                          ? 'bg-brand-primary text-white shadow-sm'
+                          : 'text-dark-text-muted light:text-light-text-muted hover:text-dark-text'
+                      }`}
+                    >
+                      תנועה קשורה
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setLinkType('correction')}
+                      className={`py-1.5 px-2 rounded-lg font-medium transition-all ${
+                        linkType === 'correction'
+                          ? 'bg-brand-primary text-white shadow-sm'
+                          : 'text-dark-text-muted light:text-light-text-muted hover:text-dark-text'
+                      }`}
+                    >
+                      תיקון / התאמה
+                    </button>
                   </div>
-                ) : candidateTxs.length === 0 ? (
-                  <div className="text-center py-6 text-xs text-dark-text-muted light:text-light-text-muted">
-                    לא נמצאו תנועות מתאימות לקישור
-                  </div>
-                ) : (
-                  candidateTxs.map((c) => {
-                    const cAmount = parseFloat(c.amount);
-                    return (
-                      <div
-                        key={c.id}
-                        className="p-2.5 rounded-xl border border-dark-border/70 light:border-light-border/70 bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40 hover:border-brand-primary/50 hover:bg-dark-surface-elevated transition-all flex items-center justify-between gap-3 text-xs"
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-semibold text-dark-text light:text-light-text truncate">
-                              {cleanSpacedHebrew(c.userDescription || c.merchantName || c.description || 'ללא תיאור')}
-                            </span>
-                            {c.accountDisplayName && (
-                              <span className="text-[10px] px-1.5 py-0.2 rounded bg-dark-surface light:bg-light-surface text-dark-text-muted light:text-light-text-muted shrink-0">
-                                {c.accountDisplayName}
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-[11px] text-dark-text-muted light:text-light-text-muted flex items-center gap-2 mt-0.5">
-                            <span>{formatDate(c.date, lang)}</span>
-                            <span>•</span>
-                            <span className={cAmount < 0 ? 'text-brand-expense font-medium' : 'text-brand-income font-medium'}>
-                              {formatILS(c.amount, { showSign: true })}
-                            </span>
-                            {c.category && (
-                              <>
-                                <span>•</span>
-                                <span className="truncate">{c.category}</span>
-                              </>
-                            )}
-                          </div>
-                        </div>
+                </div>
 
-                        <button
-                          type="button"
-                          onClick={() => handleLinkDirect(c.id)}
-                          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-brand-primary/10 hover:bg-brand-primary text-brand-primary hover:text-white font-medium text-[11px] transition-all shrink-0"
-                          title="קשר לתנועה זו"
-                        >
-                          <Link2 className="w-3 h-3" />
-                          <span>קשר</span>
-                        </button>
-                      </div>
-                    );
-                  })
-                )}
+                <button
+                  type="button"
+                  onClick={() => setShowFullLinkerModal(true)}
+                  className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-brand-primary hover:bg-brand-primary-hover text-white font-bold text-xs shadow-md shadow-brand-primary/20 transition-all cursor-pointer"
+                >
+                  <Link2 className="w-4 h-4" />
+                  <span>קשר תנועה (פתח רשימת תנועות מלאה)</span>
+                </button>
               </div>
             </div>
           )}
@@ -916,25 +934,25 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
 
           {/* 5. Scraper Raw Data Tab */}
           {activeTab === 'scraper' && (() => {
-            let parsedRaw = tx.rawData;
+            let parsedRaw = activeTx.rawData;
             if (typeof parsedRaw === 'string') {
               try { parsedRaw = JSON.parse(parsedRaw); } catch (e) { parsedRaw = null; }
             }
             const rawObj = parsedRaw || {};
-            const rawJsonString = JSON.stringify(tx.rawData ? (typeof tx.rawData === 'string' ? JSON.parse(tx.rawData) : tx.rawData) : {
-              id: tx.id,
-              identifier: tx.identifier,
-              date: tx.date,
-              processedDate: tx.processedDate,
-              originalAmount: tx.originalAmount,
-              originalCurrency: tx.originalCurrency,
-              chargedAmount: tx.chargedAmount,
-              description: tx.description,
-              memo: tx.memo,
-              category: tx.category,
-              status: tx.status,
-              type: tx.type,
-              installments: tx.installments
+            const rawJsonString = JSON.stringify(activeTx.rawData ? (typeof activeTx.rawData === 'string' ? JSON.parse(activeTx.rawData) : activeTx.rawData) : {
+              id: activeTx.id,
+              identifier: activeTx.identifier,
+              date: activeTx.date,
+              processedDate: activeTx.processedDate,
+              originalAmount: activeTx.originalAmount,
+              originalCurrency: activeTx.originalCurrency,
+              chargedAmount: activeTx.chargedAmount,
+              description: activeTx.description,
+              memo: activeTx.memo,
+              category: activeTx.category,
+              status: activeTx.status,
+              type: activeTx.type,
+              installments: activeTx.installments
             }, null, 2);
 
             const handleCopyJson = () => {
@@ -944,27 +962,40 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
             };
 
             const scraperFields = [
-              { label: 'מזהה תנועה (Identifier)', value: tx.identifier || rawObj.identifier || tx.id, icon: <Hash className="w-3.5 h-3.5 text-brand-primary" /> },
-              { label: 'סטטוס תנועה (Status)', value: tx.status || rawObj.status || 'completed', badge: tx.status === 'pending' ? 'bg-amber-500/20 text-amber-500' : 'bg-emerald-500/20 text-emerald-500' },
-              { label: 'סוג תנועה (Type)', value: tx.type || rawObj.type || (parseFloat(tx.amount) < 0 ? 'expense' : 'income') },
-              { label: 'סכום מקורי (Original Amount)', value: rawObj.originalAmount != null ? `${rawObj.originalAmount} ${rawObj.originalCurrency || tx.originalCurrency || 'ILS'}` : (tx.originalAmount ? `${tx.originalAmount} ${tx.originalCurrency || 'ILS'}` : 'לא צוין') },
-              { label: 'סכום חיוב (Charged Amount)', value: rawObj.chargedAmount != null ? `${rawObj.chargedAmount} ILS` : (tx.chargedAmount ? `${tx.chargedAmount} ILS` : formatILS(tx.amount)) },
-              { label: 'תאריך עסקה (Tx Date)', value: formatDate(tx.date, lang) },
-              { label: 'תאריך עיבוד/חיוב (Processed Date)', value: tx.processedDate || rawObj.processedDate ? formatDate(tx.processedDate || rawObj.processedDate, lang) : 'לא זמין' },
-              { label: 'תיאור מקורי מלא (Original Description)', value: tx.description || rawObj.description || 'ללא תיאור' },
-              { label: 'הערות ספק (Memo)', value: tx.memo || rawObj.memo || 'אין' },
+              { label: 'מזהה תנועה (Identifier)', value: activeTx.identifier || rawObj.identifier || activeTx.id, icon: <Hash className="w-3.5 h-3.5 text-brand-primary" /> },
+              { label: 'סטטוס תנועה (Status)', value: activeTx.status || rawObj.status || 'completed', badge: activeTx.status === 'pending' ? 'bg-amber-500/20 text-amber-500' : 'bg-emerald-500/20 text-emerald-500' },
+              { label: 'סוג תנועה (Type)', value: activeTx.type || rawObj.type || (parseFloat(activeTx.amount) < 0 ? 'expense' : 'income') },
+              { label: 'סכום מקורי (Original Amount)', value: rawObj.originalAmount != null ? `${rawObj.originalAmount} ${rawObj.originalCurrency || activeTx.originalCurrency || 'ILS'}` : (activeTx.originalAmount ? `${activeTx.originalAmount} ${activeTx.originalCurrency || 'ILS'}` : 'לא צוין') },
+              { label: 'סכום חיוב (Charged Amount)', value: rawObj.chargedAmount != null ? `${rawObj.chargedAmount} ILS` : (activeTx.chargedAmount ? `${activeTx.chargedAmount} ILS` : formatILS(activeTx.amount)) },
+              { label: 'תאריך עסקה (Tx Date)', value: formatDate(activeTx.date, lang) },
+              { label: 'תאריך עיבוד/חיוב (Processed Date)', value: activeTx.processedDate || rawObj.processedDate ? formatDate(activeTx.processedDate || rawObj.processedDate, lang) : 'לא זמין' },
               { label: 'סיווג ראשוני מהסקריפר (Scraper Category)', value: rawObj.category || 'לא סווג ע״י המקור' },
               { 
                 label: 'תשלומי קרדיט/תשלומים (Installments)', 
                 value: rawObj.installments 
                   ? `תשלום ${rawObj.installments.number || 1} מתוך ${rawObj.installments.total || 1}` 
-                  : (tx.installments ? JSON.stringify(tx.installments) : 'תשלום רגיל (תשלום יחיד)') 
+                  : (activeTx.installments ? JSON.stringify(activeTx.installments) : 'תשלום רגיל (תשלום יחיד)') 
               },
-              { label: 'חשבון / כרטיס מקור', value: `${tx.accountDisplayName || tx.bankCompany || ''} (${tx.accountNumber || 'ראשי'})` }
+              { label: 'חשבון / כרטיס מקור', value: `${activeTx.accountDisplayName || activeTx.bankCompany || ''} (${activeTx.accountNumber || 'ראשי'})` }
             ];
 
             return (
               <div className="space-y-4">
+                {/* Prominent Original Description & Memo Card */}
+                <div className="p-3.5 rounded-xl border border-brand-primary/30 bg-brand-primary/5 space-y-2">
+                  <div className="text-[11px] font-bold text-brand-primary">
+                    פירוט מקורי מהבנק / כרטיס אשראי (Original Description):
+                  </div>
+                  <div className="text-sm font-semibold text-dark-text light:text-light-text select-all">
+                    {cleanSpacedHebrew(activeTx.description) || 'ללא תיאור נוסף'}
+                  </div>
+                  {activeTx.memo && (
+                    <div className="text-xs text-dark-text-muted light:text-light-text-muted pt-1.5 border-t border-brand-primary/20">
+                      <span className="font-semibold">הערות ספק (Memo):</span> {cleanSpacedHebrew(activeTx.memo)}
+                    </div>
+                  )}
+                </div>
+
                 <div className="flex items-center justify-between">
                   <div className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted flex items-center gap-1.5">
                     <Database className="w-4 h-4 text-brand-primary" />
@@ -973,7 +1004,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
                   <button
                     type="button"
                     onClick={handleCopyJson}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-xs font-medium hover:border-brand-primary transition-colors text-dark-text light:text-light-text"
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-xs font-medium hover:border-brand-primary transition-colors text-dark-text light:text-light-text cursor-pointer"
                   >
                     {copiedRaw ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5 text-dark-text-muted" />}
                     <span>{copiedRaw ? 'הועתק!' : 'העתק JSON'}</span>
@@ -1017,7 +1048,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate }) {
       {/* Full Interactive Transaction Linker Modal */}
       {showFullLinkerModal && (
         <FullTransactionLinkerModal
-          currentTx={tx}
+          currentTx={activeTx}
           linkType={linkType}
           onSelectTx={async (targetId) => {
             await handleLinkDirect(targetId);

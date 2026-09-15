@@ -417,10 +417,10 @@ export default async function transactionsV2Routes(fastify, options) {
           let whereSql = '';
           if (mName && mName !== 'בית עסק' && mName !== '') {
             similarValues.push(mName);
-            whereSql = `merchant_name = $${similarValues.length}`;
+            whereSql = `TRIM(merchant_name) = TRIM($${similarValues.length})`;
           } else if (desc && desc !== '') {
             similarValues.push(desc);
-            whereSql = `description = $${similarValues.length}`;
+            whereSql = `TRIM(description) = TRIM($${similarValues.length})`;
           }
 
           if (whereSql && similarSetClauses.length > 0) {
@@ -479,7 +479,7 @@ export default async function transactionsV2Routes(fastify, options) {
     }
   });
 
-  // GET /api/v2/transactions/:id/similar - List similar transactions sharing merchant name or description
+  // GET /api/v2/transactions/:id/similar - List similar transactions sharing merchant name
   fastify.get('/:id/similar', async (request, reply) => {
     const { id } = request.params;
     try {
@@ -489,25 +489,33 @@ export default async function transactionsV2Routes(fastify, options) {
       }
       const { merchant_name, description } = origRes.rows[0];
       const m = merchant_name?.trim();
-      const d = description?.trim();
-      const searchPattern = (m && m !== 'בית עסק') ? m : d;
-      if (!searchPattern) {
+      const searchMerchant = (m && m !== 'בית עסק') ? m : null;
+      if (!searchMerchant) {
         return reply.code(200).send({ data: [], total: 0 });
       }
 
       const res = await pool.query(
-        `SELECT t.id, t.date, t.amount, t.category, t.merchant_name, t.description, t.user_description AS "userDescription",
+        `SELECT t.id, t.date, t.amount, t.category, t.merchant_name AS "merchantName", t.description, t.user_description AS "userDescription",
                 b.display_name AS "accountDisplayName", b.bank_company AS "bankCompany"
          FROM transactions t
          JOIN bank_accounts b ON t.account_id = b.id
          WHERE t.id != $1
-           AND (t.merchant_name = $2 OR t.description = $2)
+           AND TRIM(t.merchant_name) = TRIM($2)
          ORDER BY t.date DESC
-         LIMIT 20`,
-        [id, searchPattern]
+         LIMIT 50`,
+        [id, searchMerchant]
       );
-      return reply.code(200).send({ data: res.rows, total: res.rows.length });
+
+      const data = res.rows.map((r) => ({
+        ...r,
+        merchantName: cleanSpacedHebrew(r.merchantName),
+        description: cleanSpacedHebrew(r.description),
+        userDescription: cleanSpacedHebrew(r.userDescription),
+      }));
+
+      return reply.code(200).send({ data, total: data.length });
     } catch (err) {
+      fastify.log.error(err, 'Failed to fetch similar transactions');
       return reply.code(500).send({ error: 'Database error', message: err.message });
     }
   });
@@ -785,27 +793,33 @@ export default async function transactionsV2Routes(fastify, options) {
         t.date,
         t.amount,
         t.currency,
+        t.merchant_name AS "merchantName",
         t.description,
+        t.user_description AS "userDescription",
         t.category,
+        b.display_name AS "accountDisplayName",
         b.bank_company AS "bankCompany"
       FROM transaction_links tl
       JOIN transactions t ON (
-        CASE 
-          WHEN tl.transaction_id_a = $1 THEN tl.transaction_id_b = t.id
-          ELSE tl.transaction_id_a = t.id
-        END
+        (tl.transaction_id_a = $1 AND tl.transaction_id_b = t.id)
+        OR
+        (tl.transaction_id_b = $1 AND tl.transaction_id_a = t.id)
       )
       JOIN bank_accounts b ON t.account_id = b.id
       WHERE tl.transaction_id_a = $1 OR tl.transaction_id_b = $1
+      ORDER BY tl.created_at DESC
     `;
     try {
       const result = await pool.query(query, [id]);
       const data = result.rows.map((l) => ({
         ...l,
+        merchantName: cleanSpacedHebrew(l.merchantName),
         description: cleanSpacedHebrew(l.description),
+        userDescription: cleanSpacedHebrew(l.userDescription),
       }));
       return reply.code(200).send({ data });
     } catch (err) {
+      fastify.log.error(err, 'Failed to fetch transaction links');
       return reply.code(500).send({ error: 'Database error', message: err.message });
     }
   });
@@ -824,16 +838,34 @@ export default async function transactionsV2Routes(fastify, options) {
     }
 
     try {
-      const result = await pool.query(
-        `INSERT INTO transaction_links (transaction_id_a, transaction_id_b, link_type, note)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (transaction_id_a, transaction_id_b) DO UPDATE
-         SET link_type = EXCLUDED.link_type, note = EXCLUDED.note
-         RETURNING id, transaction_id_a AS "transactionIdA", transaction_id_b AS "transactionIdB", link_type AS "linkType", note`,
-        [id, targetTransactionId, linkType, note || null]
+      // Check if a link in either direction already exists
+      const existing = await pool.query(
+        `SELECT id FROM transaction_links
+         WHERE (transaction_id_a = $1 AND transaction_id_b = $2)
+            OR (transaction_id_a = $2 AND transaction_id_b = $1)`,
+        [id, targetTransactionId]
       );
+
+      let result;
+      if (existing.rows.length > 0) {
+        result = await pool.query(
+          `UPDATE transaction_links
+           SET link_type = $1, note = $2
+           WHERE id = $3
+           RETURNING id, transaction_id_a AS "transactionIdA", transaction_id_b AS "transactionIdB", link_type AS "linkType", note`,
+          [linkType, note || null, existing.rows[0].id]
+        );
+      } else {
+        result = await pool.query(
+          `INSERT INTO transaction_links (transaction_id_a, transaction_id_b, link_type, note)
+           VALUES ($1, $2, $3, $4)
+           RETURNING id, transaction_id_a AS "transactionIdA", transaction_id_b AS "transactionIdB", link_type AS "linkType", note`,
+          [id, targetTransactionId, linkType, note || null]
+        );
+      }
       return reply.code(201).send({ success: true, data: result.rows[0] });
     } catch (err) {
+      fastify.log.error(err, 'Failed to link transaction');
       return reply.code(500).send({ error: 'Database error', message: err.message });
     }
   });
