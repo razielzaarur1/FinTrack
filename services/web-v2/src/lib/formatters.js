@@ -23,6 +23,24 @@ export const formatILS = (amount, options = {}) => {
   return num < 0 ? `-₪${formatted}` : `₪${formatted}`;
 };
 
+export const formatCurrency = (amount, currency = 'ILS', options = {}) => {
+  const num = parseFloat(amount) || 0;
+  const curr = (currency || 'ILS').toUpperCase().trim();
+  const decimals = options.decimals ?? 2;
+  const absFormatted = new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  }).format(Math.abs(num));
+
+  const sign = num < 0 ? '-' : (options.showSign && num > 0 ? '+' : '');
+
+  if (curr === 'USD' || curr === '$') return `${sign}$${absFormatted}`;
+  if (curr === 'EUR' || curr === '€') return `${sign}€${absFormatted}`;
+  if (curr === 'GBP' || curr === '£') return `${sign}£${absFormatted}`;
+  if (curr === 'ILS' || curr === 'NIS' || curr === '₪') return `${sign}₪${absFormatted}`;
+  return `${sign}${absFormatted} ${curr}`;
+};
+
 export const formatDate = (dateInput, locale = 'he') => {
   if (!dateInput) return '';
   const d = new Date(dateInput);

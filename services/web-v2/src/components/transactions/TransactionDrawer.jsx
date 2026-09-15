@@ -23,11 +23,12 @@ import {
   Unlink,
   CheckCircle2,
   RefreshCw,
-  Receipt
+  Receipt,
+  Globe
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useApp } from '@/lib/app-context';
-import { formatILS, formatDate, cleanSpacedHebrew, getTransactionTitle, isBitTransaction } from '@/lib/formatters';
+import { formatILS, formatDate, cleanSpacedHebrew, getTransactionTitle, isBitTransaction, formatCurrency } from '@/lib/formatters';
 import CategoryBadge from '@/components/common/CategoryBadge';
 import CategoryPicker from '@/components/common/CategoryPicker';
 import { CATEGORIES_DATA } from '@/lib/categories';
@@ -46,6 +47,8 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
   const [loadingSimilar, setLoadingSimilar] = useState(false);
   const [savingTx, setSavingTx] = useState(false);
   const [copiedRaw, setCopiedRaw] = useState(false);
+  const [fxDetails, setFxDetails] = useState(tx?.fxDetails || null);
+  const [loadingFx, setLoadingFx] = useState(false);
 
   const handleTabsWheel = (e) => {
     if (e.deltaY !== 0) {
@@ -119,6 +122,29 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
     api.getLinks(activeTx.id).then((res) => {
       if (res.data) setLinks(res.data.data || []);
     });
+
+    // Check foreign currency & fetch FX details
+    const isForeignTx = Boolean(
+      activeTx.isForeign ||
+      (activeTx.originalCurrency && activeTx.originalCurrency !== 'ILS') ||
+      (activeTx.rawData?.originalCurrency && activeTx.rawData.originalCurrency !== 'ILS')
+    );
+
+    if (activeTx.fxDetails) {
+      setFxDetails(activeTx.fxDetails);
+    } else if (isForeignTx) {
+      setLoadingFx(true);
+      api.getTxFxDetails(activeTx.id)
+        .then((res) => {
+          if (res.data?.data) {
+            setFxDetails(res.data.data);
+          }
+        })
+        .catch(() => {})
+        .finally(() => setLoadingFx(false));
+    } else {
+      setFxDetails(null);
+    }
   }, [activeTx]);
 
   if (!tx || !activeTx) return null;
@@ -454,6 +480,100 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
                   </div>
                 </div>
               </div>
+
+              {/* Foreign Currency & Conversion Fee Analysis Card */}
+              {loadingFx ? (
+                <div className="p-3.5 rounded-2xl border border-blue-500/20 bg-blue-500/5 flex items-center justify-center gap-2 text-xs text-blue-400">
+                  <RefreshCw className="w-4 h-4 animate-spin text-blue-500" />
+                  <span>טוען נתוני שער יציג ועמלות המרה...</span>
+                </div>
+              ) : fxDetails ? (
+                <div className="p-4 rounded-2xl border border-blue-500/30 bg-blue-500/5 dark:bg-blue-500/10 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 rounded-lg bg-blue-500/15 text-blue-500 dark:text-blue-400">
+                        <Globe className="w-4 h-4" />
+                      </div>
+                      <div className="text-xs font-bold text-dark-text light:text-light-text">
+                        עסקת מט״ח ({fxDetails.foreignCurrency}) ועלויות המרה
+                      </div>
+                    </div>
+                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-blue-500/15 text-blue-500 dark:text-blue-400 font-mono" dir="ltr">
+                      {fxDetails.foreignCurrency} / ILS
+                    </span>
+                  </div>
+
+                  {/* 2-column comparison: Foreign Amount vs ILS Charged */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="p-2.5 rounded-xl border border-dark-border/60 light:border-light-border/60 bg-dark-surface-elevated/50 light:bg-light-surface-elevated/50 space-y-1">
+                      <div className="text-[10px] text-dark-text-muted light:text-light-text-muted">
+                        סכום במטבע מקורי
+                      </div>
+                      <div className="text-sm font-bold font-mono text-dark-text light:text-light-text" dir="ltr">
+                        {formatCurrency(fxDetails.foreignAmount, fxDetails.foreignCurrency)}
+                      </div>
+                    </div>
+
+                    <div className="p-2.5 rounded-xl border border-dark-border/60 light:border-light-border/60 bg-dark-surface-elevated/50 light:bg-light-surface-elevated/50 space-y-1">
+                      <div className="text-[10px] text-dark-text-muted light:text-light-text-muted">
+                        סכום חיוב בפועל בחשבון
+                      </div>
+                      <div className="text-sm font-bold font-mono text-brand-expense" dir="ltr">
+                        {formatILS(fxDetails.ilsAmount)}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Representative Rate Details */}
+                  <div className="text-xs space-y-1.5 pt-1 border-t border-blue-500/20 text-dark-text light:text-light-text">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-dark-text-muted light:text-light-text-muted">
+                        שער יציג לתאריך העסקה ({formatDate(fxDetails.rateDate || activeTx.date, lang)}):
+                      </span>
+                      <span className="font-mono font-semibold" dir="ltr">
+                        1 {fxDetails.foreignCurrency} = ₪{Number(fxDetails.representativeRate).toFixed(4)}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-dark-text-muted light:text-light-text-muted">
+                        עלות לפי שער יציג (ללא עמלות):
+                      </span>
+                      <span className="font-mono font-semibold" dir="ltr">
+                        {formatILS(fxDetails.costAtRepresentativeRate)}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-dark-text-muted light:text-light-text-muted">
+                        שער חיוב אפקטיבי של הכרטיס:
+                      </span>
+                      <span className="font-mono font-semibold text-amber-600 dark:text-amber-400" dir="ltr">
+                        1 {fxDetails.foreignCurrency} = ₪{Number(fxDetails.effectiveRate).toFixed(4)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Breakdown Banner for Conversion Fee */}
+                  <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs space-y-1">
+                    <div className="flex items-center justify-between font-bold">
+                      <span className="text-amber-600 dark:text-amber-400">
+                        {fxDetails.isPositiveFee ? 'עמלת המרה ששולמה:' : 'הפרש מול שער יציג:'}
+                      </span>
+                      <span className="font-mono text-amber-600 dark:text-amber-400 text-sm" dir="ltr">
+                        {formatILS(fxDetails.conversionFeeILS)}
+                        {fxDetails.feePercent > 0 && ` (+${fxDetails.feePercent}%)`}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-dark-text-muted light:text-light-text-muted flex items-center justify-between pt-0.5">
+                      <span>עלות עמלה ליחידת מטבע:</span>
+                      <span className="font-semibold text-dark-text light:text-light-text font-mono" dir="rtl">
+                        {fxDetails.feePerUnitAgorot} אגורות לכל {fxDetails.foreignCurrency} ({formatILS(fxDetails.feePerUnit)})
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
 
               {activeTx.status === 'pending' && (
                 <div className="p-3 rounded-xl border border-amber-500/30 bg-amber-500/10 flex items-start gap-2.5 text-xs text-amber-300">
@@ -974,7 +1094,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
               try { parsedRaw = JSON.parse(parsedRaw); } catch (e) { parsedRaw = null; }
             }
             const rawObj = parsedRaw || {};
-            const rawJsonString = JSON.stringify(activeTx.rawData ? (typeof activeTx.rawData === 'string' ? JSON.parse(activeTx.rawData) : activeTx.rawData) : {
+            const baseData = activeTx.rawData ? (typeof activeTx.rawData === 'string' ? JSON.parse(activeTx.rawData) : activeTx.rawData) : {
               id: activeTx.id,
               identifier: activeTx.identifier,
               date: activeTx.date,
@@ -988,7 +1108,10 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
               status: activeTx.status,
               type: activeTx.type,
               installments: activeTx.installments
-            }, null, 2);
+            };
+
+            const dataWithFx = fxDetails ? { ...baseData, fxDetails } : baseData;
+            const rawJsonString = JSON.stringify(dataWithFx, null, 2);
 
             const handleCopyJson = () => {
               navigator.clipboard.writeText(rawJsonString);
@@ -1011,7 +1134,14 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
                   ? `תשלום ${rawObj.installments.number || 1} מתוך ${rawObj.installments.total || 1}` 
                   : (activeTx.installments ? JSON.stringify(activeTx.installments) : 'תשלום רגיל (תשלום יחיד)') 
               },
-              { label: 'חשבון / כרטיס מקור', value: `${activeTx.accountDisplayName || activeTx.bankCompany || ''} (${activeTx.accountNumber || 'ראשי'})` }
+              { label: 'חשבון / כרטיס מקור', value: `${activeTx.accountDisplayName || activeTx.bankCompany || ''} (${activeTx.accountNumber || 'ראשי'})` },
+              ...(fxDetails ? [
+                { label: 'שער יציג במועד העסקה', value: `1 ${fxDetails.foreignCurrency} = ₪${Number(fxDetails.representativeRate).toFixed(4)} (${formatDate(fxDetails.rateDate || activeTx.date, lang)})`, icon: <Globe className="w-3.5 h-3.5 text-blue-400" /> },
+                { label: 'שער חיוב בפועל', value: `1 ${fxDetails.foreignCurrency} = ₪${Number(fxDetails.effectiveRate).toFixed(4)}`, icon: <CreditCard className="w-3.5 h-3.5 text-amber-400" /> },
+                { label: 'עלות לפי שער יציג', value: formatILS(fxDetails.costAtRepresentativeRate) },
+                { label: 'עמלת המרה ששולמה', value: `${formatILS(fxDetails.conversionFeeILS)} (+${fxDetails.feePercent}%)`, badge: 'bg-amber-500/20 text-amber-400 font-bold' },
+                { label: 'עמלה ליחידת מטבע', value: `${fxDetails.feePerUnitAgorot} אגורות לכל ${fxDetails.foreignCurrency} (${formatILS(fxDetails.feePerUnit)})` },
+              ] : [])
             ];
 
             return (

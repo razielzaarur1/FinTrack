@@ -6,6 +6,7 @@ import { pool } from '../db.js';
 import { saveUserRule } from '../services/classifier.js';
 import { verifyTmaToken, verifyTelegramWebAppData } from '../crypto.js';
 import { analyzeReceiptFile, analyzeReceiptUrl } from '../services/ai-analyzer.js';
+import { calculateFxDetails } from '../services/exchange-rates.js';
 
 const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(process.cwd(), 'uploads');
 if (!fs.existsSync(UPLOADS_DIR)) {
@@ -425,11 +426,22 @@ export default async function transactionsV2Routes(fastify, options) {
         if (bitTitle && (!tx.userDescription || !tx.userDescription.trim())) {
           mName = bitTitle;
         }
+
+        const rawOrigCur = tx.rawData?.originalCurrency;
+        const rawOrigAmt = tx.rawData?.originalAmount;
+        const isForeign = Boolean(
+          (rawOrigCur && rawOrigCur !== 'ILS') || 
+          (tx.currency && tx.currency !== 'ILS')
+        );
+
         return {
           ...tx,
           merchantName: mName,
           description: desc,
           userDescription: cleanSpacedHebrew(tx.userDescription),
+          isForeign,
+          originalAmount: rawOrigAmt != null ? parseFloat(rawOrigAmt) : null,
+          originalCurrency: rawOrigCur || (tx.currency !== 'ILS' ? tx.currency : null),
         };
       });
 
@@ -525,17 +537,42 @@ export default async function transactionsV2Routes(fastify, options) {
       if (bitTitle && (!tx.userDescription || !tx.userDescription.trim())) {
         mName = bitTitle;
       }
+      const fxDetails = await calculateFxDetails(tx);
       return reply.code(200).send({
         data: {
           ...tx,
           merchantName: mName,
           description: desc,
           userDescription: cleanSpacedHebrew(tx.userDescription),
+          fxDetails,
         }
       });
     } catch (err) {
       fastify.log.error(err, 'Error in single transaction query');
       return reply.code(500).send({ error: 'Database error', message: err.message });
+    }
+  });
+
+  // GET /api/v2/transactions/:id/fx - Get historical exchange rate and FX fee breakdown
+  fastify.get('/:id/fx', async (request, reply) => {
+    const { id } = request.params;
+    try {
+      const query = `
+        SELECT t.*, b.display_name AS "accountDisplayName", b.bank_company AS "bankCompany"
+        FROM transactions t
+        JOIN bank_accounts b ON t.account_id = b.id
+        WHERE t.id = $1
+      `;
+      const res = await pool.query(query, [id]);
+      if (res.rows.length === 0) {
+        return reply.code(404).send({ error: 'Transaction not found' });
+      }
+      const tx = res.rows[0];
+      const fxDetails = await calculateFxDetails(tx);
+      return reply.code(200).send({ data: fxDetails });
+    } catch (err) {
+      fastify.log.error(err, 'Failed to fetch FX details');
+      return reply.code(500).send({ error: 'Failed to calculate FX details', message: err.message });
     }
   });
 

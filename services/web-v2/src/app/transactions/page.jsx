@@ -25,7 +25,7 @@ import {
   Receipt
 } from 'lucide-react';
 import { api } from '@/lib/api';
-import { formatILS, formatDate, cleanSpacedHebrew, getTransactionTitle } from '@/lib/formatters';
+import { formatILS, formatDate, cleanSpacedHebrew, getTransactionTitle, formatCurrency } from '@/lib/formatters';
 import { useApp } from '@/lib/app-context';
 import CategoryBadge from '@/components/common/CategoryBadge';
 import CategoryPicker from '@/components/common/CategoryPicker';
@@ -980,13 +980,20 @@ function TransactionsContent() {
                       )
                     )}
 
-                    <div 
-                      className={`text-sm sm:text-base font-bold font-mono tracking-tight ${
-                        isIncome ? 'text-emerald-500 dark:text-emerald-400' : 'text-dark-text light:text-light-text'
-                      }`}
-                      dir="ltr"
-                    >
-                      {formatILS(tx.amount, { showSign: true })}
+                    <div className="flex flex-col items-end">
+                      <div 
+                        className={`text-sm sm:text-base font-bold font-mono tracking-tight ${
+                          isIncome ? 'text-emerald-500 dark:text-emerald-400' : 'text-dark-text light:text-light-text'
+                        }`}
+                        dir="ltr"
+                      >
+                        {formatILS(tx.amount, { showSign: true })}
+                      </div>
+                      {(tx.isForeign || (tx.originalCurrency && tx.originalCurrency !== 'ILS')) && tx.originalAmount && (
+                        <div className="text-[10px] font-mono text-blue-500 dark:text-blue-400 font-medium" dir="ltr">
+                          {formatCurrency(tx.originalAmount, tx.originalCurrency)}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
