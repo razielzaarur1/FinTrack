@@ -265,8 +265,8 @@ export default function AccountsPage() {
     loadAccounts();
   }, []);
 
-  const handleSyncAccount = async (id) => {
-    const acc = accounts.find((a) => a.id === id);
+  const handleSyncAccount = async (id, fallbackAcc = null) => {
+    const acc = fallbackAcc || accounts.find((a) => a.id === id);
     if (!acc) return;
     setSyncingId(id);
     setSyncModal({
@@ -464,7 +464,14 @@ export default function AccountsPage() {
         setStep(3);
         loadAccounts();
         if (res.data?.id && selectedInst?.id !== 'wallet') {
-          handleSyncAccount(res.data.id);
+          const newAccObj = {
+            id: res.data.id,
+            displayName: displayName.trim() || selectedInst.name,
+            bankCompany: selectedInst.id,
+            accountNumber: accountNumber.trim() || '',
+            lastScrapedAt: null,
+          };
+          handleSyncAccount(res.data.id, newAccObj);
         }
       }
     } catch (err) {
@@ -1103,7 +1110,7 @@ export default function AccountsPage() {
             {/* Step 2: Credentials Form */}
             {step === 2 && selectedInst && (
               <form onSubmit={handleSubmitAccount} className="space-y-4">
-                <div className="flex items-center gap-3 p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated">
+                <div className="flex items-center gap-3 p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text">
                   <InstitutionLogo bankCompany={selectedInst.id} size={36} />
                   <div>
                     <div className="font-bold text-sm">{selectedInst.name}</div>
@@ -1370,7 +1377,7 @@ export default function AccountsPage() {
                 ))}
 
                 {selectedInst.description && (
-                  <div className="p-3 rounded-xl bg-dark-surface-elevated/80 border border-dark-border/60 text-[11px] text-dark-text-secondary light:text-light-text-secondary space-y-1">
+                  <div className="p-3 rounded-xl bg-dark-surface-elevated/80 light:bg-light-surface-elevated border border-dark-border/60 light:border-light-border text-[11px] text-dark-text-secondary light:text-light-text-secondary space-y-1">
                     <div className="font-semibold text-dark-text light:text-light-text flex items-center gap-1.5">
                       <ShieldCheck className="w-3.5 h-3.5 text-brand-primary" />
                       <span>{selectedInst.name}</span>

@@ -28,13 +28,14 @@ import {
   Copy,
   RefreshCw,
   Hash,
-  ExternalLink
+  ExternalLink,
+  Globe
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import CategoryBadge from '@/components/common/CategoryBadge';
 import CategoryPicker from '@/components/common/CategoryPicker';
 import { setDynamicCategories } from '@/lib/categories';
-import { formatILS, formatDate, cleanSpacedHebrew, getTransactionTitle } from '@/lib/formatters';
+import { formatILS, formatDate, cleanSpacedHebrew, getTransactionTitle, formatCurrency } from '@/lib/formatters';
 
 function ChromeErrorPage() {
   const [currentHost, setCurrentHost] = useState('');
@@ -784,6 +785,99 @@ export default function TmaTransactionPage() {
                       </div>
                     </div>
                   </div>
+
+                  {/* Foreign Currency & Conversion Fee Analysis Card */}
+                  {tx.fxDetails && (
+                    <div className="p-3.5 rounded-2xl border border-blue-500/30 bg-blue-500/10 space-y-2.5 text-xs">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 font-bold text-slate-200">
+                          <div className="p-1 rounded-md bg-blue-500/20 text-blue-400">
+                            <Globe className="w-3.5 h-3.5" />
+                          </div>
+                          <span>עסקת מט״ח ({tx.fxDetails.foreignCurrency || tx.fxDetails.originalCurrency || 'מט״ח'}) ועלויות המרה</span>
+                        </div>
+                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-blue-500/20 text-blue-400 font-mono" dir="ltr">
+                          {tx.fxDetails.foreignCurrency || tx.fxDetails.originalCurrency} / ILS
+                        </span>
+                      </div>
+
+                      {/* 2-column: Original Foreign Amount vs Charged ILS */}
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="p-2 rounded-xl border border-slate-800/80 bg-slate-900/60 space-y-0.5">
+                          <div className="text-[10px] text-slate-400">סכום במטבע מקורי</div>
+                          <div className="text-xs sm:text-sm font-bold font-mono text-slate-100" dir="ltr">
+                            {formatCurrency(tx.fxDetails.foreignAmount, tx.fxDetails.foreignCurrency || tx.fxDetails.originalCurrency)}
+                          </div>
+                        </div>
+
+                        <div className="p-2 rounded-xl border border-slate-800/80 bg-slate-900/60 space-y-0.5">
+                          <div className="text-[10px] text-slate-400">סכום חיוב בפועל בחשבון</div>
+                          <div className="text-xs sm:text-sm font-bold font-mono text-rose-400" dir="ltr">
+                            {formatILS(tx.fxDetails.ilsAmount)}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Rates Breakdown */}
+                      <div className="text-[11px] space-y-1 pt-1 border-t border-blue-500/20 text-slate-300">
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-400">שער יציג לתאריך העסקה ({formatDate(tx.fxDetails.rateDate || tx.date, 'he')}):</span>
+                          <span className="font-mono font-semibold" dir="ltr">
+                            1 {tx.fxDetails.foreignCurrency || tx.fxDetails.originalCurrency} = ₪{Number(tx.fxDetails.representativeRate).toFixed(4)}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-400">עלות לפי שער יציג (ללא עמלות):</span>
+                          <span className="font-mono font-semibold" dir="ltr">
+                            {formatILS(tx.fxDetails.costAtRepresentativeRate)}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-400">שער חיוב אפקטיבי של הכרטיס:</span>
+                          <span className="font-mono font-semibold text-amber-400" dir="ltr">
+                            1 {tx.fxDetails.foreignCurrency || tx.fxDetails.originalCurrency} = ₪{Number(tx.fxDetails.effectiveRate).toFixed(4)}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Conversion Fee Banner */}
+                      {tx.fxDetails.isPositiveFee ? (
+                        <div className="p-2.5 rounded-xl bg-amber-500/15 border border-amber-500/25 space-y-1">
+                          <div className="flex items-center justify-between font-bold text-amber-400">
+                            <span>עמלת המרה ששולמה:</span>
+                            <span className="font-mono" dir="ltr">
+                              +{formatILS(tx.fxDetails.conversionFeeILS)}
+                              {tx.fxDetails.feePercent > 0 && ` (+${tx.fxDetails.feePercent}%)`}
+                            </span>
+                          </div>
+                          <div className="text-[10px] text-slate-400 flex items-center justify-between">
+                            <span>עלות עמלה ליחידת מטבע:</span>
+                            <span className="font-semibold text-slate-200 font-mono" dir="rtl">
+                              {Math.abs(tx.fxDetails.feePerUnitAgorot)} אגורות לכל {tx.fxDetails.foreignCurrency || tx.fxDetails.originalCurrency} (+{formatILS(Math.abs(tx.fxDetails.feePerUnit))})
+                            </span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="p-2.5 rounded-xl bg-emerald-500/15 border border-emerald-500/25 space-y-1">
+                          <div className="flex items-center justify-between font-bold text-emerald-400">
+                            <span>הפרש לטובתך (חיוב נמוך מהשער היציג):</span>
+                            <span className="font-mono" dir="ltr">
+                              {formatILS(Math.abs(tx.fxDetails.conversionFeeILS))}
+                              {tx.fxDetails.feePercent !== 0 && ` (${tx.fxDetails.feePercent}%)`}
+                            </span>
+                          </div>
+                          <div className="text-[10px] text-slate-400 flex items-center justify-between">
+                            <span>הפרש ליחידת מטבע:</span>
+                            <span className="font-semibold text-emerald-400 font-mono" dir="rtl">
+                              {Math.abs(tx.fxDetails.feePerUnitAgorot)} אגורות לכל {tx.fxDetails.foreignCurrency || tx.fxDetails.originalCurrency} ({formatILS(Math.abs(tx.fxDetails.feePerUnit))})
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {/* Category Picker */}
                   <div className="space-y-1.5">

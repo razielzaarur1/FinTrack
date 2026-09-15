@@ -35,10 +35,36 @@ import MultiSelectDropdown from '@/components/common/MultiSelectDropdown';
 import TransactionDrawer from '@/components/transactions/TransactionDrawer';
 import { CATEGORIES_DATA, getCategoryDetails } from '@/lib/categories';
 
+function formatLocalDate(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function getMonthDateBounds(monthStr) {
+  if (!monthStr || !/^\d{4}-\d{2}$/.test(monthStr)) return null;
+  const [yStr, mStr] = monthStr.split('-');
+  const y = parseInt(yStr, 10);
+  const m = parseInt(mStr, 10);
+  const lastDay = new Date(y, m, 0).getDate();
+  const start = `${yStr}-${mStr}-01`;
+  const end = `${yStr}-${mStr}-${String(lastDay).padStart(2, '0')}`;
+  return { start, end };
+}
+
 function TransactionsContent() {
   const { t, lang, expenseCategories, incomeCategories } = useApp();
   const searchParams = useSearchParams();
   const initialAccountId = searchParams?.get('accountId');
+  const initialMonth = searchParams?.get('month');
+  const initialStartDateParam = searchParams?.get('startDate');
+  const initialEndDateParam = searchParams?.get('endDate');
+
+  const initialBounds = getMonthDateBounds(initialMonth);
+  const initStart = initialStartDateParam || (initialBounds ? initialBounds.start : '');
+  const initEnd = initialEndDateParam || (initialBounds ? initialBounds.end : '');
+  const initPreset = (initStart || initEnd) ? 'custom' : 'all';
 
   const [transactions, setTransactions] = useState([]);
   const [accounts, setAccounts] = useState([]);
@@ -61,12 +87,12 @@ function TransactionsContent() {
   const [selectedCurrencies, setSelectedCurrencies] = useState([]);
   const [minAmount, setMinAmount] = useState('');
   const [maxAmount, setMaxAmount] = useState('');
-  const [datePreset, setDatePreset] = useState('all'); // all, current_month, last_month, last_90, custom
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
+  const [datePreset, setDatePreset] = useState(initPreset);
+  const [startDate, setStartDate] = useState(initStart);
+  const [endDate, setEndDate] = useState(initEnd);
   
   // UI State
-  const [showFilters, setShowFilters] = useState(false);
+  const [showFilters, setShowFilters] = useState(Boolean(initialAccountId || initStart || initEnd));
   const [selectedTx, setSelectedTx] = useState(null);
   const [selectMode, setSelectMode] = useState(false);
 
@@ -150,7 +176,7 @@ function TransactionsContent() {
     });
   }, []);
 
-  // Update filters if URL params change (accountId or month)
+  // Update filters if URL params change (accountId, month, startDate, endDate)
   useEffect(() => {
     const accParam = searchParams?.get('accountId');
     if (accParam) {
@@ -158,13 +184,21 @@ function TransactionsContent() {
       setShowFilters(true);
     }
     const monthParam = searchParams?.get('month');
+    const startParam = searchParams?.get('startDate');
+    const endParam = searchParams?.get('endDate');
+
     if (monthParam && /^\d{4}-\d{2}$/.test(monthParam)) {
-      const [y, m] = monthParam.split('-').map(Number);
-      const start = new Date(y, m - 1, 1).toISOString().slice(0, 10);
-      const end = new Date(y, m, 0).toISOString().slice(0, 10);
+      const bounds = getMonthDateBounds(monthParam);
+      if (bounds) {
+        setDatePreset('custom');
+        setStartDate(bounds.start);
+        setEndDate(bounds.end);
+        setShowFilters(true);
+      }
+    } else if (startParam || endParam) {
       setDatePreset('custom');
-      setStartDate(start);
-      setEndDate(end);
+      if (startParam) setStartDate(startParam);
+      if (endParam) setEndDate(endParam);
       setShowFilters(true);
     }
   }, [searchParams]);
@@ -389,16 +423,16 @@ function TransactionsContent() {
     if (preset === 'current_month') {
       const s = new Date(y, m, 1);
       const e = new Date(y, m + 1, 0);
-      return { start: s.toISOString().slice(0, 10), end: e.toISOString().slice(0, 10) };
+      return { start: formatLocalDate(s), end: formatLocalDate(e) };
     }
     if (preset === 'last_month') {
       const s = new Date(y, m - 1, 1);
       const e = new Date(y, m, 0);
-      return { start: s.toISOString().slice(0, 10), end: e.toISOString().slice(0, 10) };
+      return { start: formatLocalDate(s), end: formatLocalDate(e) };
     }
     if (preset === 'last_90') {
       const s = new Date(now.getTime() - 90 * 24 * 60 * 1000);
-      return { start: s.toISOString().slice(0, 10), end: now.toISOString().slice(0, 10) };
+      return { start: formatLocalDate(s), end: formatLocalDate(now) };
     }
     return { start: startDate || undefined, end: endDate || undefined };
   };
@@ -1014,6 +1048,11 @@ function TransactionsContent() {
                         {tx.hasReceipts && (
                           <span className="p-0.5 rounded bg-emerald-500/20 text-emerald-400 text-[10px] shrink-0" title="מצורפת חשבונית">
                             <Receipt className="w-3 h-3" />
+                          </span>
+                        )}
+                        {tx.isIgnored && (
+                          <span className="px-1.5 py-0.2 rounded bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text-muted light:text-light-text-muted text-[10px] font-medium border border-dark-border light:border-light-border shrink-0" title="הוחרגה מתקציבים ודוחות">
+                            הוחרגה
                           </span>
                         )}
                         {tx.status === 'pending' && (

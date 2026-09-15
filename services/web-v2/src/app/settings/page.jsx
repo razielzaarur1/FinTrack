@@ -78,6 +78,13 @@ export default function SettingsPage() {
   const [notifyOnBudget, setNotifyOnBudget] = useState(true);
   const [anomalyMinAmount, setAnomalyMinAmount] = useState(300);
 
+  // Bank Account CC Billing Anomaly Flags
+  const [flagLowCcBillings, setFlagLowCcBillings] = useState(true);
+  const [ccBillingMinThreshold, setCcBillingMinThreshold] = useState(500);
+  const [ccBillingLookbackDays, setCcBillingLookbackDays] = useState(60);
+  const [scanningCcAnomalies, setScanningCcAnomalies] = useState(false);
+  const [scanCcResult, setScanCcResult] = useState(null);
+
   // Auto-Scrape Schedule States (in HOURS, minimum 3h safety limit)
   const [autoScrapeEnabled, setAutoScrapeEnabled] = useState(true);
   const [scrapeIntervalCardsHours, setScrapeIntervalCardsHours] = useState(4);
@@ -136,6 +143,9 @@ export default function SettingsPage() {
         if (s.notifyOnAnomaly !== undefined) setNotifyOnAnomaly(s.notifyOnAnomaly);
         if (s.notifyOnBudgetExceeded !== undefined) setNotifyOnBudget(s.notifyOnBudgetExceeded);
         if (s.anomalyMinAmount !== undefined) setAnomalyMinAmount(parseInt(s.anomalyMinAmount, 10) || 300);
+        if (s.flagLowCcBillings !== undefined) setFlagLowCcBillings(s.flagLowCcBillings);
+        if (s.ccBillingMinThreshold !== undefined) setCcBillingMinThreshold(parseInt(s.ccBillingMinThreshold, 10) || 500);
+        if (s.ccBillingLookbackDays !== undefined) setCcBillingLookbackDays(parseInt(s.ccBillingLookbackDays, 10) || 60);
         if (s.autoScrapeEnabled !== undefined) setAutoScrapeEnabled(s.autoScrapeEnabled);
         if (s.scrapeIntervalCreditCardsHours !== undefined) {
           setScrapeIntervalCardsHours(Math.max(3, parseFloat(s.scrapeIntervalCreditCardsHours) || 4));
@@ -149,6 +159,26 @@ export default function SettingsPage() {
       await checkBotStatus();
     } catch (err) {
       console.error('Failed to load system settings:', err);
+    }
+  };
+
+  const handleScanCcAnomalies = async () => {
+    setScanningCcAnomalies(true);
+    setScanCcResult(null);
+    try {
+      const res = await api.detectCcBillingAnomalies();
+      if (res.data) {
+        setScanCcResult({
+          success: true,
+          message: `נמצאו וסומנו ${res.data.flaggedCount ?? 0} חיובי כרטיסים חריגים לבדיקה במועדון הבדיקה`,
+        });
+      } else {
+        setScanCcResult({ success: false, message: res.error || 'שגיאה בסריקה' });
+      }
+    } catch (err) {
+      setScanCcResult({ success: false, message: err.message || 'שגיאה בסריקה' });
+    } finally {
+      setScanningCcAnomalies(false);
     }
   };
 
@@ -167,6 +197,9 @@ export default function SettingsPage() {
         notifyOnAnomaly,
         notifyOnBudgetExceeded: notifyOnBudget,
         anomalyMinAmount: Math.max(50, parseInt(anomalyMinAmount, 10) || 300),
+        flagLowCcBillings,
+        ccBillingMinThreshold: Math.max(0, parseInt(ccBillingMinThreshold, 10) || 500),
+        ccBillingLookbackDays: Math.max(1, parseInt(ccBillingLookbackDays, 10) || 60),
       };
       await api.updateSystemSettings(updated);
       setTelegramSaved(true);
@@ -891,6 +924,83 @@ export default function SettingsPage() {
               <span className="text-[10px] text-dark-text-muted light:text-light-text-muted block">
                 תנועות מתחת לסכום זה לא ייחשבו כחריגות (ברירת מחדל: 300 ₪)
               </span>
+            </div>
+
+            {/* Smart Credit Card Billing Anomaly Detection in Bank Accounts */}
+            <div className="col-span-full p-3.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface space-y-3">
+              <label className="flex items-start gap-2.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={flagLowCcBillings}
+                  onChange={(e) => setFlagLowCcBillings(e.target.checked)}
+                  className="w-4 h-4 mt-0.5 rounded text-brand-primary focus:ring-brand-primary cursor-pointer"
+                />
+                <div>
+                  <span className="font-semibold text-dark-text light:text-light-text text-xs block">
+                    זיהוי חיובי כרטיסי אשראי חריגים בחשבונות בנק (סימון אוטומטי לבדיקה)
+                  </span>
+                  <span className="text-[11px] text-dark-text-muted light:text-light-text-muted block">
+                    מסמן אוטומטית לבדיקה תנועות של חיוב כרטיס אשראי בבנק אם הסכום נמוך בצורה חריגה או חיובי (זיכוי), כדי לוודא שאין טעות או חיוב חלקי
+                  </span>
+                </div>
+              </label>
+
+              {flagLowCcBillings && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                  <div className="space-y-1">
+                    <label className="font-medium text-dark-text light:text-light-text text-[11px] block">
+                      סף מינימום לחיוב כרטיס (₪)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="50"
+                      value={ccBillingMinThreshold}
+                      onChange={(e) => setCcBillingMinThreshold(e.target.value)}
+                      className="w-full p-1.5 rounded-lg border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs focus:ring-1 focus:ring-brand-primary font-mono"
+                    />
+                    <span className="text-[10px] text-dark-text-muted light:text-light-text-muted block">
+                      חיובים מתחת לסכום זה יסומנו לבדיקה (ברירת מחדל: 500 ₪)
+                    </span>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="font-medium text-dark-text light:text-light-text text-[11px] block">
+                      טווח ימים לבדיקה (ימים אחורה)
+                    </label>
+                    <input
+                      type="number"
+                      min="7"
+                      max="365"
+                      step="1"
+                      value={ccBillingLookbackDays}
+                      onChange={(e) => setCcBillingLookbackDays(e.target.value)}
+                      className="w-full p-1.5 rounded-lg border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs focus:ring-1 focus:ring-brand-primary font-mono"
+                    />
+                    <span className="text-[10px] text-dark-text-muted light:text-light-text-muted block">
+                      כמה ימים אחורה לסרוק חיובי כרטיסים (ברירת מחדל: 60 יום)
+                    </span>
+                  </div>
+
+                  <div className="col-span-full pt-1 flex items-center gap-2 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={handleScanCcAnomalies}
+                      disabled={scanningCcAnomalies}
+                      className="px-3 py-1.5 rounded-lg border border-brand-primary/30 bg-brand-primary/10 text-brand-primary hover:bg-brand-primary/20 text-xs font-semibold flex items-center gap-1.5 transition-all disabled:opacity-50 cursor-pointer"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${scanningCcAnomalies ? 'animate-spin' : ''}`} />
+                      <span>{scanningCcAnomalies ? 'סורק חיובי כרטיסים...' : 'סרוק חיובי כרטיסים עכשיו'}</span>
+                    </button>
+
+                    {scanCcResult && (
+                      <span className={`text-xs font-medium ${scanCcResult.success ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {scanCcResult.message}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

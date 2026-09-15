@@ -110,7 +110,10 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
 
     // Fetch splits
     api.getSplits(activeTx.id).then((res) => {
-      if (res.data) setSplits(res.data.data || []);
+      if (res.data) {
+        const rawSplits = res.data.data || [];
+        setSplits(rawSplits.map((s) => ({ ...s, amount: Math.abs(parseFloat(s.amount) || 0) })));
+      }
     });
 
     // Fetch notes
@@ -151,7 +154,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
 
   const currentAmountNum = parseFloat(activeTx.amount) || 0;
   const parentAmount = Math.abs(currentAmountNum);
-  const splitsTotal = splits.reduce((acc, s) => acc + (parseFloat(s.amount) || 0), 0);
+  const splitsTotal = splits.reduce((acc, s) => acc + (Math.abs(parseFloat(s.amount)) || 0), 0);
   const splitsBalanced = Math.abs(parentAmount - splitsTotal) <= 0.01;
   const remainingAmount = Number((parentAmount - splitsTotal).toFixed(2));
 
@@ -208,7 +211,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
 
   const handleSplitChange = (index, field, value) => {
     const updated = [...splits];
-    updated[index][field] = field === 'amount' ? parseFloat(value) || 0 : value;
+    updated[index][field] = field === 'amount' ? (value === '' ? '' : Math.abs(parseFloat(value) || 0)) : value;
     setSplits(updated);
   };
 
@@ -218,17 +221,35 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
 
   const handleSaveSplits = async () => {
     if (splitsTotal > parentAmount + 0.01) {
-      setSplitError(lang === 'he' ? 'סכום הפיצולים אינו יכול לעלות על סכום התנועה המקורית' : 'Total splits cannot exceed the original transaction amount');
+      setSplitError(lang === 'he' ? 'סכום הפיצולים אינו יכול לעלות על סכום התנועה המקורית' : 'Total splits cannot exceed original transaction amount');
       return;
     }
-    if (!splitsBalanced) {
-      setSplitError(lang === 'he' ? `סכום הפיצולים חייב להיות שווה במדויק לסכום התנועה המקורית (נותרה יתרה לחלוקה: ${formatILS(remainingAmount)})` : 'Total splits must strictly equal the original transaction amount');
+    if (splitsTotal <= 0) {
+      setSplitError(lang === 'he' ? 'יש להזין לפחות סכום פיצול אחד חיובי' : 'Please enter at least one positive split amount');
       return;
     }
+
     setSplitError('');
     setSavingSplits(true);
+
+    const validSplits = splits
+      .filter((s) => (Math.abs(parseFloat(s.amount)) || 0) > 0)
+      .map((s) => ({
+        amount: Math.abs(parseFloat(s.amount)),
+        category: s.category || activeTx.category || 'כללי',
+        description: s.description || null,
+      }));
+
+    if (remainingAmount > 0.01) {
+      validSplits.push({
+        amount: remainingAmount,
+        category: activeTx.category && activeTx.category !== 'ללא סיווג' ? activeTx.category : 'כללי',
+        description: lang === 'he' ? 'יתרת תנועה' : 'Remaining balance',
+      });
+    }
+
     try {
-      const res = await api.saveSplits(activeTx.id, splits);
+      const res = await api.saveSplits(activeTx.id, validSplits);
       if (res.error) {
         setSplitError(res.error);
       } else {
@@ -913,6 +934,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
                   <span className={`font-bold text-sm ${Math.abs(remainingAmount) < 0.01 ? 'text-emerald-400' : remainingAmount > 0 ? 'text-amber-400' : 'text-rose-500'}`}>
                     {formatILS(remainingAmount)}
                     {remainingAmount < -0.01 && <span className="text-[11px] font-normal mr-1 text-rose-400">({lang === 'he' ? 'חריגה מהסכום המקורי!' : 'Exceeds original!'})</span>}
+                    {remainingAmount > 0.01 && <span className="text-[11px] font-normal mr-1 text-dark-text-muted light:text-light-text-muted">({lang === 'he' ? 'תישמר עם הקטגוריה המקורית' : 'retained with original'})</span>}
                   </span>
                 </div>
               </div>
@@ -932,15 +954,13 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
                         <input
                           type="number"
                           step="0.01"
-                          value={s.amount || ''}
+                          value={s.amount !== undefined && s.amount !== null && s.amount !== '' ? Math.abs(s.amount) : ''}
                           onChange={(e) => handleSplitChange(idx, 'amount', e.target.value)}
                           placeholder="0.00"
-                          className={`w-full p-2 rtl:pr-7 ltr:pl-7 rounded-lg border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-xs font-mono text-left rtl:text-right ${
-                            parseFloat(tx.amount) < 0 ? 'text-rose-500 font-semibold' : 'text-emerald-500 font-semibold'
-                          }`}
+                          className="w-full p-2 rtl:pr-7 ltr:pl-7 rounded-lg border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-xs font-mono text-left rtl:text-right text-dark-text light:text-light-text"
                         />
                         <span className="absolute left-2 rtl:left-auto rtl:right-2 top-2 text-xs font-mono text-dark-text-muted light:text-light-text-muted pointer-events-none">
-                          {parseFloat(tx.amount) < 0 ? '-₪' : '+₪'}
+                          ₪
                         </span>
                       </div>
                       <div className="flex-1 min-w-[140px]">
@@ -983,9 +1003,9 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
                 <button
                   type="button"
                   onClick={handleSaveSplits}
-                  disabled={savingSplits || splits.length === 0 || !splitsBalanced || splitsTotal > parentAmount + 0.001}
+                  disabled={savingSplits || splits.length === 0 || splitsTotal <= 0 || splitsTotal > parentAmount + 0.01}
                   className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-white text-xs font-semibold transition-all cursor-pointer ${
-                    splitsBalanced && splitsTotal <= parentAmount + 0.001
+                    splitsTotal > 0 && splitsTotal <= parentAmount + 0.01
                       ? 'bg-brand-primary hover:bg-brand-primary-hover shadow-md shadow-brand-primary/20'
                       : 'bg-gray-600 opacity-50 cursor-not-allowed'
                   }`}

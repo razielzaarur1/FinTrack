@@ -72,7 +72,7 @@ export default function CategoryBadge({
       >
         {activeSvg ? (
           <div
-            className="w-full h-full flex items-center justify-center p-1 overflow-hidden [&>svg]:w-full [&>svg]:h-full [&>svg]:max-w-full [&>svg]:max-h-full [&>svg]:object-contain [&>svg]:stroke-current [&>svg_*]:stroke-current"
+            className="w-full h-full flex items-center justify-center p-1 overflow-hidden [&>svg]:w-full [&>svg]:h-full [&>svg]:max-w-full [&>svg]:max-h-full [&>svg]:object-contain"
             dangerouslySetInnerHTML={{ __html: normalizeCategorySvg(activeSvg) }}
           />
         ) : (

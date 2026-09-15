@@ -95,6 +95,7 @@ export const api = {
   getSimilarTransactions: (id) => request(`/api/v2/transactions/${id}/similar`),
   getTxFxDetails: (id) => request(`/api/v2/transactions/${id}/fx`),
   bulkUpdateTransactions: (data) => request('/api/v2/transactions/bulk-update', { method: 'POST', body: JSON.stringify(data) }),
+  detectCcBillingAnomalies: () => request('/api/v2/transactions/detect-anomalies', { method: 'POST' }),
 
   // Splits
   getSplits: (txId) => request(`/api/v2/transactions/${txId}/splits`),

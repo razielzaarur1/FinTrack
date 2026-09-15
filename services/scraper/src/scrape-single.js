@@ -455,8 +455,9 @@ async function persistScrapedAccounts(pool, primaryAccountId, scrapedAccounts, t
         );
         if (exactMatch) {
           if (exactMatch.is_active === false) {
-            logger.info({ cardLast4, bank_company }, 'Card was previously deactivated by user, skipping re-insertion');
-            continue;
+            logger.info({ cardLast4, bank_company }, 'Reactivating previously deactivated card upon re-scrape');
+            await pool.query('UPDATE bank_accounts SET is_active = true WHERE id = $1', [exactMatch.id]);
+            exactMatch.is_active = true;
           }
           targetDbAccountId = exactMatch.id;
         }

@@ -197,7 +197,7 @@ const cursorPaginationQuerySchema = z.object({
   maxAmount: z.coerce.number().optional(),
   hasNotes: z.coerce.boolean().optional(),
   hasSplits: z.coerce.boolean().optional(),
-  isIgnored: z.coerce.boolean().default(false),
+  isIgnored: z.coerce.boolean().optional(),
   isReviewed: z.coerce.boolean().optional(),
   isFlagged: z.coerce.boolean().optional(),
 });
@@ -1055,22 +1055,37 @@ export default async function transactionsV2Routes(fastify, options) {
     const { splits } = parseResult.data;
 
     // Verify parent transaction exists and get absolute amount
-    const txRes = await pool.query('SELECT id, amount FROM transactions WHERE id = $1', [id]);
+    const txRes = await pool.query('SELECT id, amount, category, description, date FROM transactions WHERE id = $1', [id]);
     if (txRes.rows.length === 0) {
       return reply.code(404).send({ error: 'Transaction not found' });
     }
 
     const rawParentAmount = parseFloat(txRes.rows[0].amount);
     const parentAmount = Math.abs(rawParentAmount);
-    const splitsSum = splits.reduce((acc, curr) => acc + parseFloat(curr.amount), 0);
+    let splitsList = splits.map((s) => ({
+      amount: Math.abs(parseFloat(s.amount)),
+      category: s.category,
+      description: s.description || null,
+    }));
+    const splitsSum = splitsList.reduce((acc, curr) => acc + curr.amount, 0);
 
-    // Enforce balance within 0.01 tolerance
-    if (Math.abs(parentAmount - splitsSum) > 0.01) {
+    // Prevent exceeding parent amount
+    if (splitsSum > parentAmount + 0.01) {
       return reply.code(400).send({
         error: 'Split Balance Mismatch',
-        message: `Total splits sum (₪${splitsSum.toFixed(2)}) must exactly equal original transaction amount (₪${parentAmount.toFixed(2)})`,
+        message: `Total splits sum (₪${splitsSum.toFixed(2)}) cannot exceed original transaction amount (₪${parentAmount.toFixed(2)})`,
         parentAmount,
         splitsSum,
+      });
+    }
+
+    // Partial split support: if splitsSum < parentAmount - 0.01, append remainder split with parent's original category
+    const remainder = parentAmount - splitsSum;
+    if (remainder > 0.01) {
+      splitsList.push({
+        amount: Math.round(remainder * 100) / 100,
+        category: txRes.rows[0].category || 'כללי',
+        description: 'יתרת תנועה',
       });
     }
 
@@ -1079,7 +1094,7 @@ export default async function transactionsV2Routes(fastify, options) {
       await client.query('BEGIN');
       await client.query('DELETE FROM transaction_splits WHERE transaction_id = $1', [id]);
 
-      for (const split of splits) {
+      for (const split of splitsList) {
         const signedSplitAmount = rawParentAmount < 0 ? -Math.abs(split.amount) : Math.abs(split.amount);
         await client.query(
           `INSERT INTO transaction_splits (transaction_id, amount, category, description)
@@ -1324,8 +1339,54 @@ export default async function transactionsV2Routes(fastify, options) {
     }
   });
 
+  // Helper to flag unusually low or positive credit card debits in bank accounts
+  async function flagAnomalousCcBillings() {
+    try {
+      const settingsRes = await pool.query(
+        `SELECT settings FROM system_settings WHERE user_id = '00000000-0000-0000-0000-000000000001'`
+      );
+      const settings = settingsRes.rows[0]?.settings || {};
+      if (settings.flagLowCcBillings === false) {
+        return { flaggedCount: 0 };
+      }
+      const minThreshold = typeof settings.ccBillingMinThreshold === 'number' ? settings.ccBillingMinThreshold : 500;
+      const lookbackDays = typeof settings.ccBillingLookbackDays === 'number' ? settings.ccBillingLookbackDays : 60;
+
+      const query = `
+        UPDATE transactions t
+        SET is_flagged = true
+        FROM bank_accounts b
+        WHERE t.account_id = b.id
+          AND b.user_id = '00000000-0000-0000-0000-000000000001'
+          AND b.bank_company NOT IN ('isracard', 'cal', 'max', 'amex', 'wallet')
+          AND t.date >= CURRENT_DATE - ($1 || ' days')::interval
+          AND (
+            t.description ~* '(חיוב כרטיס|חיוב כאל|חיוב מקס|מקס איט|חיוב ישראכרט|כרטיסי אשראי|ויזה כאל|דיינרס|אמריקן אקספרס|חיוב כרטיסי|הוראת קבע כרטיס)'
+            OR t.merchant_name ~* '(חיוב כרטיס|חיוב כאל|חיוב מקס|מקס איט|חיוב ישראכרט|כרטיסי אשראי|ויזה כאל|דיינרס|אמריקן אקספרס|חיוב כרטיסי|הוראת קבע כרטיס)'
+          )
+          AND (t.amount > 0 OR (t.amount < 0 AND ABS(t.amount) < $2))
+          AND t.is_reviewed = false
+          AND t.is_flagged = false
+          AND t.is_ignored = false
+        RETURNING t.id
+      `;
+      const res = await pool.query(query, [lookbackDays, minThreshold]);
+      return { flaggedCount: res.rowCount };
+    } catch (err) {
+      fastify.log.warn(`[CC Billing Anomaly Detection] Error: ${err.message}`);
+      return { flaggedCount: 0, error: err.message };
+    }
+  }
+
+  // POST /api/v2/transactions/detect-anomalies - Run anomaly detection on demand
+  fastify.post('/detect-anomalies', async (request, reply) => {
+    const result = await flagAnomalousCcBillings();
+    return reply.send({ success: true, ...result });
+  });
+
   // GET /api/v2/transactions/review-queue - Get transactions awaiting review or flagged
   fastify.get('/review-queue', async (request, reply) => {
+    await flagAnomalousCcBillings().catch(() => {});
     const { flaggedOnly, tab } = request.query;
     let condition = 't.is_reviewed = false AND t.is_flagged = false';
     
@@ -1508,6 +1569,8 @@ export default async function transactionsV2Routes(fastify, options) {
       }
       if (!raw || typeof raw !== 'object') raw = {};
 
+      const fxDetails = await calculateFxDetails(row);
+
       return reply.code(200).send({
         data: {
           id: row.id,
@@ -1532,6 +1595,7 @@ export default async function transactionsV2Routes(fastify, options) {
           accountDisplayName: row.accountDisplayName || row.bankCompany,
           bankCompany: row.bankCompany,
           cardLast4: row.cardLast4,
+          fxDetails,
         },
       });
     } catch (err) {
@@ -1693,14 +1757,29 @@ export default async function transactionsV2Routes(fastify, options) {
       return reply.code(400).send({ error: 'At least one split required' });
     }
 
-    const txRes = await pool.query('SELECT amount FROM transactions WHERE id = $1', [id]);
+    const txRes = await pool.query('SELECT amount, category, description FROM transactions WHERE id = $1', [id]);
     if (txRes.rows.length === 0) return reply.code(404).send({ error: 'Not Found' });
 
     const parentAmount = Math.abs(parseFloat(txRes.rows[0].amount));
-    const splitsTotal = splits.reduce((acc, s) => acc + (parseFloat(s.amount) || 0), 0);
-    if (Math.abs(parentAmount - splitsTotal) > 0.01) {
+    let splitsList = splits.map((s) => ({
+      amount: Math.abs(parseFloat(s.amount) || 0),
+      category: s.category,
+      description: s.description || null,
+    }));
+    const splitsTotal = splitsList.reduce((acc, s) => acc + s.amount, 0);
+
+    if (splitsTotal > parentAmount + 0.01) {
       return reply.code(400).send({
-        error: `סכום הפיצולים (${splitsTotal.toFixed(2)} ₪) חייב להיות שווה לסכום התנועה (${parentAmount.toFixed(2)} ₪)`,
+        error: `סכום הפיצולים (${splitsTotal.toFixed(2)} ₪) אינו יכול לעלות על סכום התנועה (${parentAmount.toFixed(2)} ₪)`,
+      });
+    }
+
+    const remainder = parentAmount - splitsTotal;
+    if (remainder > 0.01) {
+      splitsList.push({
+        amount: Math.round(remainder * 100) / 100,
+        category: txRes.rows[0].category || 'כללי',
+        description: 'יתרת תנועה',
       });
     }
 
@@ -1709,10 +1788,10 @@ export default async function transactionsV2Routes(fastify, options) {
       await client.query('BEGIN');
       await client.query('DELETE FROM transaction_splits WHERE transaction_id = $1', [id]);
 
-      for (const s of splits) {
+      for (const s of splitsList) {
         await client.query(
           `INSERT INTO transaction_splits (transaction_id, category, amount, description) VALUES ($1, $2, $3, $4)`,
-          [id, s.category, parseFloat(s.amount), s.description || null]
+          [id, s.category, s.amount, s.description || null]
         );
       }
       await client.query('UPDATE transactions SET is_split = true WHERE id = $1', [id]);
