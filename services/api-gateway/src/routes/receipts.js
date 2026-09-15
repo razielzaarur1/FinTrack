@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import crypto from 'node:crypto';
 import { z } from 'zod';
 import { pool } from '../db.js';
@@ -9,14 +10,176 @@ import {
   testGeminiApiKey 
 } from '../services/ai-analyzer.js';
 
-// Get uploads directory from env or default to ./uploads relative to current directory
-const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(process.cwd(), 'uploads');
-if (!fs.existsSync(UPLOADS_DIR)) {
-  try {
-    fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-  } catch (err) {
-    console.error('[Receipts] Failed to create uploads directory:', err.message);
+/**
+ * Determine a writable directory for storing uploads with seamless fallbacks
+ */
+function getWritableUploadsDir() {
+  const candidates = [
+    process.env.UPLOADS_DIR,
+    '/app/uploads',
+    '/opt/finapp/uploads',
+    path.join(process.cwd(), 'uploads'),
+    path.join(os.tmpdir(), 'finapp_uploads')
+  ].filter(Boolean);
+
+  for (const dir of candidates) {
+    try {
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      // Test write and delete
+      const testFile = path.join(dir, `.write_test_${Date.now()}`);
+      fs.writeFileSync(testFile, 'ok');
+      fs.unlinkSync(testFile);
+      return dir;
+    } catch (err) {
+      console.warn(`[Receipts] Directory '${dir}' is not writable:`, err.message);
+    }
   }
+
+  const fallback = path.join(os.tmpdir(), 'finapp_uploads');
+  try {
+    fs.mkdirSync(fallback, { recursive: true });
+  } catch (_) {}
+  return fallback;
+}
+
+/**
+ * Search for a saved receipt file across candidate directories
+ */
+function findReceiptFile(filename) {
+  if (!filename) return null;
+  const safeFilename = path.basename(filename);
+  const candidates = [
+    process.env.UPLOADS_DIR,
+    '/app/uploads',
+    '/opt/finapp/uploads',
+    path.join(process.cwd(), 'uploads'),
+    path.join(os.tmpdir(), 'finapp_uploads')
+  ].filter(Boolean);
+
+  for (const dir of candidates) {
+    const filePath = path.join(dir, safeFilename);
+    if (fs.existsSync(filePath)) {
+      return filePath;
+    }
+  }
+  return null;
+}
+
+/**
+ * Find candidate transactions that match the extracted receipt details (vendor, date, amount)
+ */
+async function findMatchingTransactions(currentTxId, extractedData, client = pool) {
+  if (!extractedData) return [];
+  const vendor = extractedData.vendor ? String(extractedData.vendor).trim() : '';
+  const total = parseFloat(extractedData.total) || 0;
+  const date = extractedData.date ? String(extractedData.date).trim() : null;
+
+  if (!total && !vendor && !date) return [];
+
+  const params = [currentTxId];
+  const scoreExpressions = [];
+
+  // 1. Amount match (highest priority)
+  if (total > 0) {
+    params.push(total);
+    const pIdx = params.length;
+    scoreExpressions.push(`CASE WHEN ABS(ABS(t.amount) - $${pIdx}) < 0.01 THEN 60 WHEN ABS(ABS(t.amount) - $${pIdx}) <= 2.00 THEN 35 ELSE 0 END`);
+  }
+
+  // 2. Date match
+  if (date && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    params.push(date);
+    const pIdx = params.length;
+    scoreExpressions.push(`CASE 
+      WHEN t.date = $${pIdx}::date THEN 40 
+      WHEN ABS(t.date - $${pIdx}::date) <= 3 THEN 25 
+      WHEN ABS(t.date - $${pIdx}::date) <= 7 THEN 10 
+      ELSE 0 
+    END`);
+  }
+
+  // 3. Vendor match
+  if (vendor && vendor.length >= 2) {
+    params.push(`%${vendor}%`);
+    const pIdx = params.length;
+    scoreExpressions.push(`CASE WHEN t.merchant_name ILIKE $${pIdx} OR t.description ILIKE $${pIdx} THEN 35 ELSE 0 END`);
+  }
+
+  if (scoreExpressions.length === 0) return [];
+
+  const scoreSql = scoreExpressions.join(' + ');
+
+  const query = `
+    SELECT 
+      t.id, 
+      t.date, 
+      t.amount, 
+      t.currency, 
+      t.merchant_name AS "merchantName", 
+      t.description,
+      t.category,
+      b.display_name AS "accountDisplayName",
+      b.bank_company AS "bankCompany",
+      (${scoreSql}) AS match_score
+    FROM transactions t
+    JOIN bank_accounts b ON t.account_id = b.id
+    WHERE t.id != $1 AND (${scoreSql}) >= 30
+    ORDER BY match_score DESC, t.date DESC
+    LIMIT 3
+  `;
+
+  try {
+    const res = await client.query(query, params);
+    return res.rows;
+  } catch (err) {
+    console.warn('[Receipts] Error finding matching transactions:', err.message);
+    return [];
+  }
+}
+
+/**
+ * Compute verification discrepancy details for a receipt against its parent transaction
+ */
+async function computeReceiptVerification(txData, receipt, client = pool) {
+  const extracted = receipt.extracted_data || {};
+  const receiptTotal = parseFloat(extracted.total);
+  const receiptDate = extracted.date;
+
+  let isAmountMismatch = false;
+  let isDateMismatch = false;
+
+  if (txData && !isNaN(receiptTotal) && receiptTotal > 0) {
+    isAmountMismatch = Math.abs(receiptTotal - Math.abs(parseFloat(txData.amount))) > 0.05;
+  }
+
+  if (txData && receiptDate && txData.date) {
+    const rDate = new Date(receiptDate);
+    const tDate = new Date(txData.date);
+    const diffDays = Math.abs((rDate - tDate) / (1000 * 60 * 60 * 24));
+    isDateMismatch = diffDays > 3;
+  }
+
+  let suggestedMatches = [];
+  if (isAmountMismatch || isDateMismatch) {
+    suggestedMatches = await findMatchingTransactions(receipt.transaction_id, extracted, client);
+  }
+
+  return {
+    verification: {
+      isMismatch: isAmountMismatch || isDateMismatch,
+      isAmountMismatch,
+      isDateMismatch,
+      txAmount: txData ? Math.abs(parseFloat(txData.amount)) : null,
+      txDate: txData ? txData.date : null,
+      txMerchant: txData ? txData.merchant_name : null,
+      receiptTotal: !isNaN(receiptTotal) ? receiptTotal : null,
+      receiptDate: receiptDate || null,
+      receiptVendor: extracted.vendor || null,
+    },
+    suggestedMatches,
+  };
 }
 
 const urlReceiptSchema = z.object({
@@ -34,19 +197,34 @@ const applySplitsSchema = z.object({
 });
 
 export default async function receiptsRoutes(fastify, options) {
-  // GET /api/v2/transactions/:id/receipts - List all receipts for a transaction
+  // GET /api/v2/transactions/:id/receipts - List all receipts for a transaction with verification
   fastify.get('/:id/receipts', async (request, reply) => {
     const { id } = request.params;
     try {
+      // Fetch transaction for verification comparison
+      const txRes = await pool.query('SELECT id, date, amount, merchant_name FROM transactions WHERE id = $1', [id]);
+      const txData = txRes.rows[0];
+
       const res = await pool.query(
-        `SELECT id, transaction_id, file_name, file_type, file_size, source_url, 
+        `SELECT id, transaction_id, file_name, file_type, file_size, file_path, source_url, 
                 ai_analyzed, ai_provider, extracted_data, created_at
          FROM transaction_receipts
          WHERE transaction_id = $1
          ORDER BY created_at DESC`,
         [id]
       );
-      return reply.send({ success: true, data: res.rows });
+
+      const enrichedReceipts = await Promise.all(
+        res.rows.map(async (receipt) => {
+          const vData = await computeReceiptVerification(txData, receipt);
+          return {
+            ...receipt,
+            ...vData,
+          };
+        })
+      );
+
+      return reply.send({ success: true, data: enrichedReceipts });
     } catch (err) {
       fastify.log.error(err, 'Failed to fetch receipts');
       return reply.code(500).send({ error: 'Failed to fetch receipts', message: err.message });
@@ -58,10 +236,11 @@ export default async function receiptsRoutes(fastify, options) {
     const { id } = request.params;
 
     // Verify transaction exists
-    const txCheck = await pool.query('SELECT id, amount, merchant_name, description FROM transactions WHERE id = $1', [id]);
+    const txCheck = await pool.query('SELECT id, amount, merchant_name, description, date FROM transactions WHERE id = $1', [id]);
     if (txCheck.rows.length === 0) {
       return reply.code(404).send({ error: 'Transaction not found' });
     }
+    const txData = txCheck.rows[0];
 
     let data;
     try {
@@ -79,21 +258,26 @@ export default async function receiptsRoutes(fastify, options) {
     const mimeType = data.mimetype || 'image/jpeg';
     const fileSize = fileBuffer.length;
 
-    // Check size limit: 10MB max
-    if (fileSize > 10 * 1024 * 1024) {
-      return reply.code(400).send({ error: 'גודל הקובץ חורג מהמגבלה המותרת (עד 10MB)' });
+    // Check size limit: 15MB max
+    if (fileSize > 15 * 1024 * 1024) {
+      return reply.code(400).send({ error: 'גודל הקובץ חורג מהמגבלה המותרת (עד 15MB)' });
     }
 
-    // Generate unique storage filename
+    // Get writable uploads directory
+    const targetDir = getWritableUploadsDir();
     const ext = path.extname(originalName) || (mimeType === 'application/pdf' ? '.pdf' : '.jpg');
     const storageFileName = `${id}_${Date.now()}_${crypto.randomBytes(4).toString('hex')}${ext}`;
-    const storagePath = path.join(UPLOADS_DIR, storageFileName);
+    const storagePath = path.join(targetDir, storageFileName);
 
     try {
       fs.writeFileSync(storagePath, fileBuffer);
     } catch (err) {
-      fastify.log.error(err, 'Failed to write file to disk');
-      return reply.code(500).send({ error: 'Failed to save file', message: err.message });
+      fastify.log.error(err, `Failed to write file to disk at ${storagePath}`);
+      return reply.code(500).send({ 
+        error: 'נכשל בשמירת הקובץ בדיסק', 
+        details: err.message,
+        path: storagePath 
+      });
     }
 
     // Run AI analysis
@@ -110,23 +294,29 @@ export default async function receiptsRoutes(fastify, options) {
         `INSERT INTO transaction_receipts 
          (transaction_id, file_name, file_type, file_size, file_path, ai_analyzed, ai_provider, extracted_data)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         RETURNING id, transaction_id, file_name, file_type, file_size, source_url, 
+         RETURNING id, transaction_id, file_name, file_type, file_size, file_path, source_url, 
                    ai_analyzed, ai_provider, extracted_data, created_at`,
         [
           id,
           originalName,
           mimeType,
           fileSize,
-          storageFileName, // store relative filename
+          storageFileName,
           aiResult.ai_analyzed || false,
           aiResult.ai_provider || 'gemini',
           JSON.stringify(aiResult.extracted_data || {}),
         ]
       );
 
+      const savedReceipt = insertRes.rows[0];
+      const vData = await computeReceiptVerification(txData, savedReceipt);
+
       return reply.code(201).send({
         success: true,
-        data: insertRes.rows[0],
+        data: {
+          ...savedReceipt,
+          ...vData,
+        },
         aiMessage: aiResult.message || null,
       });
     } catch (err) {
@@ -149,10 +339,11 @@ export default async function receiptsRoutes(fastify, options) {
     const { url } = parseResult.data;
 
     // Verify transaction exists
-    const txCheck = await pool.query('SELECT id FROM transactions WHERE id = $1', [id]);
+    const txCheck = await pool.query('SELECT id, date, amount, merchant_name FROM transactions WHERE id = $1', [id]);
     if (txCheck.rows.length === 0) {
       return reply.code(404).send({ error: 'Transaction not found' });
     }
+    const txData = txCheck.rows[0];
 
     // Run AI analysis on URL
     let aiResult;
@@ -172,7 +363,7 @@ export default async function receiptsRoutes(fastify, options) {
         `INSERT INTO transaction_receipts 
          (transaction_id, file_name, file_type, file_size, source_url, ai_analyzed, ai_provider, extracted_data)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         RETURNING id, transaction_id, file_name, file_type, file_size, source_url, 
+         RETURNING id, transaction_id, file_name, file_type, file_size, file_path, source_url, 
                    ai_analyzed, ai_provider, extracted_data, created_at`,
         [
           id,
@@ -186,9 +377,15 @@ export default async function receiptsRoutes(fastify, options) {
         ]
       );
 
+      const savedReceipt = insertRes.rows[0];
+      const vData = await computeReceiptVerification(txData, savedReceipt);
+
       return reply.code(201).send({
         success: true,
-        data: insertRes.rows[0],
+        data: {
+          ...savedReceipt,
+          ...vData,
+        },
         aiMessage: aiResult.message || null,
       });
     } catch (err) {
@@ -197,18 +394,57 @@ export default async function receiptsRoutes(fastify, options) {
     }
   });
 
+  // POST /api/v2/transactions/receipts/:receiptId/move - Move receipt to a different transaction
+  fastify.post('/receipts/:receiptId/move', async (request, reply) => {
+    const { receiptId } = request.params;
+    const { targetTransactionId } = request.body || {};
+
+    if (!targetTransactionId) {
+      return reply.code(400).send({ error: 'Target transaction ID is required' });
+    }
+
+    try {
+      // Verify target transaction exists
+      const txCheck = await pool.query('SELECT id, merchant_name, amount, date FROM transactions WHERE id = $1', [targetTransactionId]);
+      if (txCheck.rows.length === 0) {
+        return reply.code(404).send({ error: 'Target transaction not found' });
+      }
+
+      const res = await pool.query(
+        `UPDATE transaction_receipts
+         SET transaction_id = $1
+         WHERE id = $2
+         RETURNING id, transaction_id, file_name, file_type, file_size, file_path, source_url, 
+                   ai_analyzed, ai_provider, extracted_data, created_at`,
+        [targetTransactionId, receiptId]
+      );
+
+      if (res.rows.length === 0) {
+        return reply.code(404).send({ error: 'Receipt not found' });
+      }
+
+      return reply.send({
+        success: true,
+        message: 'החשבונית הועברה בהצלחה לתנועה המתאימה',
+        data: res.rows[0],
+        targetTransaction: txCheck.rows[0]
+      });
+    } catch (err) {
+      fastify.log.error(err, 'Failed to move receipt');
+      return reply.code(500).send({ error: 'Database error', message: err.message });
+    }
+  });
+
   // GET /api/v2/transactions/receipts/file/:filename - View/download receipt file
   fastify.get('/receipts/file/:filename', async (request, reply) => {
     const { filename } = request.params;
-    // Sanitize filename to prevent directory traversal
-    const safeFilename = path.basename(filename);
-    const filePath = path.join(UPLOADS_DIR, safeFilename);
+    const filePath = findReceiptFile(filename);
 
-    if (!fs.existsSync(filePath)) {
+    if (!filePath || !fs.existsSync(filePath)) {
       return reply.code(404).send({ error: 'הקובץ לא נמצא' });
     }
 
-    const ext = path.extname(safeFilename).toLowerCase();
+    const ext = path.extname(filePath).toLowerCase();
     let mime = 'application/octet-stream';
     if (ext === '.jpg' || ext === '.jpeg') mime = 'image/jpeg';
     else if (ext === '.png') mime = 'image/png';
@@ -235,10 +471,10 @@ export default async function receiptsRoutes(fastify, options) {
         return reply.code(404).send({ error: 'Receipt not found' });
       }
 
-      const filePath = res.rows[0].file_path;
-      if (filePath) {
-        const fullPath = path.join(UPLOADS_DIR, path.basename(filePath));
-        if (fs.existsSync(fullPath)) {
+      const filePathVal = res.rows[0].file_path;
+      if (filePathVal) {
+        const fullPath = findReceiptFile(filePathVal);
+        if (fullPath && fs.existsSync(fullPath)) {
           try {
             fs.unlinkSync(fullPath);
           } catch (err) {
@@ -271,13 +507,16 @@ export default async function receiptsRoutes(fastify, options) {
       }
 
       const receipt = res.rows[0];
+      const txRes = await pool.query('SELECT id, date, amount, merchant_name FROM transactions WHERE id = $1', [receipt.transaction_id]);
+      const txData = txRes.rows[0];
+
       let aiResult;
 
       if (receipt.file_type === 'url' && receipt.source_url) {
         aiResult = await analyzeReceiptUrl(receipt.source_url);
       } else if (receipt.file_path) {
-        const fullPath = path.join(UPLOADS_DIR, path.basename(receipt.file_path));
-        if (!fs.existsSync(fullPath)) {
+        const fullPath = findReceiptFile(receipt.file_path);
+        if (!fullPath || !fs.existsSync(fullPath)) {
           return reply.code(404).send({ error: 'קובץ המקור אינו קיים בדיסק' });
         }
         const buffer = fs.readFileSync(fullPath);
@@ -290,7 +529,7 @@ export default async function receiptsRoutes(fastify, options) {
         `UPDATE transaction_receipts
          SET ai_analyzed = $1, ai_provider = $2, extracted_data = $3
          WHERE id = $4
-         RETURNING id, transaction_id, file_name, file_type, file_size, source_url, 
+         RETURNING id, transaction_id, file_name, file_type, file_size, file_path, source_url, 
                    ai_analyzed, ai_provider, extracted_data, created_at`,
         [
           aiResult.ai_analyzed || false,
@@ -300,7 +539,16 @@ export default async function receiptsRoutes(fastify, options) {
         ]
       );
 
-      return reply.send({ success: true, data: updated.rows[0] });
+      const savedReceipt = updated.rows[0];
+      const vData = await computeReceiptVerification(txData, savedReceipt);
+
+      return reply.send({ 
+        success: true, 
+        data: {
+          ...savedReceipt,
+          ...vData,
+        }
+      });
     } catch (err) {
       fastify.log.error(err, 'Failed to reanalyze receipt');
       return reply.code(500).send({ error: 'Reanalysis failed', message: err.message });

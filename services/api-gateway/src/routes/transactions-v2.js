@@ -1326,9 +1326,9 @@ export default async function transactionsV2Routes(fastify, options) {
         const initData = request.headers['x-telegram-init-data'] || request.query?.initData;
         const tgCheck = verifyTelegramWebAppData(initData, telegramBotToken, telegramChatId);
         if (!tgCheck.valid) {
-          reply.code(403).send({
-            error: 'Forbidden',
-            message: `גישה חסומה: נדרשת כניסה מתוך חשבון הטלגרם המורשה שלך בלבד (${tgCheck.reason})`,
+          reply.code(404).send({
+            error: 'Not Found',
+            message: 'Not Found',
           });
           return false;
         }

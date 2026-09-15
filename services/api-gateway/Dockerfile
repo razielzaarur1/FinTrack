@@ -6,6 +6,9 @@ WORKDIR /app
 # Create non-root user and group
 RUN addgroup -S app && adduser -S app -G app
 
+# Create upload directories with permissions
+RUN mkdir -p /app/uploads /opt/finapp/uploads && chown -R app:app /app /opt/finapp 2>/dev/null || true
+
 # Install dependencies first for better layer caching
 COPY package*.json ./
 RUN npm install --omit=dev

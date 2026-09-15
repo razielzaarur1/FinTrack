@@ -20,7 +20,8 @@ import {
   Image as ImageIcon,
   CheckCircle2,
   Calendar,
-  DollarSign
+  DollarSign,
+  ArrowRightLeft
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useApp } from '@/lib/app-context';
@@ -40,6 +41,7 @@ export default function ReceiptsTab({ tx, categories, onSplitsUpdated, onReceipt
   const [uploadMode, setUploadMode] = useState('file'); // 'file' | 'url'
   const [digitalUrl, setDigitalUrl] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [movingReceipt, setMovingReceipt] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [statusMessage, setStatusMessage] = useState(null); // { type: 'error' | 'success', text: string }
 
@@ -160,6 +162,33 @@ export default function ReceiptsTab({ tx, categories, onSplitsUpdated, onReceipt
     }
   };
 
+  // Move receipt to a suggested matching transaction
+  const handleMoveReceipt = async (targetTxId, targetTxName) => {
+    const activeReceipt = receipts[activeReceiptIndex];
+    if (!activeReceipt?.id || !targetTxId) return;
+    setMovingReceipt(true);
+    setStatusMessage(null);
+    try {
+      const res = await api.moveReceipt(activeReceipt.id, targetTxId);
+      if (res.error) {
+        setStatusMessage({ type: 'error', text: res.error });
+      } else {
+        setStatusMessage({
+          type: 'success',
+          text: `החשבונית הועברה בהצלחה לתנועה "${targetTxName || 'הנבחרת'}"! 🎉`,
+        });
+        await loadReceipts();
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('fintrack_tx_updated'));
+        }
+      }
+    } catch (err) {
+      setStatusMessage({ type: 'error', text: err.message || 'שגיאה בהעברת החשבונית' });
+    } finally {
+      setMovingReceipt(false);
+    }
+  };
+
   // Delete current receipt
   const handleDeleteReceipt = async (receiptId) => {
     if (!confirm('האם אתה בטוח שברצונך למחוק חשבונית זו?')) return;
@@ -220,7 +249,7 @@ export default function ReceiptsTab({ tx, categories, onSplitsUpdated, onReceipt
       return item;
     });
     setItems(updated);
-    setSelectedIndices(new Set()); // deselect after bulk assignment
+    setSelectedIndices(new Set());
     setBulkPickerOpen(false);
     setStatusMessage({
       type: 'success',
@@ -381,7 +410,7 @@ export default function ReceiptsTab({ tx, categories, onSplitsUpdated, onReceipt
                 גרור לכאן חשבונית או לחץ לבחירה
               </div>
               <div className="text-[11px] text-dark-text-muted">
-                תמיכה בתמונות (JPG, PNG, HEIC) וקובצי PDF עד 10MB
+                תמיכה בתמונות (JPG, PNG, HEIC) וקובצי PDF עד 15MB
               </div>
             </div>
           </div>
@@ -454,7 +483,7 @@ export default function ReceiptsTab({ tx, categories, onSplitsUpdated, onReceipt
                   {currentReceipt.ai_analyzed && (
                     <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 font-semibold flex items-center gap-1">
                       <Sparkles className="w-2.5 h-2.5" />
-                      <span>נותח ב-Gemini AI</span>
+                      <span>{currentReceipt.ai_provider || 'Gemini AI'}</span>
                     </span>
                   )}
                 </div>
@@ -527,6 +556,89 @@ export default function ReceiptsTab({ tx, categories, onSplitsUpdated, onReceipt
               💡 שם העסק והסכום מהחשבונית מוצגים כהשוואה בלבד ואינם דורסים את נתוני התנועה המקורית בבנק.
             </div>
           </div>
+
+          {/* Discrepancy Verification Alert Box */}
+          {currentReceipt.verification?.isMismatch && (
+            <div className="p-3.5 rounded-2xl border border-amber-500/30 bg-amber-500/10 space-y-2 text-xs">
+              <div className="flex items-center gap-2 font-bold text-amber-400">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>שים לב: זוהתה אי-התאמה בין פרטי החשבונית לתנועה שנבחרה</span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-dark-text light:text-light-text pr-6">
+                {currentReceipt.verification?.isAmountMismatch && (
+                  <div className="p-2.5 rounded-xl bg-dark-surface/80 light:bg-light-surface/80 border border-amber-500/20 space-y-1">
+                    <div className="text-amber-400 font-bold">אי-התאמה בסכום:</div>
+                    <div>סכום חשבונית: <span className="font-bold text-amber-300">{formatILS(currentReceipt.verification.receiptTotal)}</span></div>
+                    <div>סכום תנועה בבנק: <span className="font-bold">{formatILS(currentReceipt.verification.txAmount)}</span></div>
+                  </div>
+                )}
+
+                {currentReceipt.verification?.isDateMismatch && (
+                  <div className="p-2.5 rounded-xl bg-dark-surface/80 light:bg-light-surface/80 border border-amber-500/20 space-y-1">
+                    <div className="text-amber-400 font-bold">אי-התאמה בתאריך:</div>
+                    <div>תאריך חשבונית: <span className="font-bold text-amber-300">{currentReceipt.verification.receiptDate}</span></div>
+                    <div>תאריך תנועה בבנק: <span className="font-bold">{currentReceipt.verification.txDate}</span></div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Suggested Matching Transactions Card */}
+          {currentReceipt.suggestedMatches && currentReceipt.suggestedMatches.length > 0 && (
+            <div className="p-4 rounded-2xl border border-indigo-500/30 bg-indigo-500/10 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-xs font-bold text-indigo-400">
+                  <ArrowRightLeft className="w-4 h-4 shrink-0" />
+                  <span>נמצאה תנועה אחרת שנראית מתאימה יותר לחשבונית זו:</span>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                {currentReceipt.suggestedMatches.map((suggestedTx) => (
+                  <div
+                    key={suggestedTx.id}
+                    className="p-3 rounded-xl border border-indigo-500/20 bg-dark-surface light:bg-light-surface flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm"
+                  >
+                    <div className="min-w-0 space-y-0.5">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] px-1.5 py-0.2 rounded bg-indigo-500/15 text-indigo-400 font-semibold">
+                          {suggestedTx.accountDisplayName || suggestedTx.bankCompany}
+                        </span>
+                        <span className="text-xs font-bold text-dark-text light:text-light-text truncate">
+                          {suggestedTx.merchantName || suggestedTx.description}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-dark-text-muted flex items-center gap-2">
+                        <span>{suggestedTx.date}</span>
+                        <span>•</span>
+                        <span className="font-bold text-dark-text light:text-light-text">
+                          {formatILS(suggestedTx.amount)}
+                        </span>
+                        {suggestedTx.category && (
+                          <>
+                            <span>•</span>
+                            <span className="text-brand-primary">{suggestedTx.category}</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={movingReceipt}
+                      onClick={() => handleMoveReceipt(suggestedTx.id, suggestedTx.merchantName || suggestedTx.description)}
+                      className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shrink-0 transition-all flex items-center justify-center gap-1.5 shadow-md shadow-indigo-600/20 disabled:opacity-50"
+                    >
+                      <ArrowRightLeft className="w-3.5 h-3.5" />
+                      <span>{movingReceipt ? 'מעביר...' : 'העבר חשבונית לתנועה זו'}</span>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Interactive Items List with Multi-Select */}
           {items.length > 0 ? (

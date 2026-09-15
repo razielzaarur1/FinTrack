@@ -390,6 +390,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ apiKey }),
     }),
+  moveReceipt: (receiptId, targetTransactionId) =>
+    request(`/api/v2/transactions/receipts/${receiptId}/move`, {
+      method: 'POST',
+      body: JSON.stringify({ targetTransactionId }),
+    }),
   getReceiptFileUrl: (filename) => `/api/v2/transactions/receipts/file/${encodeURIComponent(filename)}`,
 };
 
