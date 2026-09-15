@@ -873,8 +873,12 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
                           </div>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
-                          <span className="px-2 py-0.5 rounded-full bg-brand-primary/20 text-brand-primary font-medium text-[10px]">
-                            {lnk.linkType === 'refund' ? 'זיכוי' : lnk.linkType === 'correction' ? 'תיקון' : 'קשורה'}
+                          <span className={`px-2 py-0.5 rounded-full font-medium text-[10px] ${
+                            lnk.linkType === 'installment'
+                              ? 'bg-indigo-500/20 text-indigo-400 font-bold'
+                              : 'bg-brand-primary/20 text-brand-primary'
+                          }`}>
+                            {lnk.linkType === 'refund' ? 'זיכוי' : lnk.linkType === 'correction' ? 'תיקון' : lnk.linkType === 'installment' ? 'תשלום בעסקה 💳' : 'קשורה'}
                           </span>
                           <button
                             onClick={() => handleUnlink(lnk.linkId)}

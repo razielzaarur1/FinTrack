@@ -25,8 +25,7 @@ import {
   Receipt,
   Coins
 } from 'lucide-react';
-import { api } from '@/lib/api';
-import { formatILS, formatDate, cleanSpacedHebrew, getTransactionTitle, formatCurrency } from '@/lib/formatters';
+import { formatILS, formatDate, cleanSpacedHebrew, getTransactionTitle, formatCurrency, extractInstallmentInfo } from '@/lib/formatters';
 import { useApp } from '@/lib/app-context';
 import CategoryBadge from '@/components/common/CategoryBadge';
 import CategoryPicker from '@/components/common/CategoryPicker';
@@ -688,6 +687,14 @@ function TransactionsContent() {
               >
                 הכנסות
               </button>
+              <button
+                onClick={() => setType('installments')}
+                className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg font-semibold text-center transition-all ${
+                  type === 'installments' ? 'bg-indigo-600 text-white shadow-sm' : 'text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
+                }`}
+              >
+                תשלומים 💳
+              </button>
             </div>
 
             {/* Toggle Advanced Filters Button */}
@@ -847,7 +854,7 @@ function TransactionsContent() {
 
             {type !== 'all' && (
               <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-brand-primary/15 text-brand-primary font-medium text-[11px]">
-                <span>סוג: {type === 'expense' ? 'הוצאות' : 'הכנסות'}</span>
+                <span>סוג: {type === 'expense' ? 'הוצאות' : type === 'income' ? 'הכנסות' : 'תשלומים 💳'}</span>
                 <button onClick={() => setType('all')}>
                   <X className="w-3 h-3" />
                 </button>
@@ -1022,6 +1029,20 @@ function TransactionsContent() {
                         <span className="font-bold text-xs sm:text-sm text-dark-text light:text-light-text truncate max-w-[200px] sm:max-w-xs">
                           {merchantTitle}
                         </span>
+
+                        {/* Installment Badge */}
+                        {(() => {
+                          const inst = extractInstallmentInfo(tx);
+                          if (inst.isInstallment) {
+                            return (
+                              <span className="px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-500 dark:text-indigo-300 text-[10px] font-bold inline-flex items-center gap-1 shrink-0" title={`עסקת תשלומים: ${inst.text}`}>
+                                <span>💳</span>
+                                <span>{inst.text}</span>
+                              </span>
+                            );
+                          }
+                          return null;
+                        })()}
 
                         {isAtm && (
                           <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-500 dark:text-amber-400 text-[10px] font-bold inline-flex items-center gap-0.5 shrink-0" title="משיכת מזומן">

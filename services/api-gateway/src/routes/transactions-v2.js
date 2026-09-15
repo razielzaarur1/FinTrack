@@ -39,7 +39,7 @@ const noteSchema = z.object({
 
 const linkSchema = z.object({
   targetTransactionId: z.string().uuid('Target transaction ID must be a valid UUID'),
-  linkType: z.enum(['refund', 'correction', 'related']).default('related'),
+  linkType: z.enum(['refund', 'correction', 'related', 'installment']).default('related'),
   note: z.string().optional().nullable(),
 });
 
@@ -179,6 +179,135 @@ export async function repairBitTransactions() {
   }
 }
 
+/**
+ * Automatically discovers and links transactions belonging to the same installment deal
+ */
+export async function autoLinkInstallmentTransactions(dbPool, specificTxId = null) {
+  try {
+    let txFilter = '';
+    const params = [];
+    if (specificTxId) {
+      params.push(specificTxId);
+      txFilter = 'AND (t.account_id = (SELECT account_id FROM transactions WHERE id = $1))';
+    }
+
+    const res = await dbPool.query(`
+      SELECT 
+        t.id, t.account_id, t.date, t.amount, t.merchant_name, t.description, t.raw_data
+      FROM transactions t
+      WHERE (
+        (t.raw_data->'installments'->>'total' ~ '^[0-9]+$' AND (t.raw_data->'installments'->>'total')::int > 1)
+        OR (t.raw_data->'installments'->>'count' ~ '^[0-9]+$' AND (t.raw_data->'installments'->>'count')::int > 1)
+        OR (t.raw_data->>'installments') ILIKE '%מתוך%'
+        OR (t.raw_data->>'installments') ILIKE '%/%'
+        OR t.description ~* '(תשלום|תשלומים|עסקה)?\\s*\\(?[0-9]{1,2}\\s*(מתוך|/)\\s*[0-9]{1,2}\\)?'
+        OR t.merchant_name ~* '(תשלום|תשלומים|עסקה)?\\s*\\(?[0-9]{1,2}\\s*(מתוך|/)\\s*[0-9]{1,2}\\)?'
+        OR (t.raw_data->>'memo') ~* '(תשלום|תשלומים|עסקה)?\\s*\\(?[0-9]{1,2}\\s*(מתוך|/)\\s*[0-9]{1,2}\\)?'
+        OR (t.raw_data->>'description') ~* '(תשלום|תשלומים|עסקה)?\\s*\\(?[0-9]{1,2}\\s*(מתוך|/)\\s*[0-9]{1,2}\\)?'
+        OR ((t.raw_data->>'originalAmount')::numeric > ABS(t.amount) * 1.5 AND t.amount < 0)
+      )
+      ${txFilter}
+      ORDER BY t.date ASC
+    `, params);
+
+    if (res.rows.length < 2) return;
+
+    const parseTx = (row) => {
+      let raw = row.raw_data;
+      if (typeof raw === 'string') {
+        try { raw = JSON.parse(raw); } catch (e) { raw = {}; }
+      }
+      if (!raw || typeof raw !== 'object') raw = {};
+
+      let total = 1;
+      let number = 1;
+
+      // 1. structured
+      const inst = raw.installments;
+      if (inst && typeof inst === 'object') {
+        total = parseInt(inst.total ?? inst.count ?? 1, 10);
+        number = parseInt(inst.number ?? inst.current ?? 1, 10);
+      }
+
+      // 2. regex
+      if (total <= 1) {
+        const candidates = [row.description, row.merchant_name, raw.description, raw.memo, raw.originalDescription].filter(Boolean);
+        for (const str of candidates) {
+          const match = String(str).match(/(?:תשלום|תשלומים|עסקה)?\s*\(?(\d{1,2})\s*(?:מתוך|\/)\s*(\d{1,2})\)?/);
+          if (match) {
+            number = parseInt(match[1], 10);
+            total = parseInt(match[2], 10);
+            break;
+          }
+        }
+      }
+
+      // 3. ratio
+      const origAmt = Math.abs(parseFloat(raw.originalAmount || 0));
+      const chargedAmt = Math.abs(parseFloat(raw.chargedAmount || row.amount || 0));
+      if (total <= 1 && origAmt > 0 && chargedAmt > 0 && origAmt > chargedAmt * 1.5) {
+        const ratio = Math.round(origAmt / chargedAmt);
+        if (ratio >= 2 && ratio <= 60) {
+          total = ratio;
+        }
+      }
+
+      let baseMerchant = cleanSpacedHebrew(row.merchant_name || row.description || '')
+        .replace(/(?:תשלום|תשלומים|עסקה)?\s*\(?\d{1,2}\s*(?:מתוך|\/)\s*\d{1,2}\)?/gi, '')
+        .replace(/[0-9]+/g, '')
+        .trim()
+        .toLowerCase();
+
+      const normalizedDealAmount = origAmt > 0 ? Math.round(origAmt) : Math.round(chargedAmt * (total > 1 ? total : 1));
+
+      return {
+        id: row.id,
+        accountId: row.account_id,
+        number,
+        total,
+        baseMerchant,
+        dealAmount: normalizedDealAmount,
+        monthlyAmount: Math.round(chargedAmt),
+      };
+    };
+
+    const groups = new Map();
+    for (const row of res.rows) {
+      const parsed = parseTx(row);
+      if (parsed.total <= 1 && parsed.dealAmount === 0) continue;
+
+      const groupKey = `${parsed.accountId}_${parsed.baseMerchant}_${parsed.total}_${parsed.dealAmount || parsed.monthlyAmount}`;
+      if (!groups.has(groupKey)) {
+        groups.set(groupKey, []);
+      }
+      groups.get(groupKey).push(parsed);
+    }
+
+    for (const [key, txList] of groups.entries()) {
+      if (txList.length < 2) continue;
+      for (let i = 0; i < txList.length; i++) {
+        for (let j = i + 1; j < txList.length; j++) {
+          const a = txList[i];
+          const b = txList[j];
+          if (a.id === b.id) continue;
+
+          const [idA, idB] = a.id < b.id ? [a.id, b.id] : [b.id, a.id];
+
+          await dbPool.query(`
+            INSERT INTO transaction_links (transaction_id_a, transaction_id_b, link_type, note)
+            VALUES ($1, $2, 'installment', 'קישור אוטומטי של עסקת תשלומים')
+            ON CONFLICT (transaction_id_a, transaction_id_b) 
+            DO UPDATE SET link_type = 'installment'
+            WHERE transaction_links.link_type = 'related'
+          `, [idA, idB]);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[AutoLinkInstallments] Warning:', err.message);
+  }
+}
+
 const cursorPaginationQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(500).default(50),
   cursor: z.string().optional(), // ISO date or compound cursor
@@ -189,7 +318,8 @@ const cursorPaginationQuerySchema = z.object({
   categories: z.string().optional(),
   currency: z.string().optional(),
   currencies: z.string().optional(),
-  type: z.enum(['income', 'expense', 'all']).optional(),
+  type: z.enum(['income', 'expense', 'installments', 'all']).optional(),
+  isInstallment: z.coerce.boolean().optional(),
   startDate: z.string().optional(),
   endDate: z.string().optional(),
   search: z.string().optional(),
@@ -205,6 +335,7 @@ const cursorPaginationQuerySchema = z.object({
 export default async function transactionsV2Routes(fastify, options) {
   repair0AmountTransactions().catch(() => {});
   repairBitTransactions().catch(() => {});
+  autoLinkInstallmentTransactions(pool).catch(() => {});
 
   // GET /api/v2/transactions - Cursor-based Infinite Scroll Transactions with rich multi-filters
   fastify.get('/', async (request, reply) => {
@@ -227,6 +358,7 @@ export default async function transactionsV2Routes(fastify, options) {
       currency,
       currencies,
       type,
+      isInstallment,
       startDate,
       endDate,
       search,
@@ -304,11 +436,23 @@ export default async function transactionsV2Routes(fastify, options) {
       conditions.push(`t.is_flagged = $${values.length}`);
     }
 
-    // Transaction Type: income (positive amount) vs expense (negative amount)
+    // Transaction Type: income (positive amount) vs expense (negative amount) vs installments
     if (type === 'income') {
       conditions.push(`t.amount > 0`);
     } else if (type === 'expense') {
       conditions.push(`t.amount < 0`);
+    } else if (type === 'installments' || isInstallment === true) {
+      conditions.push(`(
+        (t.raw_data->'installments'->>'total' ~ '^[0-9]+$' AND (t.raw_data->'installments'->>'total')::int > 1)
+        OR (t.raw_data->'installments'->>'count' ~ '^[0-9]+$' AND (t.raw_data->'installments'->>'count')::int > 1)
+        OR (t.raw_data->>'installments') ILIKE '%מתוך%'
+        OR (t.raw_data->>'installments') ILIKE '%/%'
+        OR t.description ~* '(תשלום|תשלומים|עסקה)?\\s*\\(?[0-9]{1,2}\\s*(מתוך|/)\\s*[0-9]{1,2}\\)?'
+        OR t.merchant_name ~* '(תשלום|תשלומים|עסקה)?\\s*\\(?[0-9]{1,2}\\s*(מתוך|/)\\s*[0-9]{1,2}\\)?'
+        OR (t.raw_data->>'memo') ~* '(תשלום|תשלומים|עסקה)?\\s*\\(?[0-9]{1,2}\\s*(מתוך|/)\\s*[0-9]{1,2}\\)?'
+        OR (t.raw_data->>'description') ~* '(תשלום|תשלומים|עסקה)?\\s*\\(?[0-9]{1,2}\\s*(מתוך|/)\\s*[0-9]{1,2}\\)?'
+        OR ((t.raw_data->>'originalAmount')::numeric > ABS(t.amount) * 1.5 AND t.amount < 0)
+      )`);
     }
 
     // Amount range (absolute or signed)
@@ -1238,6 +1382,7 @@ export default async function transactionsV2Routes(fastify, options) {
   // GET /api/v2/transactions/:id/links - Get linked transactions
   fastify.get('/:id/links', async (request, reply) => {
     const { id } = request.params;
+    await autoLinkInstallmentTransactions(pool, id).catch(() => {});
     const query = `
       SELECT 
         tl.id AS "linkId",
@@ -1875,12 +2020,15 @@ export default async function transactionsV2Routes(fastify, options) {
     const token = request.query?.token || request.headers['x-tma-token'];
     if (!verifyTmaToken(token, id)) return reply.code(401).send({ error: 'Unauthorized' });
 
+    await autoLinkInstallmentTransactions(pool, id).catch(() => {});
+
     try {
       const query = `
         SELECT 
           tl.id AS "linkId",
           tl.link_type AS "linkType",
           tl.note AS "linkNote",
+          tl.created_at AS "linkedAt",
           t.id AS "id",
           t.date AS "date",
           t.amount AS "amount",
@@ -1893,10 +2041,12 @@ export default async function transactionsV2Routes(fastify, options) {
           b.bank_company AS "bankCompany"
         FROM transaction_links tl
         JOIN transactions t ON (
-          CASE WHEN tl.transaction_id = $1 THEN tl.linked_transaction_id ELSE tl.transaction_id END = t.id
+          (tl.transaction_id_a = $1 AND tl.transaction_id_b = t.id)
+          OR
+          (tl.transaction_id_b = $1 AND tl.transaction_id_a = t.id)
         )
         JOIN bank_accounts b ON t.account_id = b.id
-        WHERE tl.transaction_id = $1 OR tl.linked_transaction_id = $1
+        WHERE tl.transaction_id_a = $1 OR tl.transaction_id_b = $1
         ORDER BY t.date DESC
       `;
       const res = await pool.query(query, [id]);
@@ -1928,11 +2078,14 @@ export default async function transactionsV2Routes(fastify, options) {
     }
 
     try {
+      const [idA, idB] = id < targetTransactionId ? [id, targetTransactionId] : [targetTransactionId, id];
       const res = await pool.query(
-        `INSERT INTO transaction_links (transaction_id, linked_transaction_id, link_type, note, user_id)
-         VALUES ($1, $2, $3, $4, '00000000-0000-0000-0000-000000000001')
+        `INSERT INTO transaction_links (transaction_id_a, transaction_id_b, link_type, note)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (transaction_id_a, transaction_id_b)
+         DO UPDATE SET link_type = EXCLUDED.link_type, note = EXCLUDED.note
          RETURNING id AS "linkId", link_type AS "linkType", note`,
-        [id, targetTransactionId, linkType, note]
+        [idA, idB, linkType, note]
       );
       return reply.code(201).send({ success: true, data: res.rows[0] });
     } catch (err) {
@@ -1951,7 +2104,7 @@ export default async function transactionsV2Routes(fastify, options) {
 
     try {
       await pool.query(
-        `DELETE FROM transaction_links WHERE id = $1 AND (transaction_id = $2 OR linked_transaction_id = $2)`,
+        `DELETE FROM transaction_links WHERE id = $1 AND (transaction_id_a = $2 OR transaction_id_b = $2)`,
         [linkId, id]
       );
       return reply.send({ success: true });

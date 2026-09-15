@@ -1213,7 +1213,7 @@ export default function TmaTransactionPage() {
                             </div>
                             <div className="flex items-center gap-2 shrink-0">
                               <span className="px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-400 font-medium text-[10px]">
-                                {lnk.linkType === 'refund' ? 'זיכוי' : lnk.linkType === 'correction' ? 'תיקון' : 'קשורה'}
+                                {lnk.linkType === 'refund' ? 'זיכוי' : lnk.linkType === 'correction' ? 'תיקון' : lnk.linkType === 'installment' ? 'תשלומים 💳' : 'קשורה'}
                               </span>
                               <button
                                 type="button"
