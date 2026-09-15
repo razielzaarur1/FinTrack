@@ -8,8 +8,8 @@ services:
     networks:
       - fintrack-net
     ports:
-      - "443:443"
-      - "80:80"
+      - "${HOST_HTTPS_PORT:-4749}:443"
+      - "${HOST_HTTP_PORT:-4750}:80"
       - "4748:4748"
     depends_on:
       - api-gateway
