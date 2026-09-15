@@ -5,7 +5,6 @@ import { useParams, useSearchParams } from 'next/navigation';
 import Script from 'next/script';
 import { 
   Check, 
-  Tag, 
   X, 
   AlertCircle, 
   CreditCard, 
@@ -13,10 +12,15 @@ import {
   FileText, 
   ShieldAlert, 
   Sparkles,
-  ArrowRight,
-  ExternalLink
+  Save,
+  Layers,
+  Info,
+  Tag
 } from 'lucide-react';
 import { api } from '@/lib/api';
+import CategoryBadge from '@/components/common/CategoryBadge';
+import CategoryPicker from '@/components/common/CategoryPicker';
+import { formatILS, formatDate, cleanSpacedHebrew, getTransactionTitle } from '@/lib/formatters';
 
 export default function TmaTransactionPage() {
   const params = useParams();
@@ -28,14 +32,16 @@ export default function TmaTransactionPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [tx, setTx] = useState(null);
-  const [categories, setCategories] = useState([]);
 
-  // Form edit state
+  // Form edit state (identical to TransactionDrawer)
   const [merchantName, setMerchantName] = useState('');
   const [category, setCategory] = useState('');
   const [userDescription, setUserDescription] = useState('');
   const [isIgnored, setIsIgnored] = useState(false);
-  const [applyToSimilar, setApplyToSimilar] = useState(true);
+  const [applyToSimilar, setApplyToSimilar] = useState(false);
+
+  // Active tab state (details)
+  const [activeTab, setActiveTab] = useState('details');
 
   // Save feedback
   const [saving, setSaving] = useState(false);
@@ -90,7 +96,7 @@ export default function TmaTransactionPage() {
     };
   }, []);
 
-  // Fetch transaction and categories using scoped zero-trust token and initData
+  // Fetch transaction using scoped zero-trust token and initData
   useEffect(() => {
     if (!id || isTelegramEnv === null) return;
     if (isTelegramEnv === false) {
@@ -104,7 +110,6 @@ export default function TmaTransactionPage() {
       setError('');
 
       try {
-        // 1. Fetch transaction with token and Telegram initData
         const txRes = await api.getTmaTransaction(id, token, initData);
         if (!isMounted) return;
 
@@ -120,12 +125,6 @@ export default function TmaTransactionPage() {
         setCategory(data.category || '');
         setUserDescription(data.userDescription || '');
         setIsIgnored(Boolean(data.isIgnored));
-
-        // 2. Fetch categories for picker
-        const catRes = await api.getTmaCategories(token, initData);
-        if (isMounted && catRes.data?.data) {
-          setCategories(catRes.data.data);
-        }
       } catch (err) {
         if (isMounted) {
           setError(err.message || 'שגיאת רשת בטעינת הנתונים');
@@ -182,238 +181,186 @@ export default function TmaTransactionPage() {
     }
   };
 
-  const selectedCatObj = categories.find((c) => c.name === category);
-
-  // Common quick categories
-  const quickCategories = ['מכולת', 'מסעדות', 'קניות', 'תחבורה', 'בידור', 'חשבונות', 'בריאות'];
+  const currentAmountNum = parseFloat(tx?.amount) || 0;
 
   return (
     <>
       <Script src="https://telegram.org/js/telegram-web-app.js" strategy="beforeInteractive" />
 
-      <div className="min-h-screen bg-slate-950 text-slate-100 font-sans p-4 pb-12 rtl flex flex-col items-center justify-start">
-        <div className="w-full max-w-md space-y-4">
-          {/* Header Bar */}
-          <div className="flex items-center justify-between pb-2 border-b border-slate-800">
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-indigo-500 animate-pulse" />
-              <h1 className="text-sm font-semibold text-slate-200">FinTrack • עריכת תנועה</h1>
+      <div className="min-h-screen bg-slate-950 text-slate-100 font-sans rtl flex flex-col justify-between overflow-x-hidden">
+        {/* Blocked Browser View */}
+        {isTelegramEnv === false && (
+          <div className="p-6 m-4 rounded-2xl bg-slate-900 border border-slate-800 text-center space-y-4 shadow-2xl my-auto">
+            <div className="w-14 h-14 rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 mx-auto">
+              <ShieldAlert className="w-7 h-7" />
             </div>
-            {isTelegramEnv && (
-              <button
-                onClick={handleClose}
-                className="text-xs px-2.5 py-1 rounded-lg bg-slate-800 text-slate-400 hover:text-white transition-colors"
-              >
-                סגור
-              </button>
-            )}
+            <div className="space-y-1">
+              <h2 className="text-base font-bold text-slate-100">גישה חסומה (403 Forbidden)</h2>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                ממשק עריכה זה מוגן ונגיש אך ורק מתוך אפליקציית טלגרם בחשבונך המורשה.
+              </p>
+            </div>
+            <p className="text-[11px] text-slate-500 bg-slate-950 p-3 rounded-xl border border-slate-800/80">
+              🔒 נחסמה גישה מדפדפן חיצוני או ממשתמש שאינו מורשה בהגדרות המערכת.
+            </p>
           </div>
+        )}
 
-          {/* Blocked Browser View */}
-          {isTelegramEnv === false && (
-            <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 text-center space-y-4 shadow-2xl my-8">
-              <div className="w-14 h-14 rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 mx-auto">
-                <ShieldAlert className="w-7 h-7" />
-              </div>
-              <div className="space-y-1">
-                <h2 className="text-base font-bold text-slate-100">גישה חסומה (403 Forbidden)</h2>
-                <p className="text-xs text-slate-400 leading-relaxed">
-                  ממשק עריכה זה מוגן ונגיש אך ורק מתוך אפליקציית טלגרם בחשבונך המורשה.
-                </p>
-              </div>
-              <p className="text-[11px] text-slate-500 bg-slate-950 p-3 rounded-xl border border-slate-800/80">
-                🔒 נחסמה גישה מדפדפן חיצוני או ממשתמש שאינו מורשה בהגדרות המערכת.
-              </p>
+        {/* Loading State */}
+        {loading && isTelegramEnv !== false && (
+          <div className="p-12 text-center space-y-3 my-auto">
+            <div className="w-9 h-9 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto" />
+            <p className="text-xs text-slate-400">טוען את פרטי התנועה...</p>
+          </div>
+        )}
+
+        {/* Error State */}
+        {!loading && error && isTelegramEnv !== false && (
+          <div className="p-6 m-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs space-y-2 my-auto">
+            <div className="flex items-center gap-2 font-semibold text-sm">
+              <AlertCircle className="w-5 h-5 shrink-0" />
+              <span>שגיאה בגישה לתנועה</span>
             </div>
-          )}
+            <p className="text-slate-300 leading-relaxed">{error}</p>
+            <p className="text-[11px] text-slate-400 pt-2 border-t border-rose-500/20">
+              ודא שפתחת את הקישור מתוך הודעת הבוט בטלגרם ושלא חלפו יותר מ-7 ימים מעת קבלתה.
+            </p>
+          </div>
+        )}
 
-          {/* Loading State */}
-          {loading && isTelegramEnv !== false && (
-            <div className="p-8 text-center space-y-3">
-              <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto" />
-              <p className="text-xs text-slate-400">טוען את פרטי התנועה...</p>
-            </div>
-          )}
-
-          {/* Error State */}
-          {!loading && error && isTelegramEnv !== false && (
-            <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs space-y-2">
-              <div className="flex items-center gap-2 font-semibold">
-                <AlertCircle className="w-4 h-4" />
-                <span>שגיאה בגישה לתנועה</span>
-              </div>
-              <p className="text-slate-300">{error}</p>
-              <p className="text-[11px] text-slate-400">
-                ודא שפתחת את הקישור מתוך הודעת הבוט בטלגרם ושלא חלפו יותר מ-7 ימים מעת קבלתה.
-              </p>
-            </div>
-          )}
-
-          {/* Main Form */}
-          {!loading && tx && isTelegramEnv !== false && (
-            <form onSubmit={handleSave} className="space-y-4">
-              {/* Transaction Summary Card */}
-              <div className="p-4 rounded-2xl bg-gradient-to-b from-slate-900 to-slate-900/90 border border-slate-800 shadow-xl space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-medium text-slate-400 flex items-center gap-1.5">
-                    <Calendar className="w-3.5 h-3.5 text-indigo-400" />
-                    {tx.date}
-                  </span>
-                  <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 flex items-center gap-1">
-                    <CreditCard className="w-3 h-3 text-slate-400" />
-                    {tx.accountDisplayName} {tx.cardLast4 ? `(••${tx.cardLast4})` : ''}
-                  </span>
-                </div>
-
-                <div className="text-center py-2">
-                  <div
-                    className={`text-3xl font-extrabold tracking-tight ${
-                      tx.amount > 0 ? 'text-emerald-400' : 'text-slate-100'
-                    }`}
-                  >
-                    {tx.amount > 0 ? '+' : ''}₪{Math.abs(tx.amount).toLocaleString('he-IL', { minimumFractionDigits: 2 })}
+        {/* Main Content (Matching TransactionDrawer UI) */}
+        {!loading && tx && isTelegramEnv !== false && (
+          <div className="w-full max-w-lg mx-auto min-h-screen flex flex-col justify-between bg-slate-950 border-x border-slate-800/80 shadow-2xl">
+            {/* Header (Exact TransactionDrawer layout) */}
+            <div className="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between bg-slate-900/60 sticky top-0 backdrop-blur-md z-10">
+              <div className="flex items-center gap-3 min-w-0">
+                <CategoryBadge category={category || tx.category} size={22} />
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-indigo-500/15 text-indigo-400">
+                      {tx.accountDisplayName || tx.bankCompany?.toUpperCase()} {tx.cardLast4 ? `(••${tx.cardLast4})` : ''}
+                    </span>
                   </div>
-                  <div className="text-xs text-slate-400 mt-1 truncate px-2" title={tx.description}>
-                    {tx.description || tx.merchantName}
+                  <div className="text-base sm:text-lg font-bold mt-0.5 truncate text-slate-100 max-w-[220px] sm:max-w-xs">
+                    {userDescription || cleanSpacedHebrew(getTransactionTitle(tx))}
+                  </div>
+                  <div className="text-xs text-slate-400 font-mono">
+                    {formatDate(tx.date, 'he')} • {formatILS(tx.amount, { showSign: true })}
                   </div>
                 </div>
               </div>
+              <button
+                type="button"
+                onClick={handleClose}
+                className="p-2 rounded-xl bg-slate-800/80 hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+                title="סגור"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
 
-              {/* Merchant Name Input */}
-              <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-1.5">
-                <label className="text-[11px] font-semibold text-slate-400">שם בית העסק</label>
+            {/* Tab Selector Bar */}
+            <div className="flex border-b border-slate-800 px-4 gap-2 text-xs font-medium bg-slate-900/30">
+              <button
+                type="button"
+                onClick={() => setActiveTab('details')}
+                className={`py-3 px-3 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
+                  activeTab === 'details'
+                    ? 'border-indigo-500 text-indigo-400 font-semibold'
+                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <FileText className="w-3.5 h-3.5" />
+                <span>פרטים</span>
+              </button>
+            </div>
+
+            {/* Main Form Body */}
+            <form onSubmit={handleSave} className="flex-1 p-4 sm:p-5 space-y-4 overflow-y-auto">
+              {/* Custom Name / Nickname */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-400">
+                  כינוי מותאם אישית (יוצג ככותרת)
+                </label>
                 <input
                   type="text"
-                  value={merchantName}
-                  onChange={(e) => setMerchantName(e.target.value)}
-                  placeholder="הזן שם בית עסק..."
-                  className="w-full bg-slate-950 border border-slate-700/70 rounded-lg px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-
-              {/* Category Picker */}
-              <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <label className="text-[11px] font-semibold text-slate-400 flex items-center gap-1.5">
-                    <Tag className="w-3.5 h-3.5 text-indigo-400" />
-                    קטגוריה
-                  </label>
-                  {selectedCatObj && (
-                    <span
-                      className="text-[11px] px-2 py-0.5 rounded-full font-medium"
-                      style={{
-                        backgroundColor: `${selectedCatObj.color || '#6366f1'}20`,
-                        color: selectedCatObj.color || '#818cf8',
-                      }}
-                    >
-                      {selectedCatObj.name}
-                    </span>
-                  )}
-                </div>
-
-                {/* Quick selection chips */}
-                <div className="flex flex-wrap gap-1.5">
-                  {quickCategories.map((catName) => {
-                    const isSelected = category === catName;
-                    return (
-                      <button
-                        key={catName}
-                        type="button"
-                        onClick={() => setCategory(catName)}
-                        className={`text-xs px-2.5 py-1 rounded-lg border transition-all ${
-                          isSelected
-                            ? 'bg-indigo-600 border-indigo-500 text-white font-semibold shadow-sm'
-                            : 'bg-slate-950/70 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
-                        }`}
-                      >
-                        {catName}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* Full Category Dropdown */}
-                <select
-                  value={category}
-                  onChange={(e) => setCategory(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700/70 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-indigo-500"
-                >
-                  <option value="">-- בחר קטגוריה --</option>
-                  <optgroup label="הוצאות">
-                    {categories
-                      .filter((c) => c.type === 'expense' || c.type === 'both')
-                      .map((c) => (
-                        <option key={c.id || c.name} value={c.name}>
-                          {c.name}
-                        </option>
-                      ))}
-                  </optgroup>
-                  <optgroup label="הכנסות">
-                    {categories
-                      .filter((c) => c.type === 'income')
-                      .map((c) => (
-                        <option key={c.id || c.name} value={c.name}>
-                          {c.name}
-                        </option>
-                      ))}
-                  </optgroup>
-                </select>
-              </div>
-
-              {/* Personal Note (userDescription) */}
-              <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-1.5">
-                <label className="text-[11px] font-semibold text-slate-400 flex items-center gap-1.5">
-                  <FileText className="w-3.5 h-3.5 text-indigo-400" />
-                  הערה / תיאור אישי
-                </label>
-                <textarea
                   value={userDescription}
                   onChange={(e) => setUserDescription(e.target.value)}
-                  placeholder="הוסף הערה חופשית לתנועה זו (לדוגמה: מתנה לחתונה, קניות לשבת)..."
-                  rows={2}
-                  className="w-full bg-slate-950 border border-slate-700/70 rounded-lg px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500 resize-none"
+                  placeholder={cleanSpacedHebrew(getTransactionTitle(tx))}
+                  className="w-full p-2.5 rounded-xl border border-slate-800 bg-slate-900 text-slate-100 text-sm font-semibold focus:outline-none focus:border-indigo-500 transition-colors"
                 />
               </div>
 
-              {/* Toggles */}
-              <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-3">
-                {/* Ignore Toggle */}
-                <label className="flex items-start gap-2.5 cursor-pointer">
+              {/* Read-Only Bank Merchant Name */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-400">
+                  שם בית העסק (מקור הבנק / כרטיס)
+                </label>
+                <div className="w-full p-2.5 rounded-xl border border-slate-800/80 bg-slate-900/60 text-slate-200 font-medium text-sm flex items-center justify-between">
+                  <span className="truncate">{cleanSpacedHebrew(merchantName || tx.merchantName || 'לא צוין בית עסק')}</span>
+                </div>
+              </div>
+
+              {/* Read-Only Financial Metadata Chips Grid */}
+              <div className="grid grid-cols-3 gap-2">
+                <div className="p-2.5 rounded-xl border border-slate-800/80 bg-slate-900/50 space-y-1">
+                  <div className="text-[10px] font-medium text-slate-400">סכום חיוב</div>
+                  <div className={`text-xs sm:text-sm font-bold font-mono ${currentAmountNum > 0 ? 'text-emerald-400' : 'text-slate-100'}`}>
+                    {formatILS(tx.amount, { showSign: true })}
+                  </div>
+                </div>
+
+                <div className="p-2.5 rounded-xl border border-slate-800/80 bg-slate-900/50 space-y-1">
+                  <div className="text-[10px] font-medium text-slate-400">תאריך עסקה</div>
+                  <div className="text-xs font-semibold text-slate-200 font-mono mt-0.5">
+                    {formatDate(tx.date, 'he')}
+                  </div>
+                </div>
+
+                <div className="p-2.5 rounded-xl border border-slate-800/80 bg-slate-900/50 space-y-1">
+                  <div className="text-[10px] font-medium text-slate-400">חשבון / כרטיס</div>
+                  <div className="text-xs font-semibold text-slate-200 truncate mt-0.5" title={tx.accountDisplayName || tx.bankCompany}>
+                    {tx.accountDisplayName || tx.bankCompany?.toUpperCase() || 'ראשי'}
+                  </div>
+                </div>
+              </div>
+
+              {/* Category Picker with Badges & Subcategories */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-400">
+                  קטגוריה
+                </label>
+                <CategoryPicker
+                  value={category}
+                  onChange={setCategory}
+                  placeholder="בחר קטגוריה או תת-קטגוריה..."
+                />
+              </div>
+
+              {/* Compact Checkboxes: Ignore & ApplyToSimilar */}
+              <div className="space-y-2 pt-1 border-t border-slate-800/60">
+                <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none">
                   <input
                     type="checkbox"
                     checked={isIgnored}
                     onChange={(e) => setIsIgnored(e.target.checked)}
-                    className="mt-0.5 rounded border-slate-700 text-indigo-600 focus:ring-indigo-500"
+                    className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-indigo-600 focus:ring-indigo-500 cursor-pointer shrink-0"
                   />
-                  <div>
-                    <span className="text-xs font-medium text-slate-300 block">התעלם מתנועה זו</span>
-                    <span className="text-[11px] text-slate-500 block">
-                      אל תכלול תנועה זו בחישובי סך ההוצאות, התקציבים והדוחות
-                    </span>
-                  </div>
+                  <span>התעלם מתנועה זו (לא תיכלל בחישובים וגרפים)</span>
                 </label>
 
-                {/* Apply to similar */}
-                <label className="flex items-start gap-2.5 cursor-pointer pt-2 border-t border-slate-800/80">
+                <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none">
                   <input
                     type="checkbox"
                     checked={applyToSimilar}
                     onChange={(e) => setApplyToSimilar(e.target.checked)}
-                    className="mt-0.5 rounded border-slate-700 text-indigo-600 focus:ring-indigo-500"
+                    className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-indigo-600 focus:ring-indigo-500 cursor-pointer shrink-0"
                   />
-                  <div>
-                    <span className="text-xs font-medium text-indigo-300 flex items-center gap-1">
-                      <Sparkles className="w-3 h-3 text-indigo-400" />
-                      החל סיווג זה על תנועות דומות בעתיד
-                    </span>
-                    <span className="text-[11px] text-slate-500 block">
-                      שמור חוק חכם שיסווג אוטומטית עסקאות מבית עסק זה
-                    </span>
-                  </div>
+                  <span>החל סיווג זה על כל התנועות הדומות בעתיד</span>
                 </label>
               </div>
 
-              {/* Save Feedback Alerts */}
+              {/* Feedback Alerts */}
               {saveSuccess && (
                 <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs flex items-center justify-between">
                   <div className="flex items-center gap-2">
@@ -423,7 +370,7 @@ export default function TmaTransactionPage() {
                   <button
                     type="button"
                     onClick={handleClose}
-                    className="text-[11px] underline hover:text-emerald-300"
+                    className="text-[11px] underline hover:text-emerald-300 font-semibold"
                   >
                     סגור חלון
                   </button>
@@ -437,35 +384,26 @@ export default function TmaTransactionPage() {
                 </div>
               )}
 
-              {/* Submit Button */}
+              {/* Submit Button (Identical to TransactionDrawer style) */}
               <button
                 type="submit"
                 disabled={saving}
-                className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white font-semibold text-sm shadow-lg shadow-indigo-500/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                className="w-full mt-4 flex items-center justify-center gap-2 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-sm transition-all cursor-pointer shadow-lg shadow-indigo-600/20 disabled:opacity-50"
               >
-                {saving ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    <span>שומר שינויים...</span>
-                  </>
-                ) : (
-                  <>
-                    <Check className="w-4 h-4" />
-                    <span>שמור שינויים</span>
-                  </>
-                )}
+                <Save className="w-4 h-4" />
+                <span>{saving ? 'שומר שינויים...' : 'שמור שינויים'}</span>
               </button>
             </form>
-          )}
 
-          {/* Security Notice */}
-          <div className="text-center pt-2">
-            <p className="text-[10px] text-slate-600 flex items-center justify-center gap-1">
-              <ShieldAlert className="w-3 h-3 text-slate-600" />
-              חיבור מוצפן ומאובטח • FinTrack Zero-Trust TMA
-            </p>
+            {/* Footer Notice */}
+            <div className="p-3 text-center border-t border-slate-900 bg-slate-950">
+              <p className="text-[10px] text-slate-600 flex items-center justify-center gap-1">
+                <ShieldAlert className="w-3 h-3 text-slate-600" />
+                FinTrack Zero-Trust TMA • ממשק מאובטח ומבודד
+              </p>
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </>
   );

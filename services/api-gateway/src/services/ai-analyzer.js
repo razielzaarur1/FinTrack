@@ -5,6 +5,17 @@ import { pool } from '../db.js';
 
 const DEFAULT_USER_ID = '00000000-0000-0000-0000-000000000001';
 
+const CANDIDATE_MODELS = [
+  'gemini-1.5-flash',
+  'gemini-1.5-flash-latest',
+  'gemini-2.0-flash',
+  'gemini-2.0-flash-exp',
+  'gemini-1.5-flash-8b',
+  'gemini-1.5-pro',
+  'gemini-1.5-pro-latest',
+  'gemini-pro'
+];
+
 /**
  * Retrieve Gemini settings (API Key & Enabled status) from system_settings or env
  */
@@ -67,6 +78,41 @@ export async function getAvailableCategories() {
 }
 
 /**
+ * Execute generateContent with automatic model fallback
+ */
+async function generateWithFallback(genAI, contents, generationConfig = {}) {
+  let lastError = null;
+
+  for (const modelName of CANDIDATE_MODELS) {
+    try {
+      const config = {
+        model: modelName,
+      };
+      if (generationConfig.responseMimeType) {
+        config.generationConfig = generationConfig;
+      }
+      
+      const model = genAI.getGenerativeModel(config);
+      const result = await model.generateContent(contents);
+      const text = result.response.text();
+      return { text, modelName };
+    } catch (err) {
+      lastError = err;
+      const errMsg = String(err.message || '');
+      // If 404 or unsupported model for this API key/version, try next candidate
+      if (errMsg.includes('404') || errMsg.includes('not found') || errMsg.includes('not supported') || err.status === 404) {
+        console.warn(`[AI-Analyzer] Model '${modelName}' not available (${errMsg.slice(0, 120)}), trying next candidate...`);
+        continue;
+      }
+      // If invalid API key or auth error, throw immediately
+      throw err;
+    }
+  }
+
+  throw lastError || new Error('כל דגמי Gemini שנבדקו לא היו זמינים עבור מפתח זה.');
+}
+
+/**
  * Test a Gemini API Key
  */
 export async function testGeminiApiKey(keyToTest) {
@@ -76,14 +122,12 @@ export async function testGeminiApiKey(keyToTest) {
   }
 
   const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-  const result = await model.generateContent('שלום, האם אתה פועל? ענה במילה אחת בלבד: פועל.');
-  const text = result.response.text();
-  return { success: true, response: text.trim() };
+  const { text, modelName } = await generateWithFallback(genAI, 'שלום, ענה במילה אחת בלבד: פועל.');
+  return { success: true, response: text.trim(), model: modelName };
 }
 
 /**
- * Analyze an image or PDF buffer using Gemini 1.5 Flash
+ * Analyze an image or PDF buffer using Gemini with automatic model fallback
  */
 export async function analyzeReceiptFile(fileBuffer, mimeType, originalName = '') {
   const { geminiApiKey, enableAiAnalysis } = await getAiSettings();
@@ -98,12 +142,6 @@ export async function analyzeReceiptFile(fileBuffer, mimeType, originalName = ''
 
   const categories = await getAvailableCategories();
   const genAI = new GoogleGenerativeAI(geminiApiKey);
-  const model = genAI.getGenerativeModel({
-    model: 'gemini-1.5-flash',
-    generationConfig: {
-      responseMimeType: 'application/json'
-    }
-  });
 
   const prompt = `
 אתה מנתח חשבוניות וקבלות מומחה עבור אפליקציית ניהול פיננסי אישי (FinTrack).
@@ -154,13 +192,21 @@ ${JSON.stringify(categories)}
       },
     };
 
-    const result = await model.generateContent([prompt, part]);
-    const text = result.response.text();
-    const parsed = JSON.parse(text);
+    const { text, modelName } = await generateWithFallback(genAI, [prompt, part], {
+      responseMimeType: 'application/json'
+    });
+
+    let cleanJson = text.trim();
+    if (cleanJson.startsWith('```json')) {
+      cleanJson = cleanJson.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+    } else if (cleanJson.startsWith('```')) {
+      cleanJson = cleanJson.replace(/^```\s*/, '').replace(/\s*```$/, '');
+    }
+    const parsed = JSON.parse(cleanJson);
 
     return {
       ai_analyzed: true,
-      ai_provider: 'gemini',
+      ai_provider: `gemini (${modelName})`,
       extracted_data: parsed,
       raw_text: text,
     };
@@ -233,12 +279,6 @@ export async function analyzeReceiptUrl(url) {
 
   const categories = await getAvailableCategories();
   const genAI = new GoogleGenerativeAI(geminiApiKey);
-  const model = genAI.getGenerativeModel({
-    model: 'gemini-1.5-flash',
-    generationConfig: {
-      responseMimeType: 'application/json'
-    }
-  });
 
   const prompt = `
 אתה מנתח חשבוניות וקבלות דיגיטליות מומחה עבור אפליקציית FinTrack.
@@ -283,13 +323,21 @@ ${JSON.stringify(categories)}
 `;
 
   try {
-    const result = await model.generateContent(prompt);
-    const text = result.response.text();
-    const parsed = JSON.parse(text);
+    const { text, modelName } = await generateWithFallback(genAI, prompt, {
+      responseMimeType: 'application/json'
+    });
+
+    let cleanJson = text.trim();
+    if (cleanJson.startsWith('```json')) {
+      cleanJson = cleanJson.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+    } else if (cleanJson.startsWith('```')) {
+      cleanJson = cleanJson.replace(/^```\s*/, '').replace(/\s*```$/, '');
+    }
+    const parsed = JSON.parse(cleanJson);
 
     return {
       ai_analyzed: true,
-      ai_provider: 'gemini',
+      ai_provider: `gemini (${modelName})`,
       extracted_data: parsed,
       raw_text: text,
       html_snippet: cleanHtml.slice(0, 1000),
