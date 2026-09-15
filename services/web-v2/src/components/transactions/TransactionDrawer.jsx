@@ -46,7 +46,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
 
   const handleTabsWheel = (e) => {
     if (e.deltaY !== 0) {
-      e.currentTarget.scrollBy({ left: e.deltaY, behavior: 'auto' });
+      e.currentTarget.scrollBy({ left: -e.deltaY, behavior: 'auto' });
     }
   };
 
