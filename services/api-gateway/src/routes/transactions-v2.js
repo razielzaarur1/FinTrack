@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { pool } from '../db.js';
 import { saveUserRule } from '../services/classifier.js';
-import { verifyTmaToken } from '../crypto.js';
+import { verifyTmaToken, verifyTelegramWebAppData } from '../crypto.js';
 
 const bulkUpdateSchema = z.object({
   transactionIds: z.array(z.string().uuid()).min(1, 'At least one transaction ID is required'),
@@ -1258,8 +1258,39 @@ export default async function transactionsV2Routes(fastify, options) {
   // TELEGRAM MINI APP (TMA) - ZERO-TRUST / LEAST-PRIVILEGE SCOPED ENDPOINTS
   // ──────────────────────────────────────────────────────────────────────────
 
+  // Helper to cryptographically verify Telegram WebApp initData against botToken & chat ID
+  async function validateTelegramAccess(request, reply) {
+    try {
+      const settingsRes = await pool.query(
+        `SELECT settings FROM system_settings WHERE user_id = '00000000-0000-0000-0000-000000000001'`
+      );
+      const settings = settingsRes.rows[0]?.settings || {};
+      const { telegramBotToken, telegramChatId } = settings;
+
+      // If Telegram bot is configured in settings, enforce cryptographic WebApp verification
+      if (telegramBotToken && telegramChatId) {
+        const initData = request.headers['x-telegram-init-data'] || request.query?.initData;
+        const tgCheck = verifyTelegramWebAppData(initData, telegramBotToken, telegramChatId);
+        if (!tgCheck.valid) {
+          reply.code(403).send({
+            error: 'Forbidden',
+            message: `גישה חסומה: נדרשת כניסה מתוך חשבון הטלגרם המורשה שלך בלבד (${tgCheck.reason})`,
+          });
+          return false;
+        }
+      }
+      return true;
+    } catch (err) {
+      reply.code(500).send({ error: 'Security Check Error', message: err.message });
+      return false;
+    }
+  }
+
   // GET /api/v2/transactions/tma/categories - Fetch categories for TMA picker
   fastify.get('/tma/categories', async (request, reply) => {
+    const isTgAuthorized = await validateTelegramAccess(request, reply);
+    if (!isTgAuthorized) return;
+
     const token = request.query?.token || request.headers['x-tma-token'];
     const isTokenValid = verifyTmaToken(token);
 
@@ -1282,6 +1313,9 @@ export default async function transactionsV2Routes(fastify, options) {
 
   // GET /api/v2/transactions/tma/:id - View single transaction inside TMA
   fastify.get('/tma/:id', async (request, reply) => {
+    const isTgAuthorized = await validateTelegramAccess(request, reply);
+    if (!isTgAuthorized) return;
+
     const { id } = request.params;
     const token = request.query?.token || request.headers['x-tma-token'];
 
@@ -1343,6 +1377,9 @@ export default async function transactionsV2Routes(fastify, options) {
 
   // PATCH /api/v2/transactions/tma/:id - Edit single transaction inside TMA
   fastify.patch('/tma/:id', async (request, reply) => {
+    const isTgAuthorized = await validateTelegramAccess(request, reply);
+    if (!isTgAuthorized) return;
+
     const { id } = request.params;
     const token = request.query?.token || request.headers['x-tma-token'];
 

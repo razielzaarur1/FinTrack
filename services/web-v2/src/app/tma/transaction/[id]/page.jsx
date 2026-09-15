@@ -42,25 +42,61 @@ export default function TmaTransactionPage() {
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [saveError, setSaveError] = useState('');
 
-  // Telegram WebApp initialization
+  // Telegram WebApp state
+  const [initData, setInitData] = useState('');
+  const [isTelegramEnv, setIsTelegramEnv] = useState(null); // null: detecting, true: in telegram, false: blocked browser
+
+  // Telegram WebApp initialization & detection
   useEffect(() => {
-    if (typeof window !== 'undefined' && window.Telegram?.WebApp) {
-      try {
+    let checkInterval = null;
+    let attempts = 0;
+
+    const checkTg = () => {
+      attempts++;
+      if (typeof window !== 'undefined' && window.Telegram?.WebApp) {
         const tg = window.Telegram.WebApp;
-        tg.ready();
-        tg.expand();
-        if (tg.setHeaderColor) {
-          tg.setHeaderColor('#0f172a');
+        try {
+          tg.ready();
+          tg.expand();
+          if (tg.setHeaderColor) tg.setHeaderColor('#0f172a');
+        } catch (e) {
+          console.warn('Telegram WebApp init error:', e);
         }
-      } catch (e) {
-        console.warn('Telegram WebApp init warning:', e);
+
+        if (tg.initData) {
+          setInitData(tg.initData);
+          setIsTelegramEnv(true);
+          if (checkInterval) clearInterval(checkInterval);
+          return true;
+        }
       }
+
+      if (attempts >= 10) {
+        // After ~1s, if no initData is present, detect if we're in a browser
+        const tgData = (typeof window !== 'undefined' && window.Telegram?.WebApp?.initData) || '';
+        setInitData(tgData);
+        setIsTelegramEnv(Boolean(tgData));
+        if (checkInterval) clearInterval(checkInterval);
+      }
+      return false;
+    };
+
+    if (!checkTg()) {
+      checkInterval = setInterval(checkTg, 100);
     }
+
+    return () => {
+      if (checkInterval) clearInterval(checkInterval);
+    };
   }, []);
 
-  // Fetch transaction and categories using scoped zero-trust token
+  // Fetch transaction and categories using scoped zero-trust token and initData
   useEffect(() => {
-    if (!id) return;
+    if (!id || isTelegramEnv === null) return;
+    if (isTelegramEnv === false) {
+      setLoading(false);
+      return;
+    }
 
     let isMounted = true;
     async function loadData() {
@@ -68,8 +104,8 @@ export default function TmaTransactionPage() {
       setError('');
 
       try {
-        // 1. Fetch transaction
-        const txRes = await api.getTmaTransaction(id, token);
+        // 1. Fetch transaction with token and Telegram initData
+        const txRes = await api.getTmaTransaction(id, token, initData);
         if (!isMounted) return;
 
         if (txRes.error || !txRes.data?.data) {
@@ -86,7 +122,7 @@ export default function TmaTransactionPage() {
         setIsIgnored(Boolean(data.isIgnored));
 
         // 2. Fetch categories for picker
-        const catRes = await api.getTmaCategories(token);
+        const catRes = await api.getTmaCategories(token, initData);
         if (isMounted && catRes.data?.data) {
           setCategories(catRes.data.data);
         }
@@ -104,7 +140,7 @@ export default function TmaTransactionPage() {
     return () => {
       isMounted = false;
     };
-  }, [id, token]);
+  }, [id, token, isTelegramEnv, initData]);
 
   const handleSave = async (e) => {
     if (e) e.preventDefault();
@@ -121,7 +157,7 @@ export default function TmaTransactionPage() {
         applyToSimilar,
       };
 
-      const res = await api.updateTmaTransaction(id, payload, token);
+      const res = await api.updateTmaTransaction(id, payload, token, initData);
       if (res.error) {
         setSaveError(res.error || 'שגיאה בשמירת השינויים');
         if (typeof window !== 'undefined' && window.Telegram?.WebApp?.HapticFeedback) {
@@ -163,16 +199,36 @@ export default function TmaTransactionPage() {
               <span className="w-2.5 h-2.5 rounded-full bg-indigo-500 animate-pulse" />
               <h1 className="text-sm font-semibold text-slate-200">FinTrack • עריכת תנועה</h1>
             </div>
-            <button
-              onClick={handleClose}
-              className="text-xs px-2.5 py-1 rounded-lg bg-slate-800 text-slate-400 hover:text-white transition-colors"
-            >
-              סגור
-            </button>
+            {isTelegramEnv && (
+              <button
+                onClick={handleClose}
+                className="text-xs px-2.5 py-1 rounded-lg bg-slate-800 text-slate-400 hover:text-white transition-colors"
+              >
+                סגור
+              </button>
+            )}
           </div>
 
+          {/* Blocked Browser View */}
+          {isTelegramEnv === false && (
+            <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 text-center space-y-4 shadow-2xl my-8">
+              <div className="w-14 h-14 rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 mx-auto">
+                <ShieldAlert className="w-7 h-7" />
+              </div>
+              <div className="space-y-1">
+                <h2 className="text-base font-bold text-slate-100">גישה חסומה (403 Forbidden)</h2>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  ממשק עריכה זה מוגן ונגיש אך ורק מתוך אפליקציית טלגרם בחשבונך המורשה.
+                </p>
+              </div>
+              <p className="text-[11px] text-slate-500 bg-slate-950 p-3 rounded-xl border border-slate-800/80">
+                🔒 נחסמה גישה מדפדפן חיצוני או ממשתמש שאינו מורשה בהגדרות המערכת.
+              </p>
+            </div>
+          )}
+
           {/* Loading State */}
-          {loading && (
+          {loading && isTelegramEnv !== false && (
             <div className="p-8 text-center space-y-3">
               <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto" />
               <p className="text-xs text-slate-400">טוען את פרטי התנועה...</p>
@@ -180,7 +236,7 @@ export default function TmaTransactionPage() {
           )}
 
           {/* Error State */}
-          {!loading && error && (
+          {!loading && error && isTelegramEnv !== false && (
             <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs space-y-2">
               <div className="flex items-center gap-2 font-semibold">
                 <AlertCircle className="w-4 h-4" />
@@ -194,7 +250,7 @@ export default function TmaTransactionPage() {
           )}
 
           {/* Main Form */}
-          {!loading && tx && (
+          {!loading && tx && isTelegramEnv !== false && (
             <form onSubmit={handleSave} className="space-y-4">
               {/* Transaction Summary Card */}
               <div className="p-4 rounded-2xl bg-gradient-to-b from-slate-900 to-slate-900/90 border border-slate-800 shadow-xl space-y-3">

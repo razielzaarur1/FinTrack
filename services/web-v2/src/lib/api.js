@@ -214,19 +214,28 @@ export const api = {
   testTelegramConnection: (chatId) => request('/api/system/telegram/test', { method: 'POST', body: JSON.stringify({ chatId }) }),
 
   // TMA (Telegram Mini App) - Scoped Zero-Trust Endpoints
-  getTmaTransaction: (id, token) =>
+  getTmaTransaction: (id, token, initData = '') =>
     request(`/api/v2/transactions/tma/${id}${token ? `?token=${encodeURIComponent(token)}` : ''}`, {
-      headers: token ? { 'x-tma-token': token } : {},
+      headers: {
+        ...(token ? { 'x-tma-token': token } : {}),
+        ...(initData ? { 'x-telegram-init-data': initData } : {}),
+      },
     }),
-  updateTmaTransaction: (id, data, token) =>
+  updateTmaTransaction: (id, data, token, initData = '') =>
     request(`/api/v2/transactions/tma/${id}${token ? `?token=${encodeURIComponent(token)}` : ''}`, {
       method: 'PATCH',
-      headers: token ? { 'x-tma-token': token } : {},
+      headers: {
+        ...(token ? { 'x-tma-token': token } : {}),
+        ...(initData ? { 'x-telegram-init-data': initData } : {}),
+      },
       body: JSON.stringify(data),
     }),
-  getTmaCategories: (token) =>
+  getTmaCategories: (token, initData = '') =>
     request(`/api/v2/transactions/tma/categories${token ? `?token=${encodeURIComponent(token)}` : ''}`, {
-      headers: token ? { 'x-tma-token': token } : {},
+      headers: {
+        ...(token ? { 'x-tma-token': token } : {}),
+        ...(initData ? { 'x-telegram-init-data': initData } : {}),
+      },
     }),
 
   // Scraper Trigger

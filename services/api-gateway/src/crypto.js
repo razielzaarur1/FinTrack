@@ -146,10 +146,83 @@ export function verifyTmaToken(token, expectedTxId = null) {
   }
 }
 
+/**
+ * Cryptographically verifies Telegram WebApp initData HMAC-SHA256 signature
+ * and validates that the requesting user ID strictly matches the configured chat ID.
+ * 
+ * @param {string} initDataString - Raw query-string from window.Telegram.WebApp.initData
+ * @param {string} botToken - Telegram Bot Token configured in system settings
+ * @param {string|number} [expectedChatId] - Allowed user chat ID
+ * @returns {{ valid: boolean, user?: object, reason?: string }}
+ */
+export function verifyTelegramWebAppData(initDataString, botToken, expectedChatId = null) {
+  if (!initDataString || typeof initDataString !== 'string' || !initDataString.trim()) {
+    return { valid: false, reason: 'נתוני הזדהות של טלגרם חסרים (initData)' };
+  }
+  if (!botToken || typeof botToken !== 'string' || !botToken.trim()) {
+    return { valid: false, reason: 'טוקן בוט אינו מוגדר במערכת' };
+  }
+
+  try {
+    const urlParams = new URLSearchParams(initDataString);
+    const hash = urlParams.get('hash');
+    if (!hash) {
+      return { valid: false, reason: 'חתימת טלגרם (hash) חסרה' };
+    }
+
+    urlParams.delete('hash');
+
+    // Sort parameters alphabetically
+    const keys = Array.from(urlParams.keys()).sort();
+    const dataCheckArr = [];
+    for (const key of keys) {
+      dataCheckArr.push(`${key}=${urlParams.get(key)}`);
+    }
+    const dataCheckString = dataCheckArr.join('\n');
+
+    // Telegram algorithm:
+    // secret_key = HMAC_SHA256("WebAppData", botToken)
+    // calculated_hash = HMAC_SHA256(secret_key, dataCheckString)
+    const secretKey = crypto.createHmac('sha256', 'WebAppData').update(botToken.trim()).digest();
+    const calculatedHash = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
+
+    const hashBuf = Buffer.from(hash, 'hex');
+    const calcBuf = Buffer.from(calculatedHash, 'hex');
+    if (hashBuf.length !== calcBuf.length || !crypto.timingSafeEqual(hashBuf, calcBuf)) {
+      return { valid: false, reason: 'חתימת טלגרם אינה תקינה (זיהוי זיוף)' };
+    }
+
+    // Verify user object and user.id
+    const rawUser = urlParams.get('user');
+    if (!rawUser) {
+      return { valid: false, reason: 'אובייקט משתמש טלגרם חסר' };
+    }
+    const user = JSON.parse(rawUser);
+
+    if (expectedChatId && String(user.id) !== String(expectedChatId).trim()) {
+      return { valid: false, reason: `מזהה משתמש טלגרם אינו מורשה (${user.id})` };
+    }
+
+    // Check expiration (valid for up to 7 days)
+    const authDate = parseInt(urlParams.get('auth_date'), 10);
+    if (!isNaN(authDate)) {
+      const nowSec = Math.floor(Date.now() / 1000);
+      if (nowSec - authDate > 7 * 86400) {
+        return { valid: false, reason: 'פג תוקף נתוני ההזדהות של טלגרם' };
+      }
+    }
+
+    return { valid: true, user };
+  } catch (err) {
+    return { valid: false, reason: err.message || 'שגיאה בפענוח נתוני טלגרם' };
+  }
+}
+
 export default {
   encryptCredentials,
   decryptCredentials,
   signTmaToken,
   verifyTmaToken,
+  verifyTelegramWebAppData,
 };
 
