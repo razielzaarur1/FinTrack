@@ -128,14 +128,32 @@ fastify.setErrorHandler((error, request, reply) => {
   });
 });
 
-// Add CORS headers for web-v2 (port 4747) and same-origin
+// CORS – strict origin allowlist (no wildcard reflection)
+// Permitted origins: Nginx HTTPS frontend, direct web-v2 (localhost dev + port 4747),
+// and Telegram WebApp embedding (https://web.telegram.org).
+const ALLOWED_ORIGINS = new Set([
+  // Production – Nginx TLS reverse proxy (Tailscale hostname variants)
+  process.env.CORS_ORIGIN_1 || '',
+  process.env.CORS_ORIGIN_2 || '',
+  // Direct container access (development / Docker internal)
+  'http://localhost:3000',
+  'http://localhost:4747',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:4747',
+  // Telegram Mini App WebApp
+  'https://web.telegram.org',
+].filter(Boolean));
+
 fastify.addHook('onRequest', async (request, reply) => {
   const origin = request.headers.origin;
   if (origin) {
-    reply.header('Access-Control-Allow-Origin', origin);
-    reply.header('Access-Control-Allow-Credentials', 'true');
-    reply.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-    reply.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+    if (ALLOWED_ORIGINS.has(origin)) {
+      reply.header('Access-Control-Allow-Origin', origin);
+      reply.header('Access-Control-Allow-Credentials', 'true');
+      reply.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+      reply.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, X-Tma-Token, X-Telegram-Init-Data');
+    }
+    // Origins not in the allowlist receive no CORS headers → browser blocks the request
   }
   if (request.method === 'OPTIONS') {
     return reply.code(204).send();

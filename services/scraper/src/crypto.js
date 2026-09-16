@@ -39,11 +39,6 @@ export function decryptCredentials(encryptedString) {
     throw new Error('No ciphertext provided for decryption');
   }
 
-  // Handle temporary bypass format
-  if (encryptedString.startsWith('TEST_BYPASS:')) {
-    return { testBypass: true, raw: encryptedString };
-  }
-
   // Handle standard enc:v1 format
   if (encryptedString.startsWith('enc:v1:')) {
     const parts = encryptedString.split(':');

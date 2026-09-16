@@ -50,7 +50,7 @@ export default async function goalsRoutes(fastify, options) {
       return reply.code(200).send(result.rows);
     } catch (err) {
       fastify.log.error(err, 'Failed to fetch goals');
-      return reply.code(500).send({ error: 'Internal Server Error', message: err.message });
+      return reply.code(500).send({ error: 'Internal Server Error' });
     }
   });
 
@@ -81,7 +81,7 @@ export default async function goalsRoutes(fastify, options) {
       return reply.code(201).send(result.rows[0]);
     } catch (err) {
       fastify.log.error(err, 'Failed to create goal');
-      return reply.code(500).send({ error: 'Internal Server Error', message: err.message });
+      return reply.code(500).send({ error: 'Internal Server Error' });
     }
   });
 
@@ -165,7 +165,7 @@ export default async function goalsRoutes(fastify, options) {
       });
     } catch (err) {
       fastify.log.error(err, 'Failed to update goal');
-      return reply.code(500).send({ error: 'Internal Server Error', message: err.message });
+      return reply.code(500).send({ error: 'Internal Server Error' });
     }
   });
 
@@ -191,7 +191,7 @@ export default async function goalsRoutes(fastify, options) {
       });
     } catch (err) {
       fastify.log.error(err, 'Failed to delete goal');
-      return reply.code(500).send({ error: 'Internal Server Error', message: err.message });
+      return reply.code(500).send({ error: 'Internal Server Error' });
     }
   });
 }

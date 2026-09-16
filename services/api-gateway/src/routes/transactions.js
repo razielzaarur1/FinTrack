@@ -97,7 +97,7 @@ export default async function transactionsRoutes(fastify, options) {
       });
     } catch (err) {
       fastify.log.error(err, 'Failed to fetch transactions');
-      return reply.code(500).send({ error: 'Internal Server Error', message: err.message });
+      return reply.code(500).send({ error: 'Internal Server Error' });
     }
   });
 
@@ -134,7 +134,7 @@ export default async function transactionsRoutes(fastify, options) {
       });
     } catch (err) {
       fastify.log.error(err, 'Failed to update transaction');
-      return reply.code(500).send({ error: 'Internal Server Error', message: err.message });
+      return reply.code(500).send({ error: 'Internal Server Error' });
     }
   });
 }

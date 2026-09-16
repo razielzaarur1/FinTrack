@@ -612,6 +612,12 @@ export async function scrapeAccount({ accountId, bank, encryptedCreds, daysBack 
 
     logger.info({ accountId, targetBank }, `Starting scrape process for ${targetBank}`);
 
+    // If account is virtual cash wallet, skip scraper execution cleanly
+    if (targetBank === 'wallet') {
+      logger.info({ accountId }, 'Account is virtual cash wallet - skipping scraper execution');
+      return { success: true, message: 'Skipped virtual cash wallet', accountId, skipped: true };
+    }
+
     // 2. Decrypt credentials using AES-256-GCM
     const credentials = decryptCredentials(targetCredsCipher);
     if (!credentials || typeof credentials !== 'object') {
@@ -797,7 +803,7 @@ export async function scrapeAllAccounts({ daysBack = 30, startDate = null } = {}
       `SELECT DISTINCT ON (user_id, bank_company, encrypted_credentials)
          id, bank_company AS "bankCompany"
        FROM bank_accounts
-       WHERE is_active = true
+       WHERE is_active = true AND bank_company != 'wallet'
        ORDER BY user_id, bank_company, encrypted_credentials, created_at ASC`
     );
 

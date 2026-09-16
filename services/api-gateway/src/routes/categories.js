@@ -104,7 +104,7 @@ export default async function categoriesRoutes(fastify, options) {
       return reply.code(200).send({ data: rows });
     } catch (err) {
       fastify.log.error(err, 'Failed to list categories');
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -130,7 +130,7 @@ export default async function categoriesRoutes(fastify, options) {
         return reply.code(409).send({ error: 'Category with this name already exists' });
       }
       fastify.log.error(err, 'Failed to create category');
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -177,7 +177,7 @@ export default async function categoriesRoutes(fastify, options) {
       return reply.code(200).send({ success: true, message: 'Categories restored to defaults', data: roots });
     } catch (err) {
       fastify.log.error(err, 'Failed to reset categories to default');
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -209,7 +209,7 @@ export default async function categoriesRoutes(fastify, options) {
     } catch (err) {
       await client.query('ROLLBACK');
       fastify.log.error(err, 'Failed to reorder categories');
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     } finally {
       client.release();
     }
@@ -292,7 +292,7 @@ export default async function categoriesRoutes(fastify, options) {
 
       return reply.code(200).send({ success: true, data: result.rows[0] });
     } catch (err) {
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -311,7 +311,7 @@ export default async function categoriesRoutes(fastify, options) {
       await pool.query('DELETE FROM categories WHERE id = $1 AND user_id = $2', [id, DEFAULT_USER_ID]);
       return reply.code(200).send({ success: true, message: 'Category deleted' });
     } catch (err) {
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -334,7 +334,7 @@ export default async function categoriesRoutes(fastify, options) {
       return reply.code(200).send({ success: true, data: classification });
     } catch (err) {
       fastify.log.error(err, 'Failed to classify transaction');
-      return reply.code(500).send({ error: 'Classifier error', message: err.message });
+      return reply.code(500).send({ error: 'Classifier error' });
     }
   });
 
@@ -350,7 +350,7 @@ export default async function categoriesRoutes(fastify, options) {
       );
       return reply.code(200).send({ data: res.rows });
     } catch (err) {
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -369,7 +369,7 @@ export default async function categoriesRoutes(fastify, options) {
       return reply.code(200).send({ success: true, data: saved });
     } catch (err) {
       fastify.log.error(err, 'Failed to save rule');
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -380,7 +380,7 @@ export default async function categoriesRoutes(fastify, options) {
       return reply.code(200).send({ success: true, ...result });
     } catch (err) {
       fastify.log.error(err, 'Failed to reclassify transactions');
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 }

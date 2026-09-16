@@ -33,7 +33,7 @@ export default async function budgetsRoutes(fastify, options) {
       return reply.code(200).send(result.rows);
     } catch (err) {
       fastify.log.error(err, 'Failed to fetch budgets');
-      return reply.code(500).send({ error: 'Internal Server Error', message: err.message });
+      return reply.code(500).send({ error: 'Internal Server Error' });
     }
   });
 
@@ -66,7 +66,7 @@ export default async function budgetsRoutes(fastify, options) {
       return reply.code(201).send(result.rows[0]);
     } catch (err) {
       fastify.log.error(err, 'Failed to save budget');
-      return reply.code(500).send({ error: 'Internal Server Error', message: err.message });
+      return reply.code(500).send({ error: 'Internal Server Error' });
     }
   });
 
@@ -92,7 +92,7 @@ export default async function budgetsRoutes(fastify, options) {
       });
     } catch (err) {
       fastify.log.error(err, 'Failed to delete budget');
-      return reply.code(500).send({ error: 'Internal Server Error', message: err.message });
+      return reply.code(500).send({ error: 'Internal Server Error' });
     }
   });
 }

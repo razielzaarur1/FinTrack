@@ -156,7 +156,7 @@ export default async function systemRoutes(fastify, options) {
       return reply.code(200).send(responseData);
     } catch (err) {
       fastify.log.error(err, 'Failed to submit OTP to Notifier');
-      return reply.code(500).send({ error: 'Internal Server Error', message: err.message });
+      return reply.code(500).send({ error: 'Internal Server Error' });
     }
   });
 
@@ -198,7 +198,7 @@ export default async function systemRoutes(fastify, options) {
       return reply.code(200).send(result.rows[0]);
     } catch (err) {
       fastify.log.error(err, 'Failed to fetch system settings');
-      return reply.code(500).send({ error: 'Internal Server Error', message: err.message });
+      return reply.code(500).send({ error: 'Internal Server Error' });
     }
   });
 
@@ -259,7 +259,7 @@ export default async function systemRoutes(fastify, options) {
       return reply.code(200).send(result.rows[0]);
     } catch (err) {
       fastify.log.error(err, 'Failed to update system settings');
-      return reply.code(500).send({ error: 'Internal Server Error', message: err.message });
+      return reply.code(500).send({ error: 'Internal Server Error' });
     }
   });
 

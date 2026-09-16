@@ -253,7 +253,7 @@ export default async function authRoutes(fastify, options) {
       });
     } catch (err) {
       fastify.log.error(err, 'Failed to change passcode');
-      return reply.code(500).send({ error: 'Change passcode failed', message: err.message });
+      return reply.code(500).send({ error: 'Change passcode failed' });
     }
   });
 }

@@ -180,7 +180,7 @@ export default async function dashboardRoutes(fastify, options) {
       });
     } catch (err) {
       fastify.log.error(err, 'Failed to fetch dashboard KPIs');
-      return reply.code(500).send({ error: 'Internal Server Error', message: err.message });
+      return reply.code(500).send({ error: 'Internal Server Error' });
     }
   });
 }

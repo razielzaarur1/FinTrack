@@ -577,7 +577,7 @@ export async function getAccountsForScraping() {
   const result = await pool.query(
     `SELECT id, user_id, bank_company AS "bankCompany", encrypted_credentials AS "encryptedCredentials", is_active, created_at
      FROM bank_accounts
-     WHERE is_active = true
+     WHERE is_active = true AND bank_company != 'wallet'
      ORDER BY created_at ASC`
   );
   return result.rows;

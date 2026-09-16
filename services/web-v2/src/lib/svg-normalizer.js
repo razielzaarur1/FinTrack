@@ -30,7 +30,12 @@ export function normalizeCategorySvg(rawSvg) {
   svg = svg.replace(/<!DOCTYPE[\s\S]*?>/gi, '');
   svg = svg.replace(/<!--[\s\S]*?-->/g, '');
 
-  // 2. Remove <style>...</style> blocks
+  // 2. Remove <script> tags and inline JS event handlers (XSS protection)
+  svg = svg.replace(/<script[\s\S]*?<\/script>/gi, '');
+  svg = svg.replace(/\bon\w+\s*=\s*(['"]).*?\1/gi, '');
+  svg = svg.replace(/\bhref\s*=\s*(['"])\s*javascript:.*?\1/gi, '');
+
+  // 3. Remove <style>...</style> blocks
   svg = svg.replace(/<style[\s\S]*?<\/style>/gi, '');
 
   // 3. Remove inline style attributes that set colors/fills/strokes/dimensions

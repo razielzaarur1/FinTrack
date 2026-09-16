@@ -182,6 +182,44 @@ async function computeReceiptVerification(txData, receipt, client = pool) {
   };
 }
 
+/**
+ * Validates that a URL is safe to fetch (SSRF protection).
+ * Blocks: private IP ranges, loopback, link-local (AWS metadata), non-HTTPS.
+ * @param {string} rawUrl
+ * @returns {{ safe: boolean, reason?: string }}
+ */
+function validateReceiptUrl(rawUrl) {
+  let parsed;
+  try {
+    parsed = new URL(rawUrl);
+  } catch (_) {
+    return { safe: false, reason: 'כתובת URL לא תקינה' };
+  }
+
+  // Only allow HTTPS (not http:// to internal services)
+  if (parsed.protocol !== 'https:') {
+    return { safe: false, reason: 'רק קישורי HTTPS מורשים לניתוח חשבוניות' };
+  }
+
+  const hostname = parsed.hostname;
+
+  // Block IP-literal private/loopback addresses
+  // Covers: loopback (127.x), RFC 1918 (10.x, 192.168.x, 172.16-31.x),
+  //         link-local / AWS metadata (169.254.x), "this" network (0.x), IPv6 loopback (::1)
+  const PRIVATE_RE = /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|0\.|::1$)/i;
+
+  if (PRIVATE_RE.test(hostname)) {
+    return { safe: false, reason: 'גישה לכתובות IP פנימיות אינה מורשית' };
+  }
+
+  // Block localhost variants
+  if (hostname === 'localhost' || hostname.endsWith('.local') || hostname.endsWith('.internal')) {
+    return { safe: false, reason: 'גישה לשרתים פנימיים אינה מורשית' };
+  }
+
+  return { safe: true };
+}
+
 const urlReceiptSchema = z.object({
   url: z.string().url('כתובת URL לא תקינה'),
 });
@@ -227,7 +265,7 @@ export default async function receiptsRoutes(fastify, options) {
       return reply.send({ success: true, data: enrichedReceipts });
     } catch (err) {
       fastify.log.error(err, 'Failed to fetch receipts');
-      return reply.code(500).send({ error: 'Failed to fetch receipts', message: err.message });
+      return reply.code(500).send({ error: 'Failed to fetch receipts' });
     }
   });
 
@@ -321,7 +359,7 @@ export default async function receiptsRoutes(fastify, options) {
       });
     } catch (err) {
       fastify.log.error(err, 'Failed to insert receipt record in DB');
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -338,6 +376,12 @@ export default async function receiptsRoutes(fastify, options) {
 
     const { url } = parseResult.data;
 
+    // SSRF protection: reject private/internal URLs before fetching
+    const urlCheck = validateReceiptUrl(url);
+    if (!urlCheck.safe) {
+      return reply.code(400).send({ error: 'כתובת URL אינה מורשית', reason: urlCheck.reason });
+    }
+
     // Verify transaction exists
     const txCheck = await pool.query('SELECT id, date, amount, merchant_name FROM transactions WHERE id = $1', [id]);
     if (txCheck.rows.length === 0) {
@@ -352,8 +396,7 @@ export default async function receiptsRoutes(fastify, options) {
     } catch (err) {
       return reply.code(400).send({
         error: 'נכשל בניתוח הקישור',
-        message: err.message,
-      });
+        });
     }
 
     // Save record to DB
@@ -390,7 +433,7 @@ export default async function receiptsRoutes(fastify, options) {
       });
     } catch (err) {
       fastify.log.error(err, 'Failed to save URL receipt in DB');
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -431,7 +474,7 @@ export default async function receiptsRoutes(fastify, options) {
       });
     } catch (err) {
       fastify.log.error(err, 'Failed to move receipt');
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -487,7 +530,7 @@ export default async function receiptsRoutes(fastify, options) {
       return reply.send({ success: true, message: 'Receipt deleted successfully' });
     } catch (err) {
       fastify.log.error(err, 'Failed to delete receipt');
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -551,7 +594,7 @@ export default async function receiptsRoutes(fastify, options) {
       });
     } catch (err) {
       fastify.log.error(err, 'Failed to reanalyze receipt');
-      return reply.code(500).send({ error: 'Reanalysis failed', message: err.message });
+      return reply.code(500).send({ error: 'Reanalysis failed' });
     }
   });
 
@@ -610,7 +653,7 @@ export default async function receiptsRoutes(fastify, options) {
     } catch (err) {
       await client.query('ROLLBACK');
       fastify.log.error(err, 'Failed to apply splits from receipt');
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     } finally {
       client.release();
     }

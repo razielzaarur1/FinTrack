@@ -61,7 +61,7 @@ export default async function analyticsRoutes(fastify, options) {
       });
     } catch (err) {
       fastify.log.error(err, 'Failed to fetch analytics overview');
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -114,7 +114,7 @@ export default async function analyticsRoutes(fastify, options) {
       });
       return reply.code(200).send({ data: trend });
     } catch (err) {
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -229,7 +229,7 @@ export default async function analyticsRoutes(fastify, options) {
       return reply.code(200).send({ total: Math.round(total * 100) / 100, data });
     } catch (err) {
       fastify.log.error(err, 'Failed to fetch category breakdown');
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -285,7 +285,7 @@ export default async function analyticsRoutes(fastify, options) {
       }));
       return reply.code(200).send({ data });
     } catch (err) {
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -325,7 +325,7 @@ export default async function analyticsRoutes(fastify, options) {
         })),
       });
     } catch (err) {
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -542,7 +542,7 @@ export default async function analyticsRoutes(fastify, options) {
       });
     } catch (err) {
       fastify.log.error(err, 'Failed to compute category averages');
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -589,7 +589,7 @@ export default async function analyticsRoutes(fastify, options) {
         })),
       });
     } catch (err) {
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 }

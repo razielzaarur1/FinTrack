@@ -735,7 +735,7 @@ export default async function transactionsV2Routes(fastify, options) {
       });
     } catch (err) {
       fastify.log.error(err, 'Error in cursor transactions query');
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -811,7 +811,7 @@ export default async function transactionsV2Routes(fastify, options) {
       });
     } catch (err) {
       fastify.log.error(err, 'Error querying transaction currencies');
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -935,7 +935,7 @@ export default async function transactionsV2Routes(fastify, options) {
       });
     } catch (err) {
       fastify.log.error(err, 'Failed to calculate filter counts');
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -1036,7 +1036,7 @@ export default async function transactionsV2Routes(fastify, options) {
       });
     } catch (err) {
       fastify.log.error(err, 'Error in single transaction query');
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -1059,7 +1059,7 @@ export default async function transactionsV2Routes(fastify, options) {
       return reply.code(200).send({ data: fxDetails });
     } catch (err) {
       fastify.log.error(err, 'Failed to fetch FX details');
-      return reply.code(500).send({ error: 'Failed to calculate FX details', message: err.message });
+      return reply.code(500).send({ error: 'Failed to calculate FX details' });
     }
   });
 
@@ -1233,7 +1233,7 @@ export default async function transactionsV2Routes(fastify, options) {
       });
     } catch (err) {
       fastify.log.error(err, 'Failed to update transaction');
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -1351,7 +1351,7 @@ export default async function transactionsV2Routes(fastify, options) {
       return reply.code(200).send({ data, total: data.length });
     } catch (err) {
       fastify.log.error(err, 'Failed to fetch similar transactions');
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -1418,7 +1418,7 @@ export default async function transactionsV2Routes(fastify, options) {
       });
     } catch (err) {
       fastify.log.error(err, 'Failed to bulk update transactions');
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -1435,7 +1435,7 @@ export default async function transactionsV2Routes(fastify, options) {
       );
       return reply.code(200).send({ data: result.rows });
     } catch (err) {
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -1501,17 +1501,37 @@ export default async function transactionsV2Routes(fastify, options) {
       await client.query('UPDATE transactions SET is_split = true WHERE id = $1', [id]);
 
       // Check if any split is allocated to "ארנק" (Cash Wallet)
-      const walletSplit = splits.find(s => 
-        (s.category && s.category.includes('ארנק')) || 
+      const walletSplit = splits.find(s =>
+        (s.category && s.category.includes('ארנק')) ||
         (s.description && s.description.includes('ארנק'))
       );
+
+      const splitExternalId = `split_wallet_${id}`;
+
+      // Look up any EXISTING wallet deposit for this transaction (from a previous save)
+      const existingWalletTx = await client.query(
+        `SELECT t.amount, b.id AS wallet_account_id
+         FROM transactions t
+         JOIN bank_accounts b ON t.account_id = b.id
+         WHERE t.external_id = $1 AND b.bank_company = 'wallet'
+         LIMIT 1`,
+        [splitExternalId]
+      );
+      const previousWalletAmount = existingWalletTx.rows.length > 0
+        ? parseFloat(existingWalletTx.rows[0].amount) || 0
+        : 0;
+
       if (walletSplit && walletSplit.amount > 0) {
-        await client.query(
-          `UPDATE bank_accounts 
-           SET balance = balance + $1 
-           WHERE bank_company = 'wallet' AND user_id = '00000000-0000-0000-0000-000000000001'`,
-          [walletSplit.amount]
-        );
+        // Delta: only adjust balance by the difference (avoids double-credit on re-save)
+        const delta = walletSplit.amount - previousWalletAmount;
+        if (Math.abs(delta) > 0.001) {
+          await client.query(
+            `UPDATE bank_accounts
+             SET balance = GREATEST(balance + $1, 0)
+             WHERE bank_company = 'wallet' AND user_id = '00000000-0000-0000-0000-000000000001'`,
+            [delta]
+          );
+        }
 
         // Fetch wallet account ID and insert/update deposit transaction
         const walletAccRes = await client.query(
@@ -1519,7 +1539,6 @@ export default async function transactionsV2Routes(fastify, options) {
         );
         if (walletAccRes.rows.length > 0) {
           const walletId = walletAccRes.rows[0].id;
-          const splitExternalId = `split_wallet_${id}`;
           await client.query(
             `INSERT INTO transactions (
                account_id, external_id, date, amount, currency, description, merchant_name, category, status, user_description, is_manual_category, is_reviewed
@@ -1529,6 +1548,13 @@ export default async function transactionsV2Routes(fastify, options) {
             [walletId, splitExternalId, txRes.rows[0].date || new Date(), walletSplit.amount, 'הפקדה מפיצול משיכת מזומן', walletSplit.description || 'הפקדה לארנק מזומנים']
           );
         }
+      } else if (previousWalletAmount > 0) {
+        // Wallet split was removed – revert the previously credited balance
+        await client.query(
+          `UPDATE bank_accounts SET balance = GREATEST(balance - $1, 0) WHERE bank_company = 'wallet'`,
+          [previousWalletAmount]
+        );
+        await client.query('DELETE FROM transactions WHERE external_id = $1', [splitExternalId]);
       }
 
       await client.query('COMMIT');
@@ -1541,7 +1567,7 @@ export default async function transactionsV2Routes(fastify, options) {
     } catch (err) {
       await client.query('ROLLBACK');
       fastify.log.error(err, 'Failed to save transaction splits');
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     } finally {
       client.release();
     }
@@ -1572,7 +1598,7 @@ export default async function transactionsV2Routes(fastify, options) {
       return reply.code(200).send({ success: true, message: 'Splits removed' });
     } catch (err) {
       await client.query('ROLLBACK');
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     } finally {
       client.release();
     }
@@ -1591,7 +1617,7 @@ export default async function transactionsV2Routes(fastify, options) {
       );
       return reply.code(200).send({ data: result.rows });
     } catch (err) {
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -1612,7 +1638,7 @@ export default async function transactionsV2Routes(fastify, options) {
       );
       return reply.code(201).send({ success: true, data: result.rows[0] });
     } catch (err) {
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -1626,7 +1652,7 @@ export default async function transactionsV2Routes(fastify, options) {
       }
       return reply.code(200).send({ success: true });
     } catch (err) {
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -1732,7 +1758,7 @@ async function ensureFeeColumnsExist(pool) {
       return reply.code(200).send({ data });
     } catch (err) {
       fastify.log.error(err, 'Failed to fetch transaction links');
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -1823,7 +1849,7 @@ async function ensureFeeColumnsExist(pool) {
       return reply.code(201).send({ success: true, data: row });
     } catch (err) {
       fastify.log.error(err, 'Failed to link transaction');
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -1885,7 +1911,7 @@ async function ensureFeeColumnsExist(pool) {
       await pool.query('UPDATE transaction_links SET note = $1 WHERE id = $2', [updatedNote, linkId]);
       return reply.code(200).send({ success: true, data: { id: linkId, feeAmount: newAmount, feeCategory: newCat, isFeeClassified: newClassified } });
     } catch (err) {
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -1899,7 +1925,7 @@ async function ensureFeeColumnsExist(pool) {
       }
       return reply.code(200).send({ success: true });
     } catch (err) {
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -1929,7 +1955,7 @@ async function ensureFeeColumnsExist(pool) {
       return reply.code(200).send({ data: candidates, minScore });
     } catch (err) {
       fastify.log.error(err, 'Failed to find reconciliation candidates');
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -1968,7 +1994,7 @@ async function ensureFeeColumnsExist(pool) {
       return reply.code(200).send({ data: merchants });
     } catch (err) {
       fastify.log.error(err, 'Failed to fetch detected CC merchants');
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -1980,7 +2006,7 @@ async function ensureFeeColumnsExist(pool) {
       return reply.code(200).send({ success: true, ...result });
     } catch (err) {
       fastify.log.error(err, 'Failed to run auto-reconciliation');
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -1992,7 +2018,7 @@ async function ensureFeeColumnsExist(pool) {
       return reply.code(200).send({ success: true, ...result });
     } catch (err) {
       fastify.log.error(err, 'Failed to detect CC billings');
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -2091,7 +2117,7 @@ async function ensureFeeColumnsExist(pool) {
       }));
       return reply.code(200).send({ data });
     } catch (err) {
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -2114,7 +2140,7 @@ async function ensureFeeColumnsExist(pool) {
       }
       return reply.code(200).send({ success: true, id, action });
     } catch (err) {
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -2145,7 +2171,7 @@ async function ensureFeeColumnsExist(pool) {
       }
       return true;
     } catch (err) {
-      reply.code(500).send({ error: 'Security Check Error', message: err.message });
+      reply.code(500).send({ error: 'Security Check Error' });
       return false;
     }
   }
@@ -2155,7 +2181,7 @@ async function ensureFeeColumnsExist(pool) {
     const isTgAuthorized = await validateTelegramAccess(request, reply);
     if (!isTgAuthorized) return;
 
-    const token = request.query?.token || request.headers['x-tma-token'];
+    const token = request.headers['x-tma-token'];
     const isTokenValid = verifyTmaToken(token);
 
     if (!isTokenValid) {
@@ -2171,7 +2197,7 @@ async function ensureFeeColumnsExist(pool) {
       );
       return reply.code(200).send({ data: res.rows });
     } catch (err) {
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -2181,7 +2207,7 @@ async function ensureFeeColumnsExist(pool) {
     if (!isTgAuthorized) return;
 
     const { id } = request.params;
-    const token = request.query?.token || request.headers['x-tma-token'];
+    const token = request.headers['x-tma-token'];
 
     // Strict validation: token MUST be cryptographically valid AND bound to this transaction ID
     const isAuthorized = verifyTmaToken(token, id);
@@ -2257,7 +2283,7 @@ async function ensureFeeColumnsExist(pool) {
       });
     } catch (err) {
       fastify.log.error(err, 'Failed to fetch TMA transaction');
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -2267,7 +2293,7 @@ async function ensureFeeColumnsExist(pool) {
     if (!isTgAuthorized) return;
 
     const { id } = request.params;
-    const token = request.query?.token || request.headers['x-tma-token'];
+    const token = request.headers['x-tma-token'];
 
     // Strict validation: token MUST be cryptographically valid AND bound to this transaction ID
     const isAuthorized = verifyTmaToken(token, id);
@@ -2420,7 +2446,7 @@ async function ensureFeeColumnsExist(pool) {
       });
     } catch (err) {
       fastify.log.error(err, 'Failed to update TMA transaction');
-      return reply.code(500).send({ error: err.message || 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -2430,7 +2456,7 @@ async function ensureFeeColumnsExist(pool) {
     if (!isTgAuthorized) return;
 
     const { id } = request.params;
-    const token = request.query?.token || request.headers['x-tma-token'];
+    const token = request.headers['x-tma-token'];
     if (!verifyTmaToken(token, id)) {
       return reply.code(401).send({ error: 'Unauthorized', message: 'טוקן לא תקין' });
     }
@@ -2465,7 +2491,7 @@ async function ensureFeeColumnsExist(pool) {
       }));
       return reply.send({ success: true, data: rows });
     } catch (err) {
-      return reply.code(500).send({ error: err.message || 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -2475,7 +2501,7 @@ async function ensureFeeColumnsExist(pool) {
     if (!isTgAuthorized) return;
 
     const { id } = request.params;
-    const token = request.query?.token || request.headers['x-tma-token'];
+    const token = request.headers['x-tma-token'];
     if (!verifyTmaToken(token, id)) return reply.code(401).send({ error: 'Unauthorized' });
 
     try {
@@ -2486,7 +2512,7 @@ async function ensureFeeColumnsExist(pool) {
       const splits = res.rows.map(s => ({ ...s, amount: parseFloat(s.amount) }));
       return reply.send({ success: true, data: splits });
     } catch (err) {
-      return reply.code(500).send({ error: err.message || 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -2496,7 +2522,7 @@ async function ensureFeeColumnsExist(pool) {
     if (!isTgAuthorized) return;
 
     const { id } = request.params;
-    const token = request.query?.token || request.headers['x-tma-token'];
+    const token = request.headers['x-tma-token'];
     if (!verifyTmaToken(token, id)) return reply.code(401).send({ error: 'Unauthorized' });
 
     const { splits } = request.body || {};
@@ -2551,7 +2577,7 @@ async function ensureFeeColumnsExist(pool) {
     } catch (err) {
       await client.query('ROLLBACK');
       fastify.log.error(err, 'Failed to save TMA splits');
-      return reply.code(500).send({ error: err.message || 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     } finally {
       client.release();
     }
@@ -2563,7 +2589,7 @@ async function ensureFeeColumnsExist(pool) {
     if (!isTgAuthorized) return;
 
     const { id } = request.params;
-    const token = request.query?.token || request.headers['x-tma-token'];
+    const token = request.headers['x-tma-token'];
     if (!verifyTmaToken(token, id)) return reply.code(401).send({ error: 'Unauthorized' });
 
     try {
@@ -2573,7 +2599,7 @@ async function ensureFeeColumnsExist(pool) {
       );
       return reply.send({ success: true, data: res.rows });
     } catch (err) {
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -2583,7 +2609,7 @@ async function ensureFeeColumnsExist(pool) {
     if (!isTgAuthorized) return;
 
     const { id } = request.params;
-    const token = request.query?.token || request.headers['x-tma-token'];
+    const token = request.headers['x-tma-token'];
     if (!verifyTmaToken(token, id)) return reply.code(401).send({ error: 'Unauthorized' });
 
     const { note } = request.body || {};
@@ -2596,7 +2622,7 @@ async function ensureFeeColumnsExist(pool) {
       );
       return reply.code(201).send({ success: true, data: res.rows[0] });
     } catch (err) {
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -2606,14 +2632,14 @@ async function ensureFeeColumnsExist(pool) {
     if (!isTgAuthorized) return;
 
     const { id, noteId } = request.params;
-    const token = request.query?.token || request.headers['x-tma-token'];
+    const token = request.headers['x-tma-token'];
     if (!verifyTmaToken(token, id)) return reply.code(401).send({ error: 'Unauthorized' });
 
     try {
       await pool.query(`DELETE FROM transaction_notes WHERE id = $1 AND transaction_id = $2`, [noteId, id]);
       return reply.send({ success: true });
     } catch (err) {
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -2623,7 +2649,7 @@ async function ensureFeeColumnsExist(pool) {
     if (!isTgAuthorized) return;
 
     const { id } = request.params;
-    const token = request.query?.token || request.headers['x-tma-token'];
+    const token = request.headers['x-tma-token'];
     if (!verifyTmaToken(token, id)) return reply.code(401).send({ error: 'Unauthorized' });
 
     await autoLinkInstallmentTransactions(pool, id).catch(() => {});
@@ -2665,7 +2691,7 @@ async function ensureFeeColumnsExist(pool) {
       }));
       return reply.send({ success: true, data });
     } catch (err) {
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -2675,7 +2701,7 @@ async function ensureFeeColumnsExist(pool) {
     if (!isTgAuthorized) return;
 
     const { id } = request.params;
-    const token = request.query?.token || request.headers['x-tma-token'];
+    const token = request.headers['x-tma-token'];
     if (!verifyTmaToken(token, id)) return reply.code(401).send({ error: 'Unauthorized' });
 
     const { targetTransactionId, linkType = 'related', note = null } = request.body || {};
@@ -2695,7 +2721,7 @@ async function ensureFeeColumnsExist(pool) {
       );
       return reply.code(201).send({ success: true, data: res.rows[0] });
     } catch (err) {
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -2705,7 +2731,7 @@ async function ensureFeeColumnsExist(pool) {
     if (!isTgAuthorized) return;
 
     const { id, linkId } = request.params;
-    const token = request.query?.token || request.headers['x-tma-token'];
+    const token = request.headers['x-tma-token'];
     if (!verifyTmaToken(token, id)) return reply.code(401).send({ error: 'Unauthorized' });
 
     try {
@@ -2715,7 +2741,7 @@ async function ensureFeeColumnsExist(pool) {
       );
       return reply.send({ success: true });
     } catch (err) {
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -2725,7 +2751,7 @@ async function ensureFeeColumnsExist(pool) {
     if (!isTgAuthorized) return;
 
     const { id } = request.params;
-    const token = request.query?.token || request.headers['x-tma-token'];
+    const token = request.headers['x-tma-token'];
     if (!verifyTmaToken(token, id)) return reply.code(401).send({ error: 'Unauthorized' });
 
     const search = request.query?.search?.trim() || '';
@@ -2793,7 +2819,7 @@ async function ensureFeeColumnsExist(pool) {
       }));
       return reply.send({ success: true, data });
     } catch (err) {
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -2803,7 +2829,7 @@ async function ensureFeeColumnsExist(pool) {
     if (!isTgAuthorized) return;
 
     const { id } = request.params;
-    const token = request.query?.token || request.headers['x-tma-token'];
+    const token = request.headers['x-tma-token'];
     if (!verifyTmaToken(token, id)) return reply.code(401).send({ error: 'Unauthorized' });
 
     try {
@@ -2817,7 +2843,7 @@ async function ensureFeeColumnsExist(pool) {
       );
       return reply.send({ success: true, data: res.rows });
     } catch (err) {
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -2827,7 +2853,7 @@ async function ensureFeeColumnsExist(pool) {
     if (!isTgAuthorized) return;
 
     const { id } = request.params;
-    const token = request.query?.token || request.headers['x-tma-token'];
+    const token = request.headers['x-tma-token'];
     if (!verifyTmaToken(token, id)) return reply.code(401).send({ error: 'Unauthorized' });
 
     const { url } = request.body || {};
@@ -2864,7 +2890,7 @@ async function ensureFeeColumnsExist(pool) {
 
       return reply.code(201).send({ success: true, data: insertRes.rows[0] });
     } catch (err) {
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -2874,7 +2900,7 @@ async function ensureFeeColumnsExist(pool) {
     if (!isTgAuthorized) return;
 
     const { id } = request.params;
-    const token = request.query?.token || request.headers['x-tma-token'];
+    const token = request.headers['x-tma-token'];
     if (!verifyTmaToken(token, id)) return reply.code(401).send({ error: 'Unauthorized' });
 
     let data;
@@ -2931,7 +2957,7 @@ async function ensureFeeColumnsExist(pool) {
       );
       return reply.code(201).send({ success: true, data: insertRes.rows[0] });
     } catch (err) {
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 
@@ -2941,7 +2967,7 @@ async function ensureFeeColumnsExist(pool) {
     if (!isTgAuthorized) return;
 
     const { id, receiptId } = request.params;
-    const token = request.query?.token || request.headers['x-tma-token'];
+    const token = request.headers['x-tma-token'];
     if (!verifyTmaToken(token, id)) return reply.code(401).send({ error: 'Unauthorized' });
 
     try {
@@ -2959,7 +2985,7 @@ async function ensureFeeColumnsExist(pool) {
       await pool.query('DELETE FROM transaction_receipts WHERE id = $1 AND transaction_id = $2', [receiptId, id]);
       return reply.send({ success: true });
     } catch (err) {
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 

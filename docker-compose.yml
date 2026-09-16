@@ -28,14 +28,14 @@ services:
         reservations:
           memory: 16m
 
-  # ── Web v2 Interface (Primary Frontend on Port 4747, 80 & 443 via Nginx) ─
+  # ── Web v2 Interface (Primary Frontend – internal only, accessed via Nginx) ─
   web-v2:
     image: ghcr.io/razielzaarur1/fintrack-web-v2:latest
     container_name: finapp-web-v2
     networks:
       - fintrack-net
-    ports:
-      - "4747:3000"
+    expose:
+      - "3000"
     environment:
       - NODE_ENV=production
       - NEXT_PUBLIC_API_URL=/api

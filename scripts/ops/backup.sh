@@ -7,19 +7,18 @@ TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 BACKUP_FILE="${BACKUP_DIR}/finapp_backup_${TIMESTAMP}.sql.gz"
 
 DB_HOST="${DB_HOST:-localhost}"
+DB_PORT="${DB_PORT:-5432}"
 DB_NAME="${DB_NAME:-finance}"
 DB_USER="${DB_USER:-finance_admin}"
 CONTAINER_NAME="finapp-postgres"
 
 mkdir -p "${BACKUP_DIR}"
 
-echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] Starting database backup..."
+echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] Starting full database backup (all tables)..."
 
 if command -v docker &> /dev/null && docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+    # Full dump – no --table filter so all current and future tables are included
     docker exec "${CONTAINER_NAME}" pg_dump -U "${DB_USER}" -d "${DB_NAME}" \
-        --table=public.users \
-        --table=public.bank_accounts \
-        --table=public.transactions \
         --clean --if-exists | gzip > "${BACKUP_FILE}"
 else
     # Read DB password from secret file if exists and PGPASSWORD is not already set
@@ -28,9 +27,6 @@ else
     fi
 
     pg_dump -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}" -d "${DB_NAME}" \
-        --table=public.users \
-        --table=public.bank_accounts \
-        --table=public.transactions \
         --clean --if-exists | gzip > "${BACKUP_FILE}"
 fi
 
