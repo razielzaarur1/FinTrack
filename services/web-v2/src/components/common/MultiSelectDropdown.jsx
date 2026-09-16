@@ -31,10 +31,13 @@ export default function MultiSelectDropdown({
     };
   }, [isOpen]);
 
-  const filteredOptions = options.filter((opt) =>
-    opt.label?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    opt.secondaryLabel?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredOptions = options.filter((opt) => {
+    if (opt.isHeader) return true;
+    return (
+      opt.label?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      opt.secondaryLabel?.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  });
 
   const toggleOption = (id) => {
     const isSelected = selectedValues.includes(id);
@@ -46,7 +49,7 @@ export default function MultiSelectDropdown({
   };
 
   const handleSelectAll = () => {
-    onChange(filteredOptions.map((o) => o.id));
+    onChange(filteredOptions.filter((o) => !o.isHeader).map((o) => o.id));
   };
 
   const handleClearAll = () => {
@@ -146,6 +149,22 @@ export default function MultiSelectDropdown({
               </div>
             ) : (
               filteredOptions.map((opt) => {
+                if (opt.isHeader) {
+                  return (
+                    <div
+                      key={opt.id || opt.label}
+                      className="px-2 pt-2.5 pb-1 text-[11px] font-bold text-dark-text-muted light:text-light-text-muted border-t border-dark-border/40 light:border-light-border/40 flex items-center justify-between mt-1 select-none"
+                    >
+                      <span className="flex items-center gap-1.5">{opt.icon}<span>{opt.label}</span></span>
+                      {opt.count !== undefined && (
+                        <span className="text-[10px] font-normal font-mono px-1.5 py-0.2 rounded-full bg-dark-surface light:bg-light-surface border border-dark-border light:border-light-border">
+                          {opt.count}
+                        </span>
+                      )}
+                    </div>
+                  );
+                }
+
                 const isSelected = selectedValues.includes(opt.id);
                 return (
                   <button

@@ -10,11 +10,16 @@ import {
   Settings as SettingsIcon,
   RefreshCw,
   ChevronDown,
+  ChevronUp,
+  ArrowUp,
+  ArrowDown,
+  CreditCard,
   Upload,
   FileCode,
   Sparkles,
   X,
   Layers,
+  Link2,
   Edit2,
   AlertTriangle,
   Send,
@@ -86,6 +91,17 @@ export default function SettingsPage() {
   const [scanningCcAnomalies, setScanningCcAnomalies] = useState(false);
   const [scanCcResult, setScanCcResult] = useState(null);
 
+  // CC Reconciliation & Matching States
+  const [autoReconcileCc, setAutoReconcileCc] = useState(true);
+  const [ccAutoScoreThreshold, setCcAutoScoreThreshold] = useState(85);
+  const [ccManualScoreThreshold, setCcManualScoreThreshold] = useState(35);
+  const [ccCustomPatterns, setCcCustomPatterns] = useState([]);
+  const [newCcPattern, setNewCcPattern] = useState('');
+  const [runningCcReconcile, setRunningCcReconcile] = useState(false);
+  const [ccReconcileResult, setCcReconcileResult] = useState(null);
+  const [detectingCcBillings, setDetectingCcBillings] = useState(false);
+  const [detectCcResult, setDetectCcResult] = useState(null);
+
   // Auto-Scrape Schedule States (in HOURS, minimum 3h safety limit)
   const [autoScrapeEnabled, setAutoScrapeEnabled] = useState(true);
   const [scrapeIntervalCardsHours, setScrapeIntervalCardsHours] = useState(4);
@@ -148,6 +164,10 @@ export default function SettingsPage() {
         if (s.flagLowCcBillings !== undefined) setFlagLowCcBillings(s.flagLowCcBillings);
         if (s.ccBillingMinThreshold !== undefined) setCcBillingMinThreshold(parseInt(s.ccBillingMinThreshold, 10) || 500);
         if (s.ccBillingLookbackDays !== undefined) setCcBillingLookbackDays(parseInt(s.ccBillingLookbackDays, 10) || 60);
+        if (s.autoReconcileCcEnabled !== undefined) setAutoReconcileCc(s.autoReconcileCcEnabled);
+        if (s.ccAutoScoreThreshold !== undefined) setCcAutoScoreThreshold(parseInt(s.ccAutoScoreThreshold, 10) || 85);
+        if (s.ccManualScoreThreshold !== undefined) setCcManualScoreThreshold(parseInt(s.ccManualScoreThreshold, 10) || 35);
+        if (Array.isArray(s.ccCustomPatterns)) setCcCustomPatterns(s.ccCustomPatterns);
         if (s.autoScrapeEnabled !== undefined) setAutoScrapeEnabled(s.autoScrapeEnabled);
         if (s.scrapeIntervalCreditCardsHours !== undefined) {
           setScrapeIntervalCardsHours(Math.max(3, parseFloat(s.scrapeIntervalCreditCardsHours) || 4));
@@ -181,6 +201,154 @@ export default function SettingsPage() {
       setScanCcResult({ success: false, message: err.message || 'שגיאה בסריקה' });
     } finally {
       setScanningCcAnomalies(false);
+    }
+  };
+
+  const handleSaveCcSettings = async (overrides = {}) => {
+    try {
+      const res = await api.getSystemSettings();
+      const current = res.data?.settings || {};
+      const updated = {
+        ...current,
+        autoReconcileCcEnabled: overrides.autoReconcileCc !== undefined ? overrides.autoReconcileCc : autoReconcileCc,
+        ccAutoScoreThreshold: overrides.ccAutoScoreThreshold !== undefined ? overrides.ccAutoScoreThreshold : ccAutoScoreThreshold,
+        ccManualScoreThreshold: overrides.ccManualScoreThreshold !== undefined ? overrides.ccManualScoreThreshold : ccManualScoreThreshold,
+        ccCustomPatterns: overrides.ccCustomPatterns !== undefined ? overrides.ccCustomPatterns : ccCustomPatterns,
+      };
+      await api.saveSystemSettings(updated);
+    } catch (err) {
+      console.error('Failed to save CC settings:', err);
+    }
+  };
+
+  const handleRunReconcileAuto = async () => {
+    setRunningCcReconcile(true);
+    setCcReconcileResult(null);
+    try {
+      const res = await api.reconcileCcAuto({ minScore: ccAutoScoreThreshold, thresholdAmountDiff: 0.01 });
+      if (res.data) {
+        setCcReconcileResult({
+          success: true,
+          message: `הסתיים בהצלחה: הותאמו וקושרו ${res.data.linkedCount ?? 0} חיובי אשראי עם תנועות מקבילות (סכום מדויק בלבד)`,
+        });
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('fintrack_tx_updated'));
+        }
+      } else {
+        setCcReconcileResult({ success: false, message: res.error || 'שגיאה בהרצת ההתאמה' });
+      }
+    } catch (err) {
+      setCcReconcileResult({ success: false, message: err.message || 'שגיאה בהרצת ההתאמה' });
+    } finally {
+      setRunningCcReconcile(false);
+    }
+  };
+
+  const handleDetectCcBillings = async () => {
+    setDetectingCcBillings(true);
+    setDetectCcResult(null);
+    try {
+      const res = await api.detectCcBillings({ userPatterns: ccCustomPatterns });
+      if (res.data) {
+        setDetectCcResult({
+          success: true,
+          message: `נסרקו חשבונות הבנק: זוהו ותויגו ${res.data.taggedCount ?? 0} חיובי אשראי חדשים`,
+        });
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('fintrack_tx_updated'));
+        }
+      } else {
+        setDetectCcResult({ success: false, message: res.error || 'שגיאה בסריקה' });
+      }
+    } catch (err) {
+      setDetectCcResult({ success: false, message: err.message || 'שגיאה בסריקה' });
+    } finally {
+      setDetectingCcBillings(false);
+    }
+  };
+
+  const handleAddCcPattern = async () => {
+    if (!newCcPattern.trim()) return;
+    const clean = newCcPattern.trim();
+    if (!ccCustomPatterns.includes(clean)) {
+      const updated = [...ccCustomPatterns, clean];
+      setCcCustomPatterns(updated);
+      setNewCcPattern('');
+      await handleSaveCcSettings({ ccCustomPatterns: updated });
+    }
+  };
+
+  const handleRemoveCcPattern = async (pattern) => {
+    const updated = ccCustomPatterns.filter((p) => p !== pattern);
+    setCcCustomPatterns(updated);
+    await handleSaveCcSettings({ ccCustomPatterns: updated });
+  };
+
+  // Category Reordering Handlers
+  const handleReorderCategory = async (catId, direction, e) => {
+    e?.stopPropagation();
+    const list = [...activeCategories];
+    const index = list.findIndex((c) => c.id === catId);
+    if (index < 0) return;
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= list.length) return;
+
+    // Swap
+    const temp = list[index];
+    list[index] = list[targetIndex];
+    list[targetIndex] = temp;
+
+    // Build full ordered list preserving other category type
+    const otherTypeCats = categories.filter((c) => activeTab === 'expense' ? c.type === 'income' : (c.type === 'expense' || c.type === 'both' || !c.type));
+    const newCategories = activeTab === 'expense' ? [...list, ...otherTypeCats] : [...otherTypeCats, ...list];
+    
+    // Assign updated sortOrder
+    const updatedWithOrder = newCategories.map((c, i) => ({ ...c, sortOrder: i }));
+    setCategories(updatedWithOrder);
+    setDynamicCategories(updatedWithOrder);
+
+    // Call API with orderedIds
+    const orderedIds = updatedWithOrder.map((c) => c.id);
+    try {
+      await api.reorderCategories({ orderedIds });
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('fintrack_categories_updated'));
+      }
+    } catch (err) {
+      console.error('Failed to reorder categories:', err);
+    }
+  };
+
+  const handleReorderSubcategory = async (parentCatId, subId, direction, e) => {
+    e?.stopPropagation();
+    const parent = categories.find((c) => c.id === parentCatId);
+    if (!parent || !Array.isArray(parent.subs)) return;
+    const subs = [...parent.subs];
+    const index = subs.findIndex((s) => s.id === subId);
+    if (index < 0) return;
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= subs.length) return;
+
+    // Swap
+    const temp = subs[index];
+    subs[index] = subs[targetIndex];
+    subs[targetIndex] = temp;
+
+    // Assign sortOrder to subs
+    const updatedSubs = subs.map((s, i) => ({ ...s, sortOrder: i }));
+    const updatedCategories = categories.map((c) => c.id === parentCatId ? { ...c, subs: updatedSubs } : c);
+    setCategories(updatedCategories);
+    setDynamicCategories(updatedCategories);
+
+    // Call API with orderedIds of the subs
+    const orderedIds = updatedSubs.map((s) => s.id);
+    try {
+      await api.reorderCategories({ orderedIds });
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('fintrack_categories_updated'));
+      }
+    } catch (err) {
+      console.error('Failed to reorder subcategories:', err);
     }
   };
 
@@ -1042,6 +1210,184 @@ export default function SettingsPage() {
                 </div>
               )}
             </div>
+
+            {/* Automatic Credit Card Billing Reconciliation & Linking */}
+            <div className="col-span-full p-4 rounded-xl border border-indigo-500/30 bg-indigo-500/5 space-y-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-2.5">
+                  <CreditCard className="w-5 h-5 text-indigo-400 mt-0.5 shrink-0" />
+                  <div>
+                    <span className="font-bold text-dark-text light:text-light-text text-sm block">
+                      התאמה וקישור חיובי חברות אשראי (Reconciliation)
+                    </span>
+                    <span className="text-[11px] text-dark-text-muted light:text-light-text-muted block">
+                      אלגוריתם מתקדם לאיתור חיובי אשראי בחשבון הבנק, קישורם לתנועות האשראי או המט״ח המקוריות, ומניעת ספירה כפולה של הוצאות
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0" dir="ltr">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const next = !autoReconcileCc;
+                      setAutoReconcileCc(next);
+                      await handleSaveCcSettings({ autoReconcileCc: next });
+                    }}
+                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                      autoReconcileCc ? 'bg-indigo-600' : 'bg-slate-600'
+                    }`}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-xs ring-0 transition duration-200 ease-in-out ${
+                        autoReconcileCc ? 'translate-x-4' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+
+              {/* Settings Controls */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                <div className="space-y-1">
+                  <div className="flex justify-between items-center text-[11px]">
+                    <span className="font-medium text-dark-text light:text-light-text">סף ציון לקישור אוטומטי (דיוק בסכום 100% חובה)</span>
+                    <span className="font-bold font-mono text-indigo-400">{ccAutoScoreThreshold}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="80"
+                    max="99"
+                    step="1"
+                    value={ccAutoScoreThreshold}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      setCcAutoScoreThreshold(v);
+                      handleSaveCcSettings({ ccAutoScoreThreshold: v });
+                    }}
+                    className="w-full accent-indigo-500 cursor-pointer"
+                  />
+                  <span className="text-[10px] text-dark-text-muted light:text-light-text-muted block">
+                    קישור אוטומטי מבוצע אך ורק בתנועות עם סכום זהה בדיוק (הפרש 0 ₪) וציון מעל סף זה.
+                  </span>
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex justify-between items-center text-[11px]">
+                    <span className="font-medium text-dark-text light:text-light-text">סף ציון להצגת מועמדים ידניים</span>
+                    <span className="font-bold font-mono text-indigo-400">{ccManualScoreThreshold}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="20"
+                    max="70"
+                    step="5"
+                    value={ccManualScoreThreshold}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      setCcManualScoreThreshold(v);
+                      handleSaveCcSettings({ ccManualScoreThreshold: v });
+                    }}
+                    className="w-full accent-indigo-500 cursor-pointer"
+                  />
+                  <span className="text-[10px] text-dark-text-muted light:text-light-text-muted block">
+                    התאמות מוצעות שיוצגו בחלונית התנועה להתאמה ידנית (ברירת מחדל: 35%).
+                  </span>
+                </div>
+              </div>
+
+              {/* CC Merchant Patterns Management */}
+              <div className="space-y-2 pt-2 border-t border-indigo-500/20">
+                <label className="text-xs font-semibold text-dark-text light:text-light-text flex items-center justify-between">
+                  <span>דפוסי זיהוי מותאמים אישית לבתי עסק / חברות אשראי:</span>
+                  <span className="text-[10px] text-dark-text-muted font-normal">מתווסף לדפוסי ברירת המחדל (ישראכרט, כאל, מקס, ויזה וכו')</span>
+                </label>
+
+                {/* Pattern Tags */}
+                <div className="flex flex-wrap gap-1.5 min-h-[32px] items-center">
+                  {ccCustomPatterns.length === 0 ? (
+                    <span className="text-[11px] text-dark-text-muted light:text-light-text-muted italic">
+                      אין דפוסים מותאמים אישית. המערכת משתמשת בדפוסים המובנים של חברות האשראי בישראל.
+                    </span>
+                  ) : (
+                    ccCustomPatterns.map((p) => (
+                      <span
+                        key={p}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-500/15 text-indigo-400 text-xs font-medium border border-indigo-500/20"
+                      >
+                        <span>{p}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveCcPattern(p)}
+                          className="hover:text-rose-400 cursor-pointer"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    ))
+                  )}
+                </div>
+
+                {/* Add Custom Pattern Input */}
+                <div className="flex gap-2 pt-1">
+                  <input
+                    type="text"
+                    placeholder="הוסף שם בית עסק או מילת מפתח (למשל: חיוב מקס עסקי)..."
+                    value={newCcPattern}
+                    onChange={(e) => setNewCcPattern(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleAddCcPattern();
+                      }
+                    }}
+                    className="flex-1 p-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text text-xs focus:outline-none focus:border-indigo-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddCcPattern}
+                    className="px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs transition-colors shrink-0 cursor-pointer"
+                  >
+                    הוסף
+                  </button>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="pt-2 border-t border-indigo-500/20 flex items-center gap-2.5 flex-wrap">
+                <button
+                  type="button"
+                  onClick={handleDetectCcBillings}
+                  disabled={detectingCcBillings}
+                  className="px-3.5 py-2 rounded-xl border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 font-bold text-xs transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${detectingCcBillings ? 'animate-spin' : ''}`} />
+                  <span>{detectingCcBillings ? 'סורק חשבונות...' : 'סרוק ותייג חיובי אשראי בבנק עכשיו'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleRunReconcileAuto}
+                  disabled={runningCcReconcile}
+                  className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs transition-all flex items-center gap-1.5 shadow-sm cursor-pointer disabled:opacity-50"
+                >
+                  <Link2 className={`w-3.5 h-3.5 ${runningCcReconcile ? 'animate-spin' : ''}`} />
+                  <span>{runningCcReconcile ? 'מבצע התאמות...' : 'הרץ התאמה וקישור עכשיו (סכום זהה 100%)'}</span>
+                </button>
+
+                {detectCcResult && (
+                  <span className={`text-xs font-medium ${detectCcResult.success ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {detectCcResult.message}
+                  </span>
+                )}
+
+                {ccReconcileResult && (
+                  <span className={`text-xs font-medium ${ccReconcileResult.success ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {ccReconcileResult.message}
+                  </span>
+                )}
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1445,7 +1791,7 @@ export default function SettingsPage() {
 
         {/* Categories Tree Cards */}
         <div className="space-y-3">
-          {activeCategories.map((cat) => {
+          {activeCategories.map((cat, catIdx) => {
             const isExpanded = expandedCats.has(cat.id);
             const subs = cat.subs || [];
             const isInactive = cat.isActive === false;
@@ -1493,7 +1839,29 @@ export default function SettingsPage() {
                   </div>
 
                   {/* Actions Bar */}
-                  <div className="flex items-center justify-between sm:justify-end gap-2.5 pt-2 sm:pt-0 border-t sm:border-t-0 border-dark-border/40 light:border-light-border/40" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex items-center justify-between sm:justify-end gap-2 pt-2 sm:pt-0 border-t sm:border-t-0 border-dark-border/40 light:border-light-border/40" onClick={(e) => e.stopPropagation()}>
+                    {/* Category Reorder Up / Down */}
+                    <div className="flex items-center gap-0.5 bg-dark-surface light:bg-light-surface rounded-lg p-0.5 border border-dark-border/60 light:border-light-border/60 shrink-0">
+                      <button
+                        type="button"
+                        disabled={catIdx === 0}
+                        onClick={(e) => handleReorderCategory(cat.id, 'up', e)}
+                        className="p-1 rounded hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-dark-text-muted hover:text-dark-text disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
+                        title="הזז קטגוריה למעלה"
+                      >
+                        <ChevronUp className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={catIdx === activeCategories.length - 1}
+                        onClick={(e) => handleReorderCategory(cat.id, 'down', e)}
+                        className="p-1 rounded hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-dark-text-muted hover:text-dark-text disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
+                        title="הזז קטגוריה למטה"
+                      >
+                        <ChevronDown className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
                     {/* Active / Inactive Toggle */}
                     <div className="flex items-center gap-1.5 shrink-0" dir="ltr" title={!isInactive ? 'קטגוריה פעילה (לחץ להשבתה)' : 'קטגוריה מושבתת (לחץ להפעלה)'}>
                       <button
@@ -1554,7 +1922,7 @@ export default function SettingsPage() {
                 {isExpanded && (
                   <div className="p-4 pt-2 border-t border-dark-border/40 light:border-light-border/40 bg-dark-surface/50 light:bg-light-surface/50">
                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5 mt-2">
-                      {subs.map((sub) => {
+                      {subs.map((sub, subIdx) => {
                         const isSubInactive = sub.isActive === false;
                         return (
                           <div
@@ -1582,6 +1950,28 @@ export default function SettingsPage() {
                             </div>
 
                             <div className="flex items-center gap-1 shrink-0 opacity-80 group-hover:opacity-100 transition-opacity">
+                              {/* Subcategory Reorder Up / Down */}
+                              <div className="flex items-center gap-0.5">
+                                <button
+                                  type="button"
+                                  disabled={subIdx === 0}
+                                  onClick={(e) => handleReorderSubcategory(cat.id, sub.id, 'up', e)}
+                                  className="p-0.5 rounded text-dark-text-muted hover:text-dark-text disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
+                                  title="הזז תת-קטגוריה למעלה"
+                                >
+                                  <ArrowUp className="w-3 h-3" />
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={subIdx === subs.length - 1}
+                                  onClick={(e) => handleReorderSubcategory(cat.id, sub.id, 'down', e)}
+                                  className="p-0.5 rounded text-dark-text-muted hover:text-dark-text disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
+                                  title="הזז תת-קטגוריה למטה"
+                                >
+                                  <ArrowDown className="w-3 h-3" />
+                                </button>
+                              </div>
+
                               {/* Subcategory Active Toggle */}
                               <div className="flex items-center gap-1 shrink-0 mr-1" dir="ltr" title={!isSubInactive ? 'תת-קטגוריה פעילה (לחץ להשבתה)' : 'תת-קטגוריה מושבתת (לחץ להפעלה)'}>
                                 <button

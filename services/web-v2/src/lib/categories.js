@@ -112,7 +112,7 @@ export const CATEGORIES_DATA = {
       ] 
     },
     { 
-      id: "exp_business", name: "שירותים עיסקיים", icon: "Briefcase", color: "text-slate-500 dark:text-slate-400", bg: "bg-slate-500/10 dark:bg-slate-500/20", type: "expense", 
+      id: "exp_business", name: "שירותים עיסקיים", icon: "Briefcase", color: "text-blue-600 dark:text-blue-400", bg: "bg-blue-500/10 dark:bg-blue-500/20", type: "expense", 
       subs: [
         { id: "biz_delivery", name: "דואר ומשלוחים", icon: "Mail" }, 
         { id: "biz_legal", name: "הנה\"ח ומשפטי", icon: "FileText" }, 
@@ -131,8 +131,9 @@ export const CATEGORIES_DATA = {
       ] 
     },
     { 
-      id: "exp_misc", name: "שונות", icon: "MoreHorizontal", color: "text-gray-500 dark:text-gray-400", bg: "bg-gray-500/10 dark:bg-gray-500/20", type: "expense", 
+      id: "exp_misc", name: "שונות", icon: "MoreHorizontal", color: "text-slate-500 dark:text-slate-400", bg: "bg-slate-500/10 dark:bg-slate-500/20", type: "expense", 
       subs: [
+        { id: "misc_cc_billing", name: "חיוב אשראי", icon: "CreditCard" },
         { id: "misc_taxes", name: "מיסים ורשויות", icon: "Landmark" }, 
         { id: "misc_religion", name: "דת ותרומות", icon: "HandHeart" }, 
         { id: "misc_gambling", name: "הימורים", icon: "Trophy" }, 
@@ -154,12 +155,22 @@ const DEFAULT_CATEGORY = {
 
 let dynamicCategoriesStore = null;
 
+export function sortCategoriesByOrder(list) {
+  if (!Array.isArray(list)) return [];
+  return [...list].sort((a, b) => {
+    const orderA = a.sortOrder ?? a.sort_order ?? 999;
+    const orderB = b.sortOrder ?? b.sort_order ?? 999;
+    if (orderA !== orderB) return orderA - orderB;
+    return (a.name || '').localeCompare(b.name || '', 'he');
+  });
+}
+
 export function setDynamicCategories(tree) {
   if (Array.isArray(tree) && tree.length > 0) {
-    dynamicCategoriesStore = tree;
+    dynamicCategoriesStore = sortCategoriesByOrder(tree);
     if (typeof window !== 'undefined') {
       try {
-        localStorage.setItem('fintrack_cached_categories', JSON.stringify(tree));
+        localStorage.setItem('fintrack_cached_categories', JSON.stringify(dynamicCategoriesStore));
       } catch (e) {}
     }
   }
@@ -171,7 +182,7 @@ export function getDynamicCategories() {
     try {
       const cached = localStorage.getItem('fintrack_cached_categories');
       if (cached) {
-        dynamicCategoriesStore = JSON.parse(cached);
+        dynamicCategoriesStore = sortCategoriesByOrder(JSON.parse(cached));
         return dynamicCategoriesStore;
       }
     } catch (e) {}

@@ -112,6 +112,12 @@ export const api = {
   getLinks: (txId) => request(`/api/v2/transactions/${txId}/links`),
   linkTransaction: (txId, data) => request(`/api/v2/transactions/${txId}/links`, { method: 'POST', body: JSON.stringify(data) }),
   deleteLink: (linkId) => request(`/api/v2/transactions/links/${linkId}`, { method: 'DELETE' }),
+  updateLinkFee: (linkId, data) => request(`/api/v2/transactions/links/${linkId}/fee`, { method: 'PATCH', body: JSON.stringify(data) }),
+
+  // Reconciliation & Credit Card Billings
+  getReconciliationCandidates: (txId, params) => request(`/api/v2/transactions/${txId}/reconciliation-candidates${params?.minScore ? `?minScore=${params.minScore}` : ''}`),
+  reconcileCcAuto: (data) => request('/api/v2/transactions/reconcile-auto', { method: 'POST', body: JSON.stringify(data || {}) }),
+  detectCcBillings: (data) => request('/api/v2/transactions/detect-cc-billings', { method: 'POST', body: JSON.stringify(data || {}) }),
 
   // Categories & Learning
   getCategories: (arg1, arg2) => {
@@ -130,6 +136,7 @@ export const api = {
   createCategory: (data) => request('/api/categories', { method: 'POST', body: JSON.stringify(data) }),
   updateCategory: (id, data) => request(`/api/categories/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteCategory: (id) => request(`/api/categories/${id}`, { method: 'DELETE' }),
+  reorderCategories: (data) => request('/api/categories/reorder', { method: 'PUT', body: JSON.stringify(data) }),
   resetCategoriesToDefault: () => request('/api/categories/reset-default', { method: 'POST' }),
   classifyTransaction: (data) => request('/api/categories/classify', { method: 'POST', body: JSON.stringify(data) }),
   getCategoryRules: () => request('/api/categories/rules'),

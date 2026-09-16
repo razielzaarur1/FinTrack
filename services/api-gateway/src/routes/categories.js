@@ -181,6 +181,40 @@ export default async function categoriesRoutes(fastify, options) {
     }
   });
 
+  // PUT /api/categories/reorder - Update sort order for multiple categories
+  fastify.put('/reorder', async (request, reply) => {
+    const { orderedIds, items } = request.body || {};
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      if (Array.isArray(orderedIds)) {
+        for (let idx = 0; idx < orderedIds.length; idx++) {
+          await client.query(
+            `UPDATE categories SET sort_order = $1 WHERE (id = $2 OR name = $2) AND user_id = $3`,
+            [idx, orderedIds[idx], DEFAULT_USER_ID]
+          );
+        }
+      } else if (Array.isArray(items)) {
+        for (const item of items) {
+          if (item.id && typeof item.sortOrder === 'number') {
+            await client.query(
+              `UPDATE categories SET sort_order = $1 WHERE (id = $2 OR name = $2) AND user_id = $3`,
+              [item.sortOrder, item.id, DEFAULT_USER_ID]
+            );
+          }
+        }
+      }
+      await client.query('COMMIT');
+      return reply.code(200).send({ success: true, message: 'Categories reordered successfully' });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      fastify.log.error(err, 'Failed to reorder categories');
+      return reply.code(500).send({ error: 'Database error', message: err.message });
+    } finally {
+      client.release();
+    }
+  });
+
   // PATCH /api/categories/:id - Update category
   fastify.patch('/:id', async (request, reply) => {
     const { id } = request.params;

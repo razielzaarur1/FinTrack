@@ -156,7 +156,7 @@ export const DEFAULT_MONEYAPP_CATS = [
     ]
   },
   {
-    name: 'שירותים עיסקיים', nameEn: 'Business Services', type: 'expense', color: '#64748b', icon: 'Briefcase',
+    name: 'שירותים עיסקיים', nameEn: 'Business Services', type: 'expense', color: '#4f46e5', icon: 'Briefcase',
     subs: [
       { name: 'דואר ומשלוחים', icon: 'Mail' },
       { name: 'הנה"ח ומשפטי', icon: 'FileText' },
@@ -175,8 +175,9 @@ export const DEFAULT_MONEYAPP_CATS = [
     ]
   },
   {
-    name: 'שונות', nameEn: 'Misc', type: 'expense', color: '#6b7280', icon: 'MoreHorizontal',
+    name: 'שונות', nameEn: 'Misc', type: 'expense', color: '#64748b', icon: 'MoreHorizontal',
     subs: [
+      { name: 'חיוב אשראי', icon: 'CreditCard' },
       { name: 'מיסים ורשויות', icon: 'Landmark' },
       { name: 'דת ותרומות', icon: 'HandHeart' },
       { name: 'הימורים', icon: 'Trophy' },
@@ -391,12 +392,17 @@ async function ensureSchema() {
           ALTER TABLE transactions ADD COLUMN IF NOT EXISTS is_manual_category BOOLEAN NOT NULL DEFAULT false;
           ALTER TABLE transactions ADD COLUMN IF NOT EXISTS is_reviewed BOOLEAN NOT NULL DEFAULT false;
           ALTER TABLE transactions ADD COLUMN IF NOT EXISTS is_flagged BOOLEAN NOT NULL DEFAULT false;
+          ALTER TABLE transactions ADD COLUMN IF NOT EXISTS is_cc_billing BOOLEAN NOT NULL DEFAULT false;
+          ALTER TABLE transaction_links ADD COLUMN IF NOT EXISTS fee_amount NUMERIC(12, 2) DEFAULT 0;
+          ALTER TABLE transaction_links ADD COLUMN IF NOT EXISTS fee_category VARCHAR(100) DEFAULT 'עמלות';
+          ALTER TABLE transaction_links ADD COLUMN IF NOT EXISTS is_fee_classified BOOLEAN DEFAULT false;
           ALTER TABLE categories ADD COLUMN IF NOT EXISTS parent_id UUID REFERENCES categories(id) ON DELETE CASCADE;
           ALTER TABLE categories ADD COLUMN IF NOT EXISTS custom_svg TEXT;
           ALTER TABLE categories ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true;
 
           CREATE INDEX IF NOT EXISTS idx_transactions_processed_date ON transactions(processed_date);
           CREATE INDEX IF NOT EXISTS idx_transactions_reviewed ON transactions(is_reviewed);
+          CREATE INDEX IF NOT EXISTS idx_transactions_cc_billing ON transactions(is_cc_billing);
           CREATE INDEX IF NOT EXISTS idx_user_category_rules_user_pattern ON user_category_rules(user_id, merchant_pattern);
 
           -- Clean up old legacy flat categories and migrate any transactions

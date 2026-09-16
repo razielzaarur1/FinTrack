@@ -86,6 +86,12 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
   const [links, setLinks] = useState([]);
   const [linkType, setLinkType] = useState('refund'); // 'refund' | 'related' | 'correction'
 
+  // Reconciliation Candidates & Fee Modal State
+  const [candidates, setCandidates] = useState([]);
+  const [loadingCandidates, setLoadingCandidates] = useState(false);
+  const [linkingCandidateId, setLinkingCandidateId] = useState(null);
+  const [feeModalCandidate, setFeeModalCandidate] = useState(null);
+
   useEffect(() => {
     if (!activeTx) return;
 
@@ -125,6 +131,21 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
     api.getLinks(activeTx.id).then((res) => {
       if (res.data) setLinks(res.data.data || []);
     });
+
+    // Fetch reconciliation candidates if CC billing
+    if (activeTx.isCcBilling || activeTx.category === 'חיוב אשראי') {
+      setLoadingCandidates(true);
+      api.getReconciliationCandidates(activeTx.id)
+        .then((res) => {
+          if (res.data?.data?.candidates) {
+            setCandidates(res.data.data.candidates);
+          } else {
+            setCandidates([]);
+          }
+        })
+        .catch(() => setCandidates([]))
+        .finally(() => setLoadingCandidates(false));
+    }
 
     // Check foreign currency & fetch FX details
     const isForeignTx = Boolean(
@@ -307,6 +328,75 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
       }
     } catch (err) {
       console.error('Failed to unlink transaction:', err);
+    }
+  };
+
+  // Fetch candidates when switching to links tab
+  useEffect(() => {
+    if (!activeTx?.id) return;
+    if (activeTab === 'links' && candidates.length === 0 && !loadingCandidates) {
+      setLoadingCandidates(true);
+      api.getReconciliationCandidates(activeTx.id)
+        .then((res) => {
+          if (res.data?.data?.candidates) {
+            setCandidates(res.data.data.candidates);
+          }
+        })
+        .catch(() => {})
+        .finally(() => setLoadingCandidates(false));
+    }
+  }, [activeTab, activeTx?.id]);
+
+  const handleCandidateClick = (candidate) => {
+    const diff = Math.abs(candidate.amountDiff || 0);
+    if (diff > 0.01) {
+      setFeeModalCandidate(candidate);
+    } else {
+      handleExecuteCandidateLink(candidate, false);
+    }
+  };
+
+  const handleExecuteCandidateLink = async (candidate, isFeeClassified) => {
+    setLinkingCandidateId(candidate.id);
+    try {
+      const diff = Math.abs(candidate.amountDiff || 0);
+      const hasFee = diff > 0.01;
+      const res = await api.linkTransaction(activeTx.id, {
+        linkedTxId: candidate.id,
+        linkType: 'related',
+        feeAmount: hasFee ? diff : undefined,
+        feeCategory: hasFee ? 'עמלות' : undefined,
+        isFeeClassified: isFeeClassified,
+      });
+      if (res.data) {
+        const updatedLinks = await api.getLinks(activeTx.id);
+        if (updatedLinks.data) setLinks(updatedLinks.data.data || []);
+        setCandidates((prev) => prev.filter((c) => c.id !== candidate.id));
+        setFeeModalCandidate(null);
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('fintrack_tx_updated'));
+        }
+      }
+    } catch (err) {
+      console.error('Failed to link candidate:', err);
+    } finally {
+      setLinkingCandidateId(null);
+    }
+  };
+
+  const handleToggleFeeClassification = async (linkId, currentStatus) => {
+    try {
+      const res = await api.updateLinkFee(linkId, { isFeeClassified: !currentStatus });
+      if (res.data) {
+        setLinks((prev) =>
+          prev.map((l) => (l.linkId === linkId ? { ...l, isFeeClassified: !currentStatus } : l))
+        );
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('fintrack_tx_updated'));
+        }
+      }
+    } catch (err) {
+      console.error('Failed to update fee classification:', err);
     }
   };
 
@@ -516,6 +606,30 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
                   </div>
                 </div>
               </div>
+
+              {/* Credit Card Billing Detection Banner */}
+              {(activeTx.isCcBilling || activeTx.category === 'חיוב אשראי') && (
+                <div className="p-3.5 rounded-xl border border-indigo-500/30 bg-indigo-500/10 flex items-center justify-between gap-3 text-xs animate-in fade-in duration-150">
+                  <div className="flex items-center gap-2.5">
+                    <CreditCard className="w-5 h-5 text-indigo-400 shrink-0" />
+                    <div>
+                      <div className="font-bold text-dark-text light:text-light-text">
+                        זוהה כחיוב חברת אשראי 💳
+                      </div>
+                      <div className="text-[11px] text-dark-text-muted light:text-light-text-muted">
+                        מוחרג אוטומטית למניעת כפילות הוצאה
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('links')}
+                    className="px-3 py-1.5 rounded-lg bg-brand-primary text-white font-semibold text-xs hover:bg-brand-primary-hover transition-all cursor-pointer shrink-0"
+                  >
+                    התאמות ({candidates.length}) ›
+                  </button>
+                </div>
+              )}
 
               {/* Foreign Currency & Conversion Fee Analysis Card */}
               {loadingFx ? (
@@ -856,42 +970,144 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
                 ) : (
                   <div className="space-y-2">
                     {links.map((lnk) => (
-                      <div key={lnk.linkId} className="p-3 rounded-xl border border-brand-primary/30 bg-brand-primary/5 flex items-center justify-between gap-3 text-xs">
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <Link2 className="w-4 h-4 text-brand-primary shrink-0" />
-                          <div className="min-w-0">
-                            <div className="font-semibold text-dark-text light:text-light-text truncate">
-                              {cleanSpacedHebrew(lnk.userDescription || lnk.merchantName || lnk.description || 'ללא תיאור')}
-                            </div>
-                            <div className="text-[11px] text-dark-text-muted light:text-light-text-muted flex items-center gap-2">
-                              <span>{formatDate(lnk.date, lang)}</span>
-                              <span>•</span>
-                              <span className={Number(lnk.amount) < 0 ? 'text-brand-expense' : 'text-brand-income font-medium'}>
-                                {formatILS(lnk.amount)}
-                              </span>
+                      <div key={lnk.linkId} className="p-3 rounded-xl border border-brand-primary/30 bg-brand-primary/5 flex flex-col gap-2 text-xs">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <Link2 className="w-4 h-4 text-brand-primary shrink-0" />
+                            <div className="min-w-0">
+                              <div className="font-semibold text-dark-text light:text-light-text truncate">
+                                {cleanSpacedHebrew(lnk.userDescription || lnk.merchantName || lnk.description || 'ללא תיאור')}
+                              </div>
+                              <div className="text-[11px] text-dark-text-muted light:text-light-text-muted flex items-center gap-2">
+                                <span>{formatDate(lnk.date, lang)}</span>
+                                <span>•</span>
+                                <span className={Number(lnk.amount) < 0 ? 'text-brand-expense' : 'text-brand-income font-medium'}>
+                                  {formatILS(lnk.amount)}
+                                </span>
+                              </div>
                             </div>
                           </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className={`px-2 py-0.5 rounded-full font-medium text-[10px] ${
+                              lnk.linkType === 'installment'
+                                ? 'bg-indigo-500/20 text-indigo-400 font-bold'
+                                : 'bg-brand-primary/20 text-brand-primary'
+                            }`}>
+                              {lnk.linkType === 'refund' ? 'זיכוי' : lnk.linkType === 'correction' ? 'תיקון' : lnk.linkType === 'installment' ? 'תשלום בעסקה 💳' : 'קשורה'}
+                            </span>
+                            <button
+                              onClick={() => handleUnlink(lnk.linkId)}
+                              className="p-1.5 text-rose-400 hover:text-rose-500 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer"
+                              title="בטל קישור"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <span className={`px-2 py-0.5 rounded-full font-medium text-[10px] ${
-                            lnk.linkType === 'installment'
-                              ? 'bg-indigo-500/20 text-indigo-400 font-bold'
-                              : 'bg-brand-primary/20 text-brand-primary'
-                          }`}>
-                            {lnk.linkType === 'refund' ? 'זיכוי' : lnk.linkType === 'correction' ? 'תיקון' : lnk.linkType === 'installment' ? 'תשלום בעסקה 💳' : 'קשורה'}
-                          </span>
-                          <button
-                            onClick={() => handleUnlink(lnk.linkId)}
-                            className="p-1.5 text-rose-400 hover:text-rose-500 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer"
-                            title="בטל קישור"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
+
+                        {/* Fee Difference Badge & Toggle */}
+                        {lnk.feeAmount && Number(lnk.feeAmount) > 0 && (
+                          <div className="pt-2 border-t border-brand-primary/15 flex items-center justify-between gap-2 text-[11px]">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-dark-text-muted light:text-light-text-muted">הפרש:</span>
+                              <span className="font-bold font-mono text-dark-text light:text-light-text" dir="ltr">
+                                ₪{Number(lnk.feeAmount).toFixed(2)}
+                              </span>
+                              <span className={`px-2 py-0.5 rounded-md font-semibold text-[10px] ${
+                                lnk.isFeeClassified ? 'bg-amber-500/15 text-amber-500' : 'bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text-muted light:text-light-text-muted'
+                              }`}>
+                                {lnk.isFeeClassified ? 'מסווג כעמלה ✓' : 'לא מסווג כעמלה'}
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleToggleFeeClassification(lnk.linkId, lnk.isFeeClassified)}
+                              className="text-[10px] text-brand-primary hover:underline font-semibold cursor-pointer shrink-0"
+                            >
+                              {lnk.isFeeClassified ? 'בטל סיווג עמלה' : 'הגדר כעמלה'}
+                            </button>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
                 )}
+              </div>
+
+              {/* Reconciliation Candidates (Credit Card / Matching transactions) */}
+              <div className="space-y-2 pt-2 border-t border-dark-border/40 light:border-light-border/40">
+                <div className="flex items-center justify-between text-xs font-semibold text-dark-text-muted light:text-light-text-muted px-1">
+                  <span className="flex items-center gap-1.5">
+                    <CreditCard className="w-3.5 h-3.5 text-brand-primary" />
+                    <span>התאמות מוצעות / חיובים מקבילים ({candidates.length})</span>
+                  </span>
+                  {loadingCandidates && <RefreshCw className="w-3 h-3 animate-spin text-brand-primary" />}
+                </div>
+
+                {candidates.length === 0 && !loadingCandidates && (
+                  <p className="text-[11px] text-dark-text-muted light:text-light-text-muted px-1">
+                    לא נמצאו תנועות מועמדות להתאמה אוטומטית (ציון מעל 35%).
+                  </p>
+                )}
+
+                {candidates.map((cand) => {
+                  const isExact = cand.isExactAmount || Math.abs(cand.amountDiff || 0) <= 0.01;
+                  const scoreColor = cand.score >= 85
+                    ? 'text-emerald-500 bg-emerald-500/15 border-emerald-500/30'
+                    : cand.score >= 60
+                    ? 'text-amber-500 bg-amber-500/15 border-amber-500/30'
+                    : 'text-slate-400 bg-slate-500/15 border-slate-500/30';
+                  return (
+                    <div key={cand.id} className="p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated/60 light:bg-light-surface-elevated/60 space-y-2 text-xs">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${scoreColor}`}>
+                            {cand.score}% התאמה
+                          </span>
+                          <span className="font-semibold text-dark-text light:text-light-text truncate">
+                            {cleanSpacedHebrew(cand.merchantName || cand.description || 'ללא תיאור')}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={linkingCandidateId === cand.id}
+                          onClick={() => handleCandidateClick(cand)}
+                          className="px-2.5 py-1 rounded-lg bg-brand-primary hover:bg-brand-primary-hover text-white font-bold text-xs transition-all shadow-xs shrink-0 cursor-pointer disabled:opacity-50 flex items-center gap-1"
+                        >
+                          {linkingCandidateId === cand.id ? (
+                            <RefreshCw className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <Link2 className="w-3 h-3" />
+                          )}
+                          <span>קשר</span>
+                        </button>
+                      </div>
+
+                      <div className="flex items-center justify-between text-[11px] text-dark-text-muted light:text-light-text-muted">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span>{cand.accountDisplayName || cand.bankCompany}</span>
+                          <span>•</span>
+                          <span>{formatDate(cand.date, lang)}</span>
+                          {cand.dateDiffDays !== undefined && (
+                            <span className="text-[10px]">({cand.dateDiffDays === 0 ? 'אותו יום' : `הפרש ${cand.dateDiffDays} ימים`})</span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-dark-text light:text-light-text font-mono" dir="ltr">
+                            {formatILS(cand.amount)}
+                          </span>
+                          {isExact ? (
+                            <span className="text-[10px] text-emerald-500 font-semibold">סכום זהה ✓</span>
+                          ) : (
+                            <span className="text-[10px] text-amber-500 font-medium font-mono" dir="ltr">
+                              הפרש: ₪{Math.abs(cand.amountDiff).toFixed(2)}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
 
               {/* Clean Link Action Section */}
@@ -1287,6 +1503,62 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
             );
           })()}
         </div>
+
+        {/* Fee Confirmation Modal */}
+        {feeModalCandidate && (
+          <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+            <div className="bg-dark-surface light:bg-light-surface border border-dark-border light:border-light-border rounded-2xl shadow-2xl max-w-sm w-full p-5 space-y-4 text-center">
+              <div className="w-12 h-12 rounded-full bg-amber-500/15 text-amber-500 flex items-center justify-center mx-auto text-xl">
+                ⚖️
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-bold text-dark-text light:text-light-text">
+                  נמצא הפרש בסכום התנועות
+                </h3>
+                <p className="text-xs text-dark-text-muted light:text-light-text-muted">
+                  קיים הפרש של{' '}
+                  <span className="font-bold text-amber-500 font-mono" dir="ltr">
+                    ₪{Math.abs(feeModalCandidate.amountDiff || 0).toFixed(2)}
+                  </span>{' '}
+                  בין החיוב בחשבון לתנועת האשראי.
+                </p>
+                <p className="text-xs font-medium text-dark-text light:text-light-text pt-1">
+                  האם תרצה להגדיר את ההפרש כעמלה שתוצג בעמלות?
+                </p>
+              </div>
+
+              <div className="space-y-2 pt-2">
+                <button
+                  type="button"
+                  disabled={linkingCandidateId}
+                  onClick={() => handleExecuteCandidateLink(feeModalCandidate, true)}
+                  className="w-full py-2.5 px-4 rounded-xl bg-brand-primary hover:bg-brand-primary-hover text-white text-xs font-bold transition-all shadow-md cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  {linkingCandidateId ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                  <span>כן, הגדר את ההפרש כעמלה</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={linkingCandidateId}
+                  onClick={() => handleExecuteCandidateLink(feeModalCandidate, false)}
+                  className="w-full py-2.5 px-4 rounded-xl bg-dark-surface-elevated light:bg-light-surface-elevated hover:bg-dark-border light:hover:bg-light-border text-dark-text light:text-light-text text-xs font-medium transition-all border border-dark-border light:border-light-border cursor-pointer"
+                >
+                  לא, קשר ללא הגדרת עמלה
+                </button>
+
+                <button
+                  type="button"
+                  disabled={linkingCandidateId}
+                  onClick={() => setFeeModalCandidate(null)}
+                  className="w-full py-2 text-xs text-dark-text-muted light:text-light-text-muted hover:text-dark-text cursor-pointer"
+                >
+                  ביטול
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

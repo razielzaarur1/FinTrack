@@ -26,7 +26,8 @@ import {
   Coins,
   Banknote,
   EyeOff,
-  Zap
+  Zap,
+  ShieldAlert
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { formatILS, formatDate, cleanSpacedHebrew, getTransactionTitle, formatCurrency, extractInstallmentInfo } from '@/lib/formatters';
@@ -84,17 +85,26 @@ function TransactionsContent() {
 
   // Filters State (Supports Multi-Select)
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [type, setType] = useState('all'); // all, expense, income
   const [selectedAccountIds, setSelectedAccountIds] = useState(initialAccountId ? [initialAccountId] : []);
   const [selectedCategories, setSelectedCategories] = useState([]);
-  const [selectedCurrencies, setSelectedCurrencies] = useState([]);
   const [selectedSpecialFilters, setSelectedSpecialFilters] = useState([]);
-  const [filterCounts, setFilterCounts] = useState({ accounts: {}, categories: {}, specials: {} });
+  const [ccLinkStatus, setCcLinkStatus] = useState('all'); // 'all' | 'linked' | 'unlinked'
+  const [filterCounts, setFilterCounts] = useState({ accounts: {}, categories: {}, specials: {}, currencies: {} });
   const [minAmount, setMinAmount] = useState('');
   const [maxAmount, setMaxAmount] = useState('');
   const [datePreset, setDatePreset] = useState(initPreset);
   const [startDate, setStartDate] = useState(initStart);
   const [endDate, setEndDate] = useState(initEnd);
+
+  // Debounce search input for instant live search
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
   
   // UI State
   const [showFilters, setShowFilters] = useState(Boolean(initialAccountId || initStart || initEnd));
@@ -282,7 +292,7 @@ function TransactionsContent() {
     return () => {
       window.removeEventListener('fintrack_tx_updated', handleSync);
     };
-  }, [type, selectedAccountIds, selectedCategories, selectedCurrencies, selectedSpecialFilters, datePreset, startDate, endDate]);
+  }, [type, selectedAccountIds, selectedCategories, selectedSpecialFilters, ccLinkStatus, datePreset, startDate, endDate]);
 
   // Options for Account Multi-Select
   const accountOptions = useMemo(() => {
@@ -350,77 +360,97 @@ function TransactionsContent() {
     return list;
   }, [expenseCategories, incomeCategories, filterCounts.categories]);
 
-  // Options for Currency Multi-Select
-  const currencyOptions = useMemo(() => {
-    return availableCurrencies.map((c) => ({
-      id: c.currency,
-      label: `${c.symbol || c.currency} - ${c.currency}`,
-      count: c.count,
-      icon: (
-        <span className="w-5 h-5 rounded-md bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold text-xs">
-          {c.symbol || c.currency}
-        </span>
-      ),
-    }));
-  }, [availableCurrencies]);
+  // Options for Special Characteristics & Currencies Multi-Select
+  const specialOptions = useMemo(() => {
+    const list = [
+      {
+        id: 'installments',
+        label: 'תשלומים',
+        count: filterCounts.specials?.installments ?? 0,
+        icon: <CreditCard className="w-4 h-4 text-indigo-400" />,
+      },
+      {
+        id: 'bit',
+        label: 'העברות בביט (Bit)',
+        count: filterCounts.specials?.bit ?? 0,
+        icon: <Zap className="w-4 h-4 text-blue-400" />,
+      },
+      {
+        id: 'cc_billing',
+        label: 'חיובי חברות אשראי',
+        count: filterCounts.specials?.cc_billing ?? 0,
+        icon: <ShieldAlert className="w-4 h-4 text-slate-400" />,
+      },
+      {
+        id: 'cash',
+        label: 'משיכת מזומן / כספומט',
+        count: filterCounts.specials?.cash ?? 0,
+        icon: <Banknote className="w-4 h-4 text-emerald-400" />,
+      },
+      {
+        id: 'splits',
+        label: 'תנועות מפוצלות',
+        count: filterCounts.specials?.splits ?? 0,
+        icon: <Split className="w-4 h-4 text-purple-400" />,
+      },
+      {
+        id: 'receipts',
+        label: 'קבלות וחשבוניות',
+        count: filterCounts.specials?.receipts ?? 0,
+        icon: <Receipt className="w-4 h-4 text-pink-400" />,
+      },
+      {
+        id: 'notes',
+        label: 'הערות אישיות',
+        count: filterCounts.specials?.notes ?? 0,
+        icon: <MessageSquare className="w-4 h-4 text-sky-400" />,
+      },
+      {
+        id: 'links',
+        label: 'תנועות מקושרות (זיכוי/חיוב)',
+        count: filterCounts.specials?.links ?? 0,
+        icon: <Link2 className="w-4 h-4 text-teal-400" />,
+      },
+      {
+        id: 'ignored',
+        label: 'תנועות שהוחרגו מהתקציב',
+        count: filterCounts.specials?.ignored ?? 0,
+        icon: <EyeOff className="w-4 h-4 text-slate-400" />,
+      },
+      {
+        id: 'header_currencies',
+        isHeader: true,
+        label: 'מטבעות מט״ח (הכל מלבד שקל)',
+        count: filterCounts.specials?.foreign ?? 0,
+        icon: <Coins className="w-3.5 h-3.5 text-amber-400" />,
+      },
+      {
+        id: 'foreign',
+        label: 'כל עסקאות המט״ח',
+        count: filterCounts.specials?.foreign ?? 0,
+        icon: <Coins className="w-4 h-4 text-amber-400" />,
+      },
+    ];
 
-  // Options for Special Characteristics Multi-Select
-  const specialOptions = useMemo(() => [
-    {
-      id: 'installments',
-      label: 'תשלומים',
-      count: filterCounts.specials?.installments ?? 0,
-      icon: <CreditCard className="w-4 h-4 text-indigo-400" />,
-    },
-    {
-      id: 'foreign',
-      label: 'עסקאות במט"ח',
-      count: filterCounts.specials?.foreign ?? 0,
-      icon: <Coins className="w-4 h-4 text-amber-400" />,
-    },
-    {
-      id: 'bit',
-      label: 'העברות בביט (Bit)',
-      count: filterCounts.specials?.bit ?? 0,
-      icon: <Zap className="w-4 h-4 text-blue-400" />,
-    },
-    {
-      id: 'cash',
-      label: 'משיכת מזומן / כספומט',
-      count: filterCounts.specials?.cash ?? 0,
-      icon: <Banknote className="w-4 h-4 text-emerald-400" />,
-    },
-    {
-      id: 'splits',
-      label: 'תנועות מפוצלות',
-      count: filterCounts.specials?.splits ?? 0,
-      icon: <Split className="w-4 h-4 text-purple-400" />,
-    },
-    {
-      id: 'receipts',
-      label: 'קבלות וחשבוניות',
-      count: filterCounts.specials?.receipts ?? 0,
-      icon: <Receipt className="w-4 h-4 text-pink-400" />,
-    },
-    {
-      id: 'notes',
-      label: 'הערות אישיות',
-      count: filterCounts.specials?.notes ?? 0,
-      icon: <MessageSquare className="w-4 h-4 text-sky-400" />,
-    },
-    {
-      id: 'links',
-      label: 'תנועות מקושרות (זיכוי/חיוב)',
-      count: filterCounts.specials?.links ?? 0,
-      icon: <Link2 className="w-4 h-4 text-teal-400" />,
-    },
-    {
-      id: 'ignored',
-      label: 'תנועות שהוחרגו מהתקציב',
-      count: filterCounts.specials?.ignored ?? 0,
-      icon: <EyeOff className="w-4 h-4 text-slate-400" />,
-    },
-  ], [filterCounts.specials]);
+    // Add individual currency options from availableCurrencies
+    if (Array.isArray(availableCurrencies)) {
+      availableCurrencies.forEach((c) => {
+        if (['ILS', 'NIS', 'ש"ח', 'שח', '₪'].includes(c.currency)) return;
+        list.push({
+          id: `curr_${c.currency}`,
+          label: `${c.symbol || c.currency} (${c.currency})`,
+          count: filterCounts.currencies?.[c.currency] ?? c.count ?? 0,
+          icon: (
+            <span className="w-4 h-4 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold text-[10px]">
+              {c.symbol || c.currency}
+            </span>
+          ),
+        });
+      });
+    }
+
+    return list;
+  }, [filterCounts, availableCurrencies]);
 
   // Quick month selector helper options (last 24 months)
   const monthOptions = useMemo(() => {
@@ -478,12 +508,12 @@ function TransactionsContent() {
 
   // Compute active filters count
   const activeFiltersCount = [
-    search.trim() ? 1 : 0,
+    debouncedSearch.trim() ? 1 : 0,
     type !== 'all' ? 1 : 0,
     selectedAccountIds.length > 0 ? selectedAccountIds.length : 0,
     selectedCategories.length > 0 ? selectedCategories.length : 0,
-    selectedCurrencies.length > 0 ? selectedCurrencies.length : 0,
     selectedSpecialFilters.length > 0 ? selectedSpecialFilters.length : 0,
+    (selectedSpecialFilters.includes('cc_billing') && ccLinkStatus !== 'all') ? 1 : 0,
     minAmount ? 1 : 0,
     maxAmount ? 1 : 0,
     datePreset !== 'all' || startDate || endDate ? 1 : 0,
@@ -517,16 +547,25 @@ function TransactionsContent() {
     try {
       const range = getDateRangeForPreset(datePreset);
 
+      // Build effective special filters list (handling CC link status if cc_billing is selected)
+      const effectiveSpecials = [...selectedSpecialFilters];
+      if (selectedSpecialFilters.includes('cc_billing')) {
+        if (ccLinkStatus === 'linked') {
+          effectiveSpecials.push('cc_linked');
+        } else if (ccLinkStatus === 'unlinked') {
+          effectiveSpecials.push('cc_unlinked');
+        }
+      }
+
       const res = await api.getTransactionsV2({
         limit: 30,
         cursor,
         cursorId,
-        search: search.trim() || undefined,
+        search: debouncedSearch.trim() || undefined,
         type: type !== 'all' ? type : undefined,
         accountIds: selectedAccountIds.length > 0 ? selectedAccountIds : undefined,
         categories: selectedCategories.length > 0 ? selectedCategories : undefined,
-        currencies: selectedCurrencies.length > 0 ? selectedCurrencies : undefined,
-        specialFilters: selectedSpecialFilters.length > 0 ? selectedSpecialFilters.join(',') : undefined,
+        specialFilters: effectiveSpecials.length > 0 ? effectiveSpecials.join(',') : undefined,
         minAmount: minAmount ? parseFloat(minAmount) : undefined,
         maxAmount: maxAmount ? parseFloat(maxAmount) : undefined,
         startDate: range.start,
@@ -549,7 +588,7 @@ function TransactionsContent() {
   // Reload transactions on filter change
   useEffect(() => {
     loadTransactions(null, null, true);
-  }, [type, selectedAccountIds, selectedCategories, selectedCurrencies, selectedSpecialFilters, datePreset, startDate, endDate]);
+  }, [type, selectedAccountIds, selectedCategories, selectedSpecialFilters, ccLinkStatus, debouncedSearch, minAmount, maxAmount, datePreset, startDate, endDate]);
 
   const handleSearchSubmit = (e) => {
     e?.preventDefault();
@@ -558,11 +597,12 @@ function TransactionsContent() {
 
   const handleResetFilters = () => {
     setSearch('');
+    setDebouncedSearch('');
     setType('all');
     setSelectedAccountIds([]);
     setSelectedCategories([]);
-    setSelectedCurrencies([]);
     setSelectedSpecialFilters([]);
+    setCcLinkStatus('all');
     setMinAmount('');
     setMaxAmount('');
     setDatePreset('all');
@@ -789,122 +829,137 @@ function TransactionsContent() {
 
         {/* Expandable Advanced Multi-Select Filters */}
         {showFilters && (
-          <div className="pt-3 border-t border-dark-border/60 light:border-light-border/60 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 animate-in fade-in duration-200">
-            {/* 1. Account / Card Multi-Select Filter */}
-            <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-dark-text-muted light:text-light-text-muted flex items-center gap-1">
-                <CreditCard className="w-3 h-3 text-indigo-400" />
-                <span>חשבונות וכרטיסים</span>
-              </label>
-              <MultiSelectDropdown
-                label="בחר חשבונות"
-                options={accountOptions}
-                selectedValues={selectedAccountIds}
-                onChange={setSelectedAccountIds}
-                placeholder="הכל"
-                icon={CreditCard}
-                className="w-full"
-              />
-            </div>
-
-            {/* 2. Category Multi-Select Filter */}
-            <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-dark-text-muted light:text-light-text-muted flex items-center gap-1">
-                <Tag className="w-3 h-3 text-pink-400" />
-                <span>קטגוריות</span>
-              </label>
-              <MultiSelectDropdown
-                label="בחר קטגוריות"
-                options={categoryOptions}
-                selectedValues={selectedCategories}
-                onChange={setSelectedCategories}
-                placeholder="הכל"
-                icon={Tag}
-                className="w-full"
-              />
-            </div>
-
-            {/* 3. Special Characteristics Multi-Select Filter */}
-            <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-dark-text-muted light:text-light-text-muted flex items-center gap-1">
-                <SlidersHorizontal className="w-3 h-3 text-purple-400" />
-                <span>מאפייני עסקה</span>
-              </label>
-              <MultiSelectDropdown
-                label="מאפיינים מיוחדים"
-                options={specialOptions}
-                selectedValues={selectedSpecialFilters}
-                onChange={setSelectedSpecialFilters}
-                placeholder="הכל"
-                icon={SlidersHorizontal}
-                className="w-full"
-              />
-            </div>
-
-            {/* 4. Currency Multi-Select Filter */}
-            <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-dark-text-muted light:text-light-text-muted flex items-center gap-1">
-                <Coins className="w-3 h-3 text-emerald-400" />
-                <span>מטבע</span>
-              </label>
-              <MultiSelectDropdown
-                label="בחר מטבעות"
-                options={currencyOptions}
-                selectedValues={selectedCurrencies}
-                onChange={setSelectedCurrencies}
-                placeholder="כל המטבעות"
-                icon={Coins}
-                className="w-full"
-              />
-            </div>
-
-            {/* 4. Amount Range (Min - Max) */}
-            <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-dark-text-muted light:text-light-text-muted">
-                סכום מינימום - מקסימום
-              </label>
-              <div className="flex items-center gap-1.5">
-                <input
-                  type="number"
-                  placeholder="מ-"
-                  value={minAmount}
-                  onChange={(e) => setMinAmount(e.target.value)}
-                  onBlur={() => loadTransactions(null, null, true)}
-                  className="w-1/2 p-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none font-mono focus:outline-none focus:border-brand-primary"
+          <div className="pt-3 border-t border-dark-border/60 light:border-light-border/60 space-y-3 animate-in fade-in duration-200">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+              {/* 1. Account / Card Multi-Select Filter */}
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold text-dark-text-muted light:text-light-text-muted flex items-center gap-1">
+                  <CreditCard className="w-3 h-3 text-indigo-400" />
+                  <span>חשבונות וכרטיסים</span>
+                </label>
+                <MultiSelectDropdown
+                  label="בחר חשבונות"
+                  options={accountOptions}
+                  selectedValues={selectedAccountIds}
+                  onChange={setSelectedAccountIds}
+                  placeholder="הכל"
+                  icon={CreditCard}
+                  className="w-full"
                 />
-                <span className="text-dark-text-muted light:text-light-text-muted text-xs">-</span>
-                <input
-                  type="number"
-                  placeholder="עד"
-                  value={maxAmount}
-                  onChange={(e) => setMaxAmount(e.target.value)}
-                  onBlur={() => loadTransactions(null, null, true)}
-                  className="w-1/2 p-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none font-mono focus:outline-none focus:border-brand-primary"
+              </div>
+
+              {/* 2. Category Multi-Select Filter */}
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold text-dark-text-muted light:text-light-text-muted flex items-center gap-1">
+                  <Tag className="w-3 h-3 text-pink-400" />
+                  <span>קטגוריות</span>
+                </label>
+                <MultiSelectDropdown
+                  label="בחר קטגוריות"
+                  options={categoryOptions}
+                  selectedValues={selectedCategories}
+                  onChange={setSelectedCategories}
+                  placeholder="הכל"
+                  icon={Tag}
+                  className="w-full"
                 />
+              </div>
+
+              {/* 3. Special Characteristics Multi-Select Filter */}
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold text-dark-text-muted light:text-light-text-muted flex items-center gap-1">
+                  <SlidersHorizontal className="w-3 h-3 text-purple-400" />
+                  <span>מאפייני עסקה</span>
+                </label>
+                <MultiSelectDropdown
+                  label="מאפיינים מיוחדים"
+                  options={specialOptions}
+                  selectedValues={selectedSpecialFilters}
+                  onChange={setSelectedSpecialFilters}
+                  placeholder="הכל"
+                  icon={SlidersHorizontal}
+                  className="w-full"
+                />
+              </div>
+
+              {/* 4. Amount Range (Min - Max) */}
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold text-dark-text-muted light:text-light-text-muted">
+                  סכום מינימום - מקסימום
+                </label>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="number"
+                    placeholder="מ-"
+                    value={minAmount}
+                    onChange={(e) => setMinAmount(e.target.value)}
+                    onBlur={() => loadTransactions(null, null, true)}
+                    className="w-1/2 p-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none font-mono focus:outline-none focus:border-brand-primary"
+                  />
+                  <span className="text-dark-text-muted light:text-light-text-muted text-xs">-</span>
+                  <input
+                    type="number"
+                    placeholder="עד"
+                    value={maxAmount}
+                    onChange={(e) => setMaxAmount(e.target.value)}
+                    onBlur={() => loadTransactions(null, null, true)}
+                    className="w-1/2 p-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none font-mono focus:outline-none focus:border-brand-primary"
+                  />
+                </div>
+              </div>
+
+              {/* 5. Date Filter */}
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold text-dark-text-muted light:text-light-text-muted flex items-center gap-1">
+                  <Calendar className="w-3 h-3 text-sky-400" />
+                  <span>תקופה ותאריכים</span>
+                </label>
+                <select
+                  value={datePreset}
+                  onChange={(e) => setDatePreset(e.target.value)}
+                  className="w-full p-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs font-medium focus:outline-none focus:border-brand-primary cursor-pointer"
+                >
+                  <option value="all">כל הזמנים</option>
+                  <option value="current_month">חודש נוכחי</option>
+                  <option value="last_month">חודש שעבר</option>
+                  <option value="last_90">90 ימים אחרונים</option>
+                  <option value="custom">טווח תאריכים מותאם אישית...</option>
+                </select>
               </div>
             </div>
 
-            {/* 5. Date Filter */}
-            <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-dark-text-muted light:text-light-text-muted flex items-center gap-1">
-                <Calendar className="w-3 h-3 text-sky-400" />
-                <span>תקופה ותאריכים</span>
-              </label>
-              <select
-                value={datePreset}
-                onChange={(e) => setDatePreset(e.target.value)}
-                className="w-full p-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs font-medium focus:outline-none focus:border-brand-primary cursor-pointer"
-              >
-                <option value="all">כל הזמנים</option>
-                <option value="current_month">חודש נוכחי</option>
-                <option value="last_month">חודש שעבר</option>
-                <option value="last_90">90 ימים אחרונים</option>
-                <option value="custom">טווח תאריכים מותאם אישית...</option>
-              </select>
-            </div>
+            {/* CC Billing Link Status Sub-Filter (Visible only when 'cc_billing' is checked) */}
+            {selectedSpecialFilters.includes('cc_billing') && (
+              <div className="pt-2 border-t border-dark-border/40 light:border-light-border/40 flex items-center gap-2.5 flex-wrap animate-in fade-in duration-150">
+                <span className="text-[11px] font-semibold text-dark-text-muted light:text-light-text-muted flex items-center gap-1.5">
+                  <CreditCard className="w-3.5 h-3.5 text-slate-400" />
+                  <span>סטטוס קישור חיובי אשראי:</span>
+                </span>
+                <div className="inline-flex rounded-xl p-1 bg-dark-surface-elevated light:bg-light-surface-elevated border border-dark-border light:border-light-border text-xs">
+                  {[
+                    { id: 'all', label: 'הכל' },
+                    { id: 'linked', label: 'מקושר' },
+                    { id: 'unlinked', label: 'לא מקושר' },
+                  ].map((btn) => (
+                    <button
+                      key={btn.id}
+                      type="button"
+                      onClick={() => setCcLinkStatus(btn.id)}
+                      className={`px-3 py-1 rounded-lg font-medium text-xs transition-all ${
+                        ccLinkStatus === btn.id
+                          ? 'bg-brand-primary text-white shadow-xs'
+                          : 'text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
+                      }`}
+                    >
+                      {btn.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {datePreset === 'custom' && (
-              <div className="col-span-full flex items-center gap-2 pt-2">
+              <div className="flex items-center gap-2 pt-1">
                 <input
                   type="date"
                   value={startDate}
@@ -933,7 +988,7 @@ function TransactionsContent() {
             {search && (
               <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-dark-surface-elevated light:bg-light-surface-elevated border border-dark-border light:border-light-border text-dark-text light:text-light-text text-[11px]">
                 <span>חיפוש: "{search}"</span>
-                <button onClick={() => { setSearch(''); loadTransactions(null, null, true); }}>
+                <button onClick={() => setSearch('')}>
                   <X className="w-3 h-3" />
                 </button>
               </span>
@@ -969,22 +1024,31 @@ function TransactionsContent() {
               </span>
             ))}
 
-            {selectedCurrencies.map((code) => {
-              const curr = availableCurrencies.find((c) => c.currency === code);
+            {selectedSpecialFilters.map((sId) => {
+              const opt = specialOptions.find((o) => o.id === sId);
               return (
-                <span key={code} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-medium text-[11px]">
-                  <span>מטבע: {curr?.symbol ? `${curr.symbol} (${code})` : code}</span>
-                  <button onClick={() => setSelectedCurrencies(selectedCurrencies.filter((c) => c !== code))}>
+                <span key={sId} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-purple-500/15 text-purple-600 dark:text-purple-400 font-medium text-[11px]">
+                  <span>{opt?.label || sId}</span>
+                  <button onClick={() => setSelectedSpecialFilters(selectedSpecialFilters.filter((s) => s !== sId))}>
                     <X className="w-3 h-3" />
                   </button>
                 </span>
               );
             })}
 
+            {selectedSpecialFilters.includes('cc_billing') && ccLinkStatus !== 'all' && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-500/15 text-slate-600 dark:text-slate-300 font-medium text-[11px]">
+                <span>סטטוס חיוב: {ccLinkStatus === 'linked' ? 'מקושר' : 'לא מקושר'}</span>
+                <button onClick={() => setCcLinkStatus('all')}>
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
+
             {(minAmount || maxAmount) && (
               <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-500 dark:text-amber-400 font-medium text-[11px]">
                 <span>סכום: {minAmount || '0'} עד {maxAmount || '∞'}</span>
-                <button onClick={() => { setMinAmount(''); setMaxAmount(''); loadTransactions(null, null, true); }}>
+                <button onClick={() => { setMinAmount(''); setMaxAmount(''); }}>
                   <X className="w-3 h-3" />
                 </button>
               </span>
@@ -1076,7 +1140,7 @@ function TransactionsContent() {
               return (
                 <div
                   key={tx.id}
-                  ref={isLast ? lastTxRef : null}
+                  ref={isLast && hasNextPage ? lastTxRef : null}
                   onClick={() => {
                     if (selectMode) {
                       toggleSelect(tx.id);
@@ -1235,6 +1299,13 @@ function TransactionsContent() {
           <div className="p-4 flex items-center justify-center gap-2 text-xs text-dark-text-muted">
             <RefreshCw className="w-4 h-4 animate-spin text-brand-primary" />
             <span>{lang === 'he' ? 'טוען עסקאות נוספות...' : 'Loading transactions...'}</span>
+          </div>
+        )}
+
+        {/* End of List indicator */}
+        {!loading && !hasNextPage && transactions.length > 0 && (
+          <div className="py-5 text-center text-xs text-dark-text-muted light:text-light-text-muted border-t border-dark-border/40 light:border-light-border/40 font-medium">
+            אין תנועות נוספות להצגה
           </div>
         )}
       </div>

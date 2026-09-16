@@ -7,6 +7,14 @@ import { saveUserRule } from '../services/classifier.js';
 import { verifyTmaToken, verifyTelegramWebAppData } from '../crypto.js';
 import { analyzeReceiptFile, analyzeReceiptUrl } from '../services/ai-analyzer.js';
 import { calculateFxDetails } from '../services/exchange-rates.js';
+import {
+  calculateReconciliationScore,
+  findMatchesForTransaction,
+  runAutoReconciliation,
+  detectAndTagCcBillings,
+  KNOWN_CC_PATTERNS,
+  isCcBillingPattern,
+} from '../services/cc-reconciliation.js';
 
 const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(process.cwd(), 'uploads');
 if (!fs.existsSync(UPLOADS_DIR)) {
@@ -39,8 +47,11 @@ const noteSchema = z.object({
 
 const linkSchema = z.object({
   targetTransactionId: z.string().uuid('Target transaction ID must be a valid UUID'),
-  linkType: z.enum(['refund', 'correction', 'related', 'installment']).default('related'),
+  linkType: z.enum(['refund', 'correction', 'related', 'installment', 'cc_billing_match']).default('related'),
   note: z.string().optional().nullable(),
+  feeAmount: z.number().optional().nullable(),
+  feeCategory: z.string().optional().nullable(),
+  isFeeClassified: z.boolean().optional().default(false),
 });
 
 const updateTransactionSchema = z.object({
@@ -51,6 +62,7 @@ const updateTransactionSchema = z.object({
   amount: z.coerce.number().optional(),
   date: z.string().optional(),
   isIgnored: z.boolean().optional(),
+  isCcBilling: z.boolean().optional(),
   applyToSimilar: z.boolean().optional(),
 });
 
@@ -453,11 +465,11 @@ export default async function transactionsV2Routes(fastify, options) {
         OR t.merchant_name ~* '(תשלום|תשלומים|עסקה)?\\s*\\(?[0-9]{1,2}\\s*(מתוך|/)\\s*[0-9]{1,2}\\)?'
         OR (t.raw_data->>'memo') ~* '(תשלום|תשלומים|עסקה)?\\s*\\(?[0-9]{1,2}\\s*(מתוך|/)\\s*[0-9]{1,2}\\)?'
         OR (t.raw_data->>'description') ~* '(תשלום|תשלומים|עסקה)?\\s*\\(?[0-9]{1,2}\\s*(מתוך|/)\\s*[0-9]{1,2}\\)?'
-        OR ((t.raw_data->>'originalAmount')::numeric > ABS(t.amount) * 1.5 AND t.amount < 0)
+        OR (t.raw_data->>'originalAmount' ~ '^-?[0-9]+(\\.[0-9]+)?$' AND (t.raw_data->>'originalAmount')::numeric > ABS(t.amount) * 1.5 AND t.amount < 0)
       )`);
     }
 
-    // Special Attributes Multi-Filter (installments, foreign, cash, splits, receipts, notes, links, ignored, bit)
+    // Special Attributes Multi-Filter (installments, foreign, cash, splits, receipts, notes, links, ignored, bit, cc_billing, cc_linked, cc_unlinked, specific currency)
     if (specialFilters) {
       const specials = String(specialFilters).split(',').map((s) => s.trim()).filter(Boolean);
       for (const sp of specials) {
@@ -471,10 +483,16 @@ export default async function transactionsV2Routes(fastify, options) {
             OR t.merchant_name ~* '(תשלום|תשלומים|עסקה)?\\s*\\(?[0-9]{1,2}\\s*(מתוך|/)\\s*[0-9]{1,2}\\)?'
             OR (t.raw_data->>'memo') ~* '(תשלום|תשלומים|עסקה)?\\s*\\(?[0-9]{1,2}\\s*(מתוך|/)\\s*[0-9]{1,2}\\)?'
             OR (t.raw_data->>'description') ~* '(תשלום|תשלומים|עסקה)?\\s*\\(?[0-9]{1,2}\\s*(מתוך|/)\\s*[0-9]{1,2}\\)?'
-            OR ((t.raw_data->>'originalAmount')::numeric > ABS(t.amount) * 1.5 AND t.amount < 0)
+            OR (t.raw_data->>'originalAmount' ~ '^-?[0-9]+(\\.[0-9]+)?$' AND (t.raw_data->>'originalAmount')::numeric > ABS(t.amount) * 1.5 AND t.amount < 0)
           )`);
         } else if (sp === 'foreign') {
-          conditions.push(`(t.currency != 'ILS' OR (t.original_currency IS NOT NULL AND t.original_currency != 'ILS'))`);
+          conditions.push(`(
+            (t.currency IS NOT NULL AND UPPER(TRIM(t.currency)) NOT IN ('ILS', 'NIS', 'ש"ח', 'שח', '₪'))
+            OR (t.original_currency IS NOT NULL AND UPPER(TRIM(t.original_currency)) NOT IN ('ILS', 'NIS', 'ש"ח', 'שח', '₪'))
+            OR (t.raw_data->>'originalCurrency' IS NOT NULL AND UPPER(TRIM(t.raw_data->>'originalCurrency')) NOT IN ('ILS', 'NIS', 'ש"ח', 'שח', '₪'))
+            OR (t.raw_data->>'original_currency' IS NOT NULL AND UPPER(TRIM(t.raw_data->>'original_currency')) NOT IN ('ILS', 'NIS', 'ש"ח', 'שח', '₪'))
+            OR (t.raw_data->>'chargedCurrency' IS NOT NULL AND UPPER(TRIM(t.raw_data->>'chargedCurrency')) NOT IN ('ILS', 'NIS', 'ש"ח', 'שח', '₪'))
+          )`);
         } else if (sp === 'cash') {
           conditions.push(`(
             t.category = 'משיכת מזומן' 
@@ -496,9 +514,32 @@ export default async function transactionsV2Routes(fastify, options) {
           conditions.push(`t.is_ignored = true`);
         } else if (sp === 'bit') {
           conditions.push(`(
-            t.merchant_name ~* '(bit|ביט)' 
-            OR t.description ~* '(bit|ביט)' 
-            OR (t.raw_data->>'memo') ~* '(bit|ביט)'
+            (
+              t.merchant_name ~* '(^|[^a-zA-Z0-9\u0590-\u05FF])([בלמהכ]?-?bit|[בלמהכ]?-?ביט)([^a-zA-Z0-9\u0590-\u05FF]|$)'
+              OR t.description ~* '(^|[^a-zA-Z0-9\u0590-\u05FF])([בלמהכ]?-?bit|[בלמהכ]?-?ביט)([^a-zA-Z0-9\u0590-\u05FF]|$)'
+              OR (t.raw_data->>'memo') ~* '(^|[^a-zA-Z0-9\u0590-\u05FF])([בלמהכ]?-?bit|[בלמהכ]?-?ביט)([^a-zA-Z0-9\u0590-\u05FF]|$)'
+            )
+            AND NOT (
+              t.merchant_name ~* '(ביטוח|ביטול|ביטחון|debit)'
+              OR t.description ~* '(ביטוח|ביטול|ביטחון|debit)'
+              OR (t.raw_data->>'memo') ~* '(ביטוח|ביטול|ביטחון|debit)'
+            )
+          )`);
+        } else if (sp === 'cc_billing') {
+          conditions.push(`(t.is_cc_billing = true OR t.category = 'חיוב אשראי')`);
+        } else if (sp === 'cc_linked') {
+          conditions.push(`((t.is_cc_billing = true OR t.category = 'חיוב אשראי') AND EXISTS (SELECT 1 FROM transaction_links tl WHERE tl.transaction_id_a = t.id OR tl.transaction_id_b = t.id))`);
+        } else if (sp === 'cc_unlinked') {
+          conditions.push(`((t.is_cc_billing = true OR t.category = 'חיוב אשראי') AND NOT EXISTS (SELECT 1 FROM transaction_links tl WHERE tl.transaction_id_a = t.id OR tl.transaction_id_b = t.id))`);
+        } else if (sp.startsWith('curr_') || /^[A-Z]{3}$/.test(sp)) {
+          const currCode = sp.replace(/^curr_/, '').toUpperCase();
+          values.push(currCode);
+          conditions.push(`(
+            UPPER(TRIM(t.currency)) = $${values.length}
+            OR UPPER(TRIM(COALESCE(t.original_currency, ''))) = $${values.length}
+            OR UPPER(TRIM(COALESCE(t.raw_data->>'originalCurrency', ''))) = $${values.length}
+            OR UPPER(TRIM(COALESCE(t.raw_data->>'original_currency', ''))) = $${values.length}
+            OR UPPER(TRIM(COALESCE(t.raw_data->>'chargedCurrency', ''))) = $${values.length}
           )`);
         }
       }
@@ -561,18 +602,19 @@ export default async function transactionsV2Routes(fastify, options) {
         t.processed_date AS "processedDate",
         COALESCE(
           NULLIF(t.amount, 0),
-          NULLIF((t.raw_data->>'originalAmount')::numeric, 0),
-          NULLIF((t.raw_data->>'chargedAmount')::numeric, 0),
+          NULLIF(CASE WHEN t.raw_data->>'originalAmount' ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (t.raw_data->>'originalAmount')::numeric ELSE NULL END, 0),
+          NULLIF(CASE WHEN t.raw_data->>'chargedAmount' ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (t.raw_data->>'chargedAmount')::numeric ELSE NULL END, 0),
           0
         ) AS "amount",
         COALESCE(
-          (t.raw_data->>'originalAmount')::numeric,
+          CASE WHEN t.raw_data->>'originalAmount' ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (t.raw_data->>'originalAmount')::numeric ELSE NULL END,
           t.amount
         ) AS "originalAmount",
         COALESCE(
-          (t.raw_data->>'chargedAmount')::numeric,
+          CASE WHEN t.raw_data->>'chargedAmount' ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (t.raw_data->>'chargedAmount')::numeric ELSE NULL END,
           t.amount
         ) AS "chargedAmount",
+        COALESCE(t.original_currency, t.raw_data->>'originalCurrency', t.raw_data->>'original_currency', t.raw_data->>'chargedCurrency') AS "originalCurrency",
         t.currency,
         t.description,
         t.merchant_name AS "merchantName",
@@ -580,6 +622,7 @@ export default async function transactionsV2Routes(fastify, options) {
         t.user_description AS "userDescription",
         t.is_ignored AS "isIgnored",
         t.is_split AS "isSplit",
+        t.is_cc_billing AS "isCcBilling",
         t.is_manual_category AS "isManualCategory",
         t.is_reviewed AS "isReviewed",
         t.is_flagged AS "isFlagged",
@@ -636,11 +679,12 @@ export default async function transactionsV2Routes(fastify, options) {
           mName = bitTitle;
         }
 
-        const rawOrigCur = tx.rawData?.originalCurrency;
-        const rawOrigAmt = tx.rawData?.originalAmount;
+        const rawOrigCur = tx.originalCurrency || tx.rawData?.originalCurrency || tx.rawData?.original_currency || tx.rawData?.chargedCurrency;
+        const rawOrigAmt = tx.rawData?.originalAmount || tx.rawData?.original_amount;
+        const nonIlsCurrencies = ['ILS', 'NIS', 'ש"ח', 'שח', '₪'];
         const isForeign = Boolean(
-          (rawOrigCur && rawOrigCur !== 'ILS') || 
-          (tx.currency && tx.currency !== 'ILS')
+          (rawOrigCur && !nonIlsCurrencies.includes(String(rawOrigCur).toUpperCase().trim())) || 
+          (tx.currency && !nonIlsCurrencies.includes(String(tx.currency).toUpperCase().trim()))
         );
 
         return {
@@ -649,8 +693,9 @@ export default async function transactionsV2Routes(fastify, options) {
           description: desc,
           userDescription: cleanSpacedHebrew(tx.userDescription),
           isForeign,
-          originalAmount: rawOrigAmt != null ? parseFloat(rawOrigAmt) : null,
-          originalCurrency: rawOrigCur || (tx.currency !== 'ILS' ? tx.currency : null),
+          isCcBilling: Boolean(tx.isCcBilling || tx.category === 'חיוב אשראי'),
+          originalAmount: rawOrigAmt != null && !isNaN(parseFloat(rawOrigAmt)) ? parseFloat(rawOrigAmt) : null,
+          originalCurrency: rawOrigCur || (tx.currency && !nonIlsCurrencies.includes(tx.currency) ? tx.currency : null),
         };
       });
 
@@ -782,10 +827,14 @@ export default async function transactionsV2Routes(fastify, options) {
                OR merchant_name ~* '(תשלום|תשלומים|עסקה)?\\s*\\(?[0-9]{1,2}\\s*(מתוך|/)\\s*[0-9]{1,2}\\)?'
                OR (raw_data->>'memo') ~* '(תשלום|תשלומים|עסקה)?\\s*\\(?[0-9]{1,2}\\s*(מתוך|/)\\s*[0-9]{1,2}\\)?'
                OR (raw_data->>'description') ~* '(תשלום|תשלומים|עסקה)?\\s*\\(?[0-9]{1,2}\\s*(מתוך|/)\\s*[0-9]{1,2}\\)?'
-               OR ((raw_data->>'originalAmount')::numeric > ABS(amount) * 1.5 AND amount < 0)
+               OR (raw_data->>'originalAmount' ~ '^-?[0-9]+(\\.[0-9]+)?$' AND (raw_data->>'originalAmount')::numeric > ABS(amount) * 1.5 AND amount < 0)
           )::int AS "installments",
           COUNT(*) FILTER (
-            WHERE currency != 'ILS' OR (original_currency IS NOT NULL AND original_currency != 'ILS')
+            WHERE (currency IS NOT NULL AND UPPER(TRIM(currency)) NOT IN ('ILS', 'NIS', 'ש"ח', 'שח', '₪'))
+               OR (original_currency IS NOT NULL AND UPPER(TRIM(original_currency)) NOT IN ('ILS', 'NIS', 'ש"ח', 'שח', '₪'))
+               OR (raw_data->>'originalCurrency' IS NOT NULL AND UPPER(TRIM(raw_data->>'originalCurrency')) NOT IN ('ILS', 'NIS', 'ש"ח', 'שח', '₪'))
+               OR (raw_data->>'original_currency' IS NOT NULL AND UPPER(TRIM(raw_data->>'original_currency')) NOT IN ('ILS', 'NIS', 'ש"ח', 'שח', '₪'))
+               OR (raw_data->>'chargedCurrency' IS NOT NULL AND UPPER(TRIM(raw_data->>'chargedCurrency')) NOT IN ('ILS', 'NIS', 'ש"ח', 'שח', '₪'))
           )::int AS "foreign",
           COUNT(*) FILTER (
             WHERE category = 'משיכת מזומן' 
@@ -807,16 +856,58 @@ export default async function transactionsV2Routes(fastify, options) {
             WHERE EXISTS (SELECT 1 FROM transaction_links tl WHERE tl.transaction_id_a = transactions.id OR tl.transaction_id_b = transactions.id)
           )::int AS "links",
           COUNT(*) FILTER (
-            WHERE merchant_name ~* '(bit|ביט)' OR description ~* '(bit|ביט)' OR (raw_data->>'memo') ~* '(bit|ביט)'
-          )::int AS "bit"
+            WHERE (
+              (
+                merchant_name ~* '(^|[^a-zA-Z0-9\u0590-\u05FF])([בלמהכ]?-?bit|[בלמהכ]?-?ביט)([^a-zA-Z0-9\u0590-\u05FF]|$)'
+                OR description ~* '(^|[^a-zA-Z0-9\u0590-\u05FF])([בלמהכ]?-?bit|[בלמהכ]?-?ביט)([^a-zA-Z0-9\u0590-\u05FF]|$)'
+                OR (raw_data->>'memo') ~* '(^|[^a-zA-Z0-9\u0590-\u05FF])([בלמהכ]?-?bit|[בלמהכ]?-?ביט)([^a-zA-Z0-9\u0590-\u05FF]|$)'
+              )
+              AND NOT (
+                merchant_name ~* '(ביטוח|ביטול|ביטחון|debit)'
+                OR description ~* '(ביטוח|ביטול|ביטחון|debit)'
+                OR (raw_data->>'memo') ~* '(ביטוח|ביטול|ביטחון|debit)'
+              )
+            )
+          )::int AS "bit",
+          COUNT(*) FILTER (
+            WHERE is_cc_billing = true OR category = 'חיוב אשראי'
+          )::int AS "cc_billing",
+          COUNT(*) FILTER (
+            WHERE (is_cc_billing = true OR category = 'חיוב אשראי')
+              AND EXISTS (SELECT 1 FROM transaction_links tl WHERE tl.transaction_id_a = transactions.id OR tl.transaction_id_b = transactions.id)
+          )::int AS "cc_linked",
+          COUNT(*) FILTER (
+            WHERE (is_cc_billing = true OR category = 'חיוב אשראי')
+              AND NOT EXISTS (SELECT 1 FROM transaction_links tl WHERE tl.transaction_id_a = transactions.id OR tl.transaction_id_b = transactions.id)
+          )::int AS "cc_unlinked"
         FROM transactions
       `);
       const specials = specialsRes.rows[0] || {};
+
+      // 4. Currency counts (for all currencies appearing in transactions)
+      const currencyCountsRes = await pool.query(`
+        SELECT curr, COUNT(*)::int AS count
+        FROM (
+          SELECT COALESCE(
+            NULLIF(UPPER(TRIM(currency)), ''),
+            NULLIF(UPPER(TRIM(original_currency)), ''),
+            NULLIF(UPPER(TRIM(raw_data->>'originalCurrency')), ''),
+            NULLIF(UPPER(TRIM(raw_data->>'original_currency')), ''),
+            NULLIF(UPPER(TRIM(raw_data->>'chargedCurrency')), '')
+          ) AS curr
+          FROM transactions
+        ) s
+        WHERE curr IS NOT NULL AND curr NOT IN ('ILS', 'NIS', 'ש"ח', 'שח', '₪')
+        GROUP BY curr
+      `);
+      const currencies = {};
+      currencyCountsRes.rows.forEach((r) => { currencies[r.curr] = r.count; });
 
       return reply.code(200).send({
         accounts,
         categories,
         specials,
+        currencies,
       });
     } catch (err) {
       fastify.log.error(err, 'Failed to calculate filter counts');
@@ -1516,6 +1607,9 @@ export default async function transactionsV2Routes(fastify, options) {
         tl.id AS "linkId",
         tl.link_type AS "linkType",
         tl.note AS "linkNote",
+        COALESCE(tl.fee_amount, 0) AS "feeAmount",
+        COALESCE(tl.fee_category, 'עמלות') AS "feeCategory",
+        COALESCE(tl.is_fee_classified, false) AS "isFeeClassified",
         tl.created_at AS "linkedAt",
         t.id,
         t.date,
@@ -1560,7 +1654,7 @@ export default async function transactionsV2Routes(fastify, options) {
       return reply.code(400).send({ error: 'Validation Error', details: parseResult.error.issues });
     }
 
-    const { targetTransactionId, linkType, note } = parseResult.data;
+    const { targetTransactionId, linkType, note, feeAmount, feeCategory, isFeeClassified } = parseResult.data;
     if (id === targetTransactionId) {
       return reply.code(400).send({ error: 'Cannot link a transaction to itself' });
     }
@@ -1578,22 +1672,63 @@ export default async function transactionsV2Routes(fastify, options) {
       if (existing.rows.length > 0) {
         result = await pool.query(
           `UPDATE transaction_links
-           SET link_type = $1, note = $2
+           SET link_type = $1, note = $2,
+               fee_amount = COALESCE($4, fee_amount),
+               fee_category = COALESCE($5, fee_category),
+               is_fee_classified = COALESCE($6, is_fee_classified)
            WHERE id = $3
-           RETURNING id, transaction_id_a AS "transactionIdA", transaction_id_b AS "transactionIdB", link_type AS "linkType", note`,
-          [linkType, note || null, existing.rows[0].id]
+           RETURNING id, transaction_id_a AS "transactionIdA", transaction_id_b AS "transactionIdB",
+                     link_type AS "linkType", note, fee_amount AS "feeAmount",
+                     fee_category AS "feeCategory", is_fee_classified AS "isFeeClassified"`,
+          [linkType, note || null, existing.rows[0].id, feeAmount, feeCategory, isFeeClassified]
         );
       } else {
         result = await pool.query(
-          `INSERT INTO transaction_links (transaction_id_a, transaction_id_b, link_type, note)
-           VALUES ($1, $2, $3, $4)
-           RETURNING id, transaction_id_a AS "transactionIdA", transaction_id_b AS "transactionIdB", link_type AS "linkType", note`,
-          [id, targetTransactionId, linkType, note || null]
+          `INSERT INTO transaction_links (transaction_id_a, transaction_id_b, link_type, note, fee_amount, fee_category, is_fee_classified)
+           VALUES ($1, $2, $3, $4, COALESCE($5, 0), COALESCE($6, 'עמלות'), COALESCE($7, false))
+           RETURNING id, transaction_id_a AS "transactionIdA", transaction_id_b AS "transactionIdB",
+                     link_type AS "linkType", note, fee_amount AS "feeAmount",
+                     fee_category AS "feeCategory", is_fee_classified AS "isFeeClassified"`,
+          [id, targetTransactionId, linkType, note || null, feeAmount, feeCategory, isFeeClassified]
         );
       }
       return reply.code(201).send({ success: true, data: result.rows[0] });
     } catch (err) {
       fastify.log.error(err, 'Failed to link transaction');
+      return reply.code(500).send({ error: 'Database error', message: err.message });
+    }
+  });
+
+  // PATCH /api/v2/transactions/links/:linkId/fee - Toggle or update fee classification
+  fastify.patch('/links/:linkId/fee', async (request, reply) => {
+    const { linkId } = request.params;
+    const { isFeeClassified, feeAmount, feeCategory } = request.body || {};
+    try {
+      const setClauses = [];
+      const values = [];
+      if (isFeeClassified !== undefined) {
+        values.push(isFeeClassified);
+        setClauses.push(`is_fee_classified = $${values.length}`);
+      }
+      if (feeAmount !== undefined) {
+        values.push(feeAmount);
+        setClauses.push(`fee_amount = $${values.length}`);
+      }
+      if (feeCategory !== undefined) {
+        values.push(feeCategory);
+        setClauses.push(`fee_category = $${values.length}`);
+      }
+      if (setClauses.length === 0) {
+        return reply.code(400).send({ error: 'Nothing to update' });
+      }
+      values.push(linkId);
+      const res = await pool.query(
+        `UPDATE transaction_links SET ${setClauses.join(', ')} WHERE id = $${values.length} RETURNING *`,
+        values
+      );
+      if (res.rows.length === 0) return reply.code(404).send({ error: 'Link not found' });
+      return reply.code(200).send({ success: true, data: res.rows[0] });
+    } catch (err) {
       return reply.code(500).send({ error: 'Database error', message: err.message });
     }
   });
@@ -1608,6 +1743,44 @@ export default async function transactionsV2Routes(fastify, options) {
       }
       return reply.code(200).send({ success: true });
     } catch (err) {
+      return reply.code(500).send({ error: 'Database error', message: err.message });
+    }
+  });
+
+  // GET /api/v2/transactions/:id/reconciliation-candidates - Get matching candidate transactions
+  fastify.get('/:id/reconciliation-candidates', async (request, reply) => {
+    const { id } = request.params;
+    const minScore = request.query.minScore ? parseInt(request.query.minScore, 10) : 35;
+    const daysWindow = request.query.daysWindow ? parseInt(request.query.daysWindow, 10) : 45;
+    try {
+      const candidates = await findMatchesForTransaction(pool, id, { minScore, daysWindow });
+      return reply.code(200).send({ data: candidates });
+    } catch (err) {
+      fastify.log.error(err, 'Failed to find reconciliation candidates');
+      return reply.code(500).send({ error: 'Database error', message: err.message });
+    }
+  });
+
+  // POST /api/v2/transactions/reconcile-auto - Auto-link exact-amount matches (>= 85%)
+  fastify.post('/reconcile-auto', async (request, reply) => {
+    const autoThreshold = request.body?.autoThreshold ? parseInt(request.body.autoThreshold, 10) : 85;
+    try {
+      const result = await runAutoReconciliation(pool, '00000000-0000-0000-0000-000000000001', { autoThreshold });
+      return reply.code(200).send({ success: true, ...result });
+    } catch (err) {
+      fastify.log.error(err, 'Failed to run auto-reconciliation');
+      return reply.code(500).send({ error: 'Database error', message: err.message });
+    }
+  });
+
+  // POST /api/v2/transactions/detect-cc-billings - Scan and tag CC billings
+  fastify.post('/detect-cc-billings', async (request, reply) => {
+    const userPatterns = request.body?.userPatterns || [];
+    try {
+      const result = await detectAndTagCcBillings(pool, '00000000-0000-0000-0000-000000000001', userPatterns);
+      return reply.code(200).send({ success: true, ...result });
+    } catch (err) {
+      fastify.log.error(err, 'Failed to detect CC billings');
       return reply.code(500).send({ error: 'Database error', message: err.message });
     }
   });
