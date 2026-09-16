@@ -1,5 +1,6 @@
 import { pool } from '../db.js';
 import { signTmaToken } from '../crypto.js';
+import { getSystemMonthStartDay, getCurrentFinancialMonthBounds } from './settings-helper.js';
 
 const DEFAULT_USER_ID = '00000000-0000-0000-0000-000000000001';
 const NOTIFIER_URL = (process.env.NOTIFIER_URL || 'http://notifier:3001').replace(/\/$/, '');
@@ -132,6 +133,9 @@ export async function checkBudgetExceeded(client, userId, category, notifiedBudg
       return null;
     }
 
+    const startDay = await getSystemMonthStartDay(client, userId);
+    const { startDate, endDate, monthKey } = getCurrentFinancialMonthBounds(startDay);
+
     const spentRes = await client.query(
       `SELECT COALESCE(SUM(ABS(amount)), 0)::FLOAT AS spent
        FROM transactions t
@@ -139,17 +143,17 @@ export async function checkBudgetExceeded(client, userId, category, notifiedBudg
        WHERE b.user_id = $1
          AND t.category = $2
          AND t.is_ignored = false
+         AND (t.is_cc_billing = false OR t.is_cc_billing IS NULL)
          AND t.amount < 0
-         AND t.date >= DATE_TRUNC('month', CURRENT_DATE)
-         AND t.date < (DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month')`,
-      [userId, category]
+         AND t.date >= $3
+         AND t.date <= $4`,
+      [userId, category, startDate, endDate]
     );
 
     const spent = parseFloat(spentRes.rows[0]?.spent || 0);
     if (spent > monthlyLimit) {
-      const currentMonthStr = new Date().toISOString().slice(0, 7); // 'YYYY-MM'
-      if (notifiedBudgetsMap[category] === currentMonthStr) {
-        // Already notified this month
+      if (notifiedBudgetsMap[category] === monthKey) {
+        // Already notified this financial cycle
         return null;
       }
 
@@ -159,7 +163,7 @@ export async function checkBudgetExceeded(client, userId, category, notifiedBudg
         currentSpent: spent,
         excessAmount: spent - monthlyLimit,
         percent: Math.round((spent / monthlyLimit) * 100),
-        monthStr: currentMonthStr,
+        monthStr: monthKey,
       };
     }
 

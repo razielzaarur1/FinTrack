@@ -39,6 +39,7 @@ import InstitutionLogo from '@/components/common/InstitutionLogo';
 import MultiSelectDropdown from '@/components/common/MultiSelectDropdown';
 import TransactionDrawer from '@/components/transactions/TransactionDrawer';
 import { CATEGORIES_DATA, getCategoryDetails } from '@/lib/categories';
+import { getFinancialMonthRange, getCurrentFinancialMonth, getPreviousFinancialMonth } from '@/lib/date-utils';
 
 function formatLocalDate(d) {
   const y = d.getFullYear();
@@ -47,26 +48,24 @@ function formatLocalDate(d) {
   return `${y}-${m}-${day}`;
 }
 
-function getMonthDateBounds(monthStr) {
+function getMonthDateBounds(monthStr, startDay = 1) {
   if (!monthStr || !/^\d{4}-\d{2}$/.test(monthStr)) return null;
   const [yStr, mStr] = monthStr.split('-');
   const y = parseInt(yStr, 10);
   const m = parseInt(mStr, 10);
-  const lastDay = new Date(y, m, 0).getDate();
-  const start = `${yStr}-${mStr}-01`;
-  const end = `${yStr}-${mStr}-${String(lastDay).padStart(2, '0')}`;
-  return { start, end };
+  const range = getFinancialMonthRange(y, m, startDay);
+  return { start: range.startDate, end: range.endDate, label: range.label, displayRange: range.displayRange };
 }
 
 function TransactionsContent() {
-  const { t, lang, expenseCategories, incomeCategories } = useApp();
+  const { t, lang, expenseCategories, incomeCategories, monthStartDay, currentFinancialMonth, previousFinancialMonth, pastFinancialMonths } = useApp();
   const searchParams = useSearchParams();
   const initialAccountId = searchParams?.get('accountId');
   const initialMonth = searchParams?.get('month');
   const initialStartDateParam = searchParams?.get('startDate');
   const initialEndDateParam = searchParams?.get('endDate');
 
-  const initialBounds = getMonthDateBounds(initialMonth);
+  const initialBounds = getMonthDateBounds(initialMonth, monthStartDay);
   const initStart = initialStartDateParam || (initialBounds ? initialBounds.start : '');
   const initEnd = initialEndDateParam || (initialBounds ? initialBounds.end : '');
   const initPreset = (initStart || initEnd) ? 'custom' : 'all';
@@ -215,7 +214,7 @@ function TransactionsContent() {
     const endParam = searchParams?.get('endDate');
 
     if (monthParam && /^\d{4}-\d{2}$/.test(monthParam)) {
-      const bounds = getMonthDateBounds(monthParam);
+      const bounds = getMonthDateBounds(monthParam, monthStartDay);
       if (bounds) {
         setDatePreset('custom');
         setStartDate(bounds.start);
@@ -228,7 +227,7 @@ function TransactionsContent() {
       if (endParam) setEndDate(endParam);
       setShowFilters(true);
     }
-  }, [searchParams]);
+  }, [searchParams, monthStartDay]);
 
   // Synchronize Linking Mode from URL query params
   const linkingTxIdParam = searchParams?.get('linkingTxId');
@@ -469,43 +468,31 @@ function TransactionsContent() {
     return list;
   }, [filterCounts, availableCurrencies]);
 
-  // Quick month selector helper options (last 24 months)
+  // Quick month selector helper options (last 24 financial months)
   const monthOptions = useMemo(() => {
-    const opts = [];
-    const now = new Date();
-    const MONTH_HEBREW = [
-      'ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני',
-      'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר'
-    ];
-    for (let i = 0; i < 24; i++) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const y = d.getFullYear();
-      const m = d.getMonth() + 1;
-      const val = `${y}-${String(m).padStart(2, '0')}`;
-      opts.push({
-        value: val,
-        label: `${MONTH_HEBREW[m - 1]} ${y}`,
-      });
-    }
-    return opts;
-  }, []);
+    return (pastFinancialMonths || []).map((m) => ({
+      value: m.monthKey,
+      label: m.label,
+      start: m.startDate,
+      end: m.endDate,
+    }));
+  }, [pastFinancialMonths]);
 
   const selectedMonthValue = useMemo(() => {
     if (datePreset === 'all' && !startDate && !endDate) return 'all';
-    if (startDate && endDate && startDate.slice(0, 7) === endDate.slice(0, 7)) {
-      return startDate.slice(0, 7);
+    // Match against monthOptions by exact startDate and endDate
+    if (startDate && endDate) {
+      const match = monthOptions.find((opt) => opt.start === startDate && opt.end === endDate);
+      if (match) return match.value;
     }
-    if (datePreset === 'current_month') {
-      const now = new Date();
-      return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    if (datePreset === 'current_month' && currentFinancialMonth) {
+      return currentFinancialMonth.monthKey;
     }
-    if (datePreset === 'last_month') {
-      const d = new Date();
-      d.setMonth(d.getMonth() - 1);
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    if (datePreset === 'last_month' && previousFinancialMonth) {
+      return previousFinancialMonth.monthKey;
     }
     return 'all';
-  }, [datePreset, startDate, endDate]);
+  }, [datePreset, startDate, endDate, monthOptions, currentFinancialMonth, previousFinancialMonth]);
 
   const handleQuickMonthChange = (val) => {
     if (val === 'all') {
@@ -513,13 +500,18 @@ function TransactionsContent() {
       setStartDate('');
       setEndDate('');
     } else {
-      const [y, m] = val.split('-').map(Number);
-      const start = `${y}-${String(m).padStart(2, '0')}-01`;
-      const lastDay = new Date(y, m, 0).getDate();
-      const end = `${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
-      setDatePreset('custom');
-      setStartDate(start);
-      setEndDate(end);
+      const match = monthOptions.find((opt) => opt.value === val);
+      if (match) {
+        setDatePreset('custom');
+        setStartDate(match.start);
+        setEndDate(match.end);
+      } else {
+        const [y, m] = val.split('-').map(Number);
+        const range = getFinancialMonthRange(y, m, monthStartDay);
+        setDatePreset('custom');
+        setStartDate(range.startDate);
+        setEndDate(range.endDate);
+      }
     }
   };
 
@@ -536,21 +528,15 @@ function TransactionsContent() {
     datePreset !== 'all' || startDate || endDate ? 1 : 0,
   ].reduce((a, b) => a + b, 0);
 
-  // Helper to compute date ranges
+  // Helper to compute date ranges based on active financial cycle
   const getDateRangeForPreset = (preset) => {
     const now = new Date();
-    const y = now.getFullYear();
-    const m = now.getMonth();
 
-    if (preset === 'current_month') {
-      const s = new Date(y, m, 1);
-      const e = new Date(y, m + 1, 0);
-      return { start: formatLocalDate(s), end: formatLocalDate(e) };
+    if (preset === 'current_month' && currentFinancialMonth) {
+      return { start: currentFinancialMonth.startDate, end: currentFinancialMonth.endDate };
     }
-    if (preset === 'last_month') {
-      const s = new Date(y, m - 1, 1);
-      const e = new Date(y, m, 0);
-      return { start: formatLocalDate(s), end: formatLocalDate(e) };
+    if (preset === 'last_month' && previousFinancialMonth) {
+      return { start: previousFinancialMonth.startDate, end: previousFinancialMonth.endDate };
     }
     if (preset === 'last_90') {
       const s = new Date(now.getTime() - 90 * 24 * 60 * 1000);
@@ -620,7 +606,17 @@ function TransactionsContent() {
   // Reload transactions on filter change
   useEffect(() => {
     loadTransactions(null, null, true);
-  }, [type, selectedAccountIds, selectedCategories, selectedSpecialFilters, ccLinkStatus, debouncedSearch, minAmount, maxAmount, datePreset, startDate, endDate]);
+  }, [type, selectedAccountIds, selectedCategories, selectedSpecialFilters, ccLinkStatus, debouncedSearch, minAmount, maxAmount, datePreset, startDate, endDate, monthStartDay]);
+
+  useEffect(() => {
+    const handleSettingsUpdate = () => {
+      loadTransactions(null, null, true);
+    };
+    window.addEventListener('fintrack_settings_updated', handleSettingsUpdate);
+    return () => {
+      window.removeEventListener('fintrack_settings_updated', handleSettingsUpdate);
+    };
+  }, [datePreset, startDate, endDate, monthStartDay]);
 
   const handleSearchSubmit = (e) => {
     e?.preventDefault();

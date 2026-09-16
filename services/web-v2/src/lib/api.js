@@ -162,49 +162,97 @@ export const api = {
   },
 
   // Analytics & Statistics
-  getAnalyticsOverview: (year, month) => {
-    const q = new URLSearchParams();
-    if (year) q.append('year', year);
-    if (month) q.append('month', month);
-    return request(`/api/analytics/overview?${q.toString()}`);
-  },
-  getMonthlyTrend: (months = 12, accountId) => {
-    const q = new URLSearchParams({ months });
-    if (accountId) q.append('accountId', accountId);
-    return request(`/api/analytics/monthly-trend?${q.toString()}`);
-  },
-  getCategoryBreakdown: (arg1, month, type = 'expense', accountId) => {
+  getAnalyticsOverview: (arg1, arg2, arg3) => {
     let opts = {};
     if (typeof arg1 === 'object' && arg1 !== null) {
       opts = arg1;
     } else {
-      opts = { year: arg1, month, type, accountId };
+      opts = { year: arg1, month: arg2, startDay: arg3 };
+    }
+    const q = new URLSearchParams();
+    if (opts.year) q.append('year', opts.year);
+    if (opts.month) q.append('month', opts.month);
+    if (opts.startDate) q.append('startDate', opts.startDate);
+    if (opts.endDate) q.append('endDate', opts.endDate);
+    if (opts.startDay) q.append('startDay', opts.startDay);
+    return request(`/api/analytics/overview?${q.toString()}`);
+  },
+  getMonthlyTrend: (months = 12, accountId, startDay) => {
+    let opts = typeof months === 'object' && months !== null ? months : { months, accountId, startDay };
+    const q = new URLSearchParams();
+    if (opts.months) q.append('months', opts.months);
+    if (opts.accountId) q.append('accountId', opts.accountId);
+    if (opts.startDay) q.append('startDay', opts.startDay);
+    return request(`/api/analytics/monthly-trend?${q.toString()}`);
+  },
+  getCategoryBreakdown: (arg1, month, type = 'expense', accountId, startDay) => {
+    let opts = {};
+    if (typeof arg1 === 'object' && arg1 !== null) {
+      opts = arg1;
+    } else {
+      opts = { year: arg1, month, type, accountId, startDay };
     }
     const q = new URLSearchParams();
     if (opts.type) q.append('type', opts.type);
     if (opts.year) q.append('year', opts.year);
     if (opts.month) q.append('month', opts.month);
+    if (opts.startDate) q.append('startDate', opts.startDate);
+    if (opts.endDate) q.append('endDate', opts.endDate);
+    if (opts.startDay) q.append('startDay', opts.startDay);
     if (opts.accountId) q.append('accountId', opts.accountId);
     if (opts.accountIds) q.append('accountIds', Array.isArray(opts.accountIds) ? opts.accountIds.join(',') : opts.accountIds);
     return request(`/api/analytics/category-breakdown?${q.toString()}`);
   },
-  getCategoryAverages: () => request('/api/analytics/category-averages'),
-  getTopExpenses: (year, month, limit = 5) => {
-    const q = new URLSearchParams({ limit });
-    if (year) q.append('year', year);
-    if (month) q.append('month', month);
+  getCategoryAverages: (startDay) => {
+    const q = new URLSearchParams();
+    if (startDay) q.append('startDay', startDay);
+    return request(`/api/analytics/category-averages${q.toString() ? `?${q.toString()}` : ''}`);
+  },
+  getTopExpenses: (arg1, month, limit = 5, startDay) => {
+    let opts = {};
+    if (typeof arg1 === 'object' && arg1 !== null) {
+      opts = arg1;
+    } else {
+      opts = { year: arg1, month, limit, startDay };
+    }
+    const q = new URLSearchParams();
+    if (opts.limit) q.append('limit', opts.limit);
+    if (opts.year) q.append('year', opts.year);
+    if (opts.month) q.append('month', opts.month);
+    if (opts.startDate) q.append('startDate', opts.startDate);
+    if (opts.endDate) q.append('endDate', opts.endDate);
+    if (opts.startDay) q.append('startDay', opts.startDay);
     return request(`/api/analytics/top-expenses?${q.toString()}`);
   },
-  getTopMerchants: (year, month, limit = 10) => {
-    const q = new URLSearchParams({ limit });
-    if (year) q.append('year', year);
-    if (month) q.append('month', month);
+  getTopMerchants: (arg1, month, limit = 10, startDay) => {
+    let opts = {};
+    if (typeof arg1 === 'object' && arg1 !== null) {
+      opts = arg1;
+    } else {
+      opts = { year: arg1, month, limit, startDay };
+    }
+    const q = new URLSearchParams();
+    if (opts.limit) q.append('limit', opts.limit);
+    if (opts.year) q.append('year', opts.year);
+    if (opts.month) q.append('month', opts.month);
+    if (opts.startDate) q.append('startDate', opts.startDate);
+    if (opts.endDate) q.append('endDate', opts.endDate);
+    if (opts.startDay) q.append('startDay', opts.startDay);
     return request(`/api/analytics/top-merchants?${q.toString()}`);
   },
-  getDailySpending: (year, month) => {
+  getDailySpending: (arg1, month, startDay) => {
+    let opts = {};
+    if (typeof arg1 === 'object' && arg1 !== null) {
+      opts = arg1;
+    } else {
+      opts = { year: arg1, month, startDay };
+    }
     const q = new URLSearchParams();
-    if (year) q.append('year', year);
-    if (month) q.append('month', month);
+    if (opts.year) q.append('year', opts.year);
+    if (opts.month) q.append('month', opts.month);
+    if (opts.startDate) q.append('startDate', opts.startDate);
+    if (opts.endDate) q.append('endDate', opts.endDate);
+    if (opts.startDay) q.append('startDay', opts.startDay);
     return request(`/api/analytics/daily-spending?${q.toString()}`);
   },
 

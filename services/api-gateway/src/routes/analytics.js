@@ -1,21 +1,42 @@
 import { z } from 'zod';
 import { pool } from '../db.js';
 import { cleanSpacedHebrew } from './transactions-v2.js';
+import { 
+  getSystemMonthStartDay, 
+  getFinancialMonthBounds, 
+  getCurrentFinancialMonthBounds, 
+  getFinancialMonthSqlExpression 
+} from '../services/settings-helper.js';
 
 export default async function analyticsRoutes(fastify, options) {
   // GET /api/analytics/overview - Overall KPI summaries for current month or selected date range
   fastify.get('/overview', async (request, reply) => {
-    const { year, month } = request.query;
-    const now = new Date();
-    const targetYear = parseInt(year, 10) || now.getFullYear();
-    const targetMonth = parseInt(month, 10) || (now.getMonth() + 1);
+    const { year, month, startDate: queryStartDate, endDate: queryEndDate, startDay: queryStartDay, monthStartDay } = request.query;
+    const startDay = (queryStartDay || monthStartDay)
+      ? Math.min(31, Math.max(1, parseInt(queryStartDay || monthStartDay, 10) || 10))
+      : await getSystemMonthStartDay(pool);
 
-    const startDate = `${targetYear}-${String(targetMonth).padStart(2, '0')}-01`;
-    const lastDay = new Date(targetYear, targetMonth, 0).getDate();
-    const endDate = `${targetYear}-${String(targetMonth).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+    let startDate = queryStartDate;
+    let endDate = queryEndDate;
+    let targetYear = parseInt(year, 10);
+    let targetMonth = parseInt(month, 10);
+
+    if (!startDate || !endDate) {
+      if (targetYear && targetMonth) {
+        const bounds = getFinancialMonthBounds(targetYear, targetMonth, startDay);
+        startDate = bounds.startDate;
+        endDate = bounds.endDate;
+      } else {
+        const currentBounds = getCurrentFinancialMonthBounds(startDay);
+        startDate = currentBounds.startDate;
+        endDate = currentBounds.endDate;
+        targetYear = currentBounds.year;
+        targetMonth = currentBounds.month;
+      }
+    }
 
     try {
-      // Monthly income & expense from non-ignored transactions (accurately differentiating refunds from income)
+      // Monthly income & expense from non-ignored transactions (accurately differentiating refunds from income, excluding CC billing payments)
       const txQuery = `
         SELECT 
           COALESCE(SUM(CASE 
@@ -33,7 +54,9 @@ export default async function analyticsRoutes(fastify, options) {
           COUNT(*) AS "transactionCount"
         FROM transactions t
         LEFT JOIN categories c ON (t.category = c.name OR t.category = c.name_en)
-        WHERE t.date >= $1 AND t.date <= $2 AND t.is_ignored = false
+        WHERE t.date >= $1 AND t.date <= $2 
+          AND t.is_ignored = false
+          AND (t.is_cc_billing = false OR t.is_cc_billing IS NULL)
       `;
       const txRes = await pool.query(txQuery, [startDate, endDate]);
       const income = parseFloat(txRes.rows[0].totalIncome);
@@ -51,7 +74,7 @@ export default async function analyticsRoutes(fastify, options) {
       const netWorth = parseFloat(accountsRes.rows[0].netWorth);
 
       return reply.code(200).send({
-        period: { year: targetYear, month: targetMonth, startDate, endDate },
+        period: { year: targetYear, month: targetMonth, startDate, endDate, startDay },
         netWorth,
         totalIncome: income,
         totalExpense: expense,
@@ -68,9 +91,16 @@ export default async function analyticsRoutes(fastify, options) {
   // GET /api/analytics/monthly-trend - Income, expense and savings trend across N months
   fastify.get('/monthly-trend', async (request, reply) => {
     const monthsCount = Math.min(parseInt(request.query.months, 10) || 12, 24);
-    const { accountId } = request.query;
+    const { accountId, startDay: queryStartDay, monthStartDay } = request.query;
+    const startDay = (queryStartDay || monthStartDay)
+      ? Math.min(31, Math.max(1, parseInt(queryStartDay || monthStartDay, 10) || 10))
+      : await getSystemMonthStartDay(pool);
 
-    const conditions = ['t.is_ignored = false', `t.date >= (CURRENT_DATE - INTERVAL '${monthsCount} months')`];
+    const conditions = [
+      't.is_ignored = false', 
+      '(t.is_cc_billing = false OR t.is_cc_billing IS NULL)',
+      `t.date >= (CURRENT_DATE - INTERVAL '${monthsCount + 2} months')`
+    ];
     const values = [];
 
     if (accountId) {
@@ -78,9 +108,11 @@ export default async function analyticsRoutes(fastify, options) {
       conditions.push(`t.account_id = $${values.length}`);
     }
 
+    const monthSql = getFinancialMonthSqlExpression(startDay, 't.date');
+
     const query = `
       SELECT 
-        TO_CHAR(t.date, 'YYYY-MM') AS "monthKey",
+        ${monthSql} AS "monthKey",
         COALESCE(SUM(CASE 
           WHEN (c.type = 'income' OR (c.type IS NULL AND t.category IN ('משכורת', 'הכנסה', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות', 'הכנסות'))) AND t.amount > 0 
           THEN t.amount 
@@ -96,17 +128,19 @@ export default async function analyticsRoutes(fastify, options) {
       FROM transactions t
       LEFT JOIN categories c ON (t.category = c.name OR t.category = c.name_en)
       WHERE ${conditions.join(' AND ')}
-      GROUP BY TO_CHAR(t.date, 'YYYY-MM')
+      GROUP BY ${monthSql}
       ORDER BY "monthKey" ASC
     `;
 
     try {
       const result = await pool.query(query, values);
-      const trend = result.rows.map((r) => {
+      const rows = result.rows.slice(-monthsCount);
+      const trend = rows.map((r) => {
         const inc = parseFloat(r.income);
         const exp = Math.max(0, parseFloat(r.expenses));
         return {
           month: r.monthKey,
+          monthKey: r.monthKey,
           income: inc,
           expenses: exp,
           savings: inc - exp,
@@ -120,23 +154,33 @@ export default async function analyticsRoutes(fastify, options) {
 
   // GET /api/analytics/category-breakdown - Expenses or Income categorized distribution with split transaction support
   fastify.get('/category-breakdown', async (request, reply) => {
-    const { year, month, startDate: queryStartDate, endDate: queryEndDate, type = 'expense', accountId, accountIds } = request.query;
+    const { year, month, startDate: queryStartDate, endDate: queryEndDate, type = 'expense', accountId, accountIds, startDay: queryStartDay, monthStartDay } = request.query;
+    const startDay = (queryStartDay || monthStartDay)
+      ? Math.min(31, Math.max(1, parseInt(queryStartDay || monthStartDay, 10) || 10))
+      : await getSystemMonthStartDay(pool);
+
     let startDate = queryStartDate;
     let endDate = queryEndDate;
 
     if (!startDate || !endDate) {
-      const now = new Date();
-      const targetYear = parseInt(year, 10) || now.getFullYear();
-      const targetMonth = parseInt(month, 10) || (now.getMonth() + 1);
-      startDate = `${targetYear}-${String(targetMonth).padStart(2, '0')}-01`;
-      const lastDay = new Date(targetYear, targetMonth, 0).getDate();
-      endDate = `${targetYear}-${String(targetMonth).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+      const targetYear = parseInt(year, 10);
+      const targetMonth = parseInt(month, 10);
+      if (targetYear && targetMonth) {
+        const bounds = getFinancialMonthBounds(targetYear, targetMonth, startDay);
+        startDate = bounds.startDate;
+        endDate = bounds.endDate;
+      } else {
+        const currentBounds = getCurrentFinancialMonthBounds(startDay);
+        startDate = currentBounds.startDate;
+        endDate = currentBounds.endDate;
+      }
     }
 
     const conditions = [
       't.date >= $1',
       't.date <= $2',
       't.is_ignored = false',
+      '(t.is_cc_billing = false OR t.is_cc_billing IS NULL)',
       type === 'income' 
         ? 't.amount > 0' 
         : '(t.amount < 0 OR (t.amount > 0 AND COALESCE(t.category, \'\') NOT IN (\'משכורת\', \'הכנסה\', \'קצבה או מלגה\', \'הכנסה מנכס\', \'הכנסה מעסק\', \'דיווידנדים ורווחים\', \'הכנסות שונות\', \'הכנסות\', \'Salary\', \'Income\')))',
@@ -236,10 +280,27 @@ export default async function analyticsRoutes(fastify, options) {
   // GET /api/analytics/top-merchants - Top merchant spending
   fastify.get('/top-merchants', async (request, reply) => {
     const limit = Math.min(parseInt(request.query.limit, 10) || 10, 50);
-    const { year, month } = request.query;
+    const { year, month, startDate: queryStartDate, endDate: queryEndDate, startDay: queryStartDay, monthStartDay } = request.query;
+    const startDay = (queryStartDay || monthStartDay)
+      ? Math.min(31, Math.max(1, parseInt(queryStartDay || monthStartDay, 10) || 10))
+      : await getSystemMonthStartDay(pool);
+
+    let startDate = queryStartDate;
+    let endDate = queryEndDate;
+
+    if (!startDate || !endDate) {
+      const y = parseInt(year, 10);
+      const m = parseInt(month, 10);
+      if (y && m) {
+        const bounds = getFinancialMonthBounds(y, m, startDay);
+        startDate = bounds.startDate;
+        endDate = bounds.endDate;
+      }
+    }
 
     const conditions = [
       'is_ignored = false',
+      '(is_cc_billing = false OR is_cc_billing IS NULL)',
       'amount < 0',
       "LOWER(COALESCE(merchant_name, '')) NOT LIKE '%משיכת מזומן%'",
       "LOWER(COALESCE(description, '')) NOT LIKE '%משיכת מזומן%'",
@@ -249,12 +310,7 @@ export default async function analyticsRoutes(fastify, options) {
     ];
     const values = [];
 
-    if (year && month) {
-      const y = parseInt(year, 10);
-      const m = parseInt(month, 10);
-      const startDate = `${y}-${String(m).padStart(2, '0')}-01`;
-      const lastDay = new Date(y, m, 0).getDate();
-      const endDate = `${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+    if (startDate && endDate) {
       values.push(startDate, endDate);
       conditions.push(`date >= $1 AND date <= $2`);
     }
@@ -291,13 +347,29 @@ export default async function analyticsRoutes(fastify, options) {
 
   // GET /api/analytics/daily-spending - Daily calendar heatmap array
   fastify.get('/daily-spending', async (request, reply) => {
-    const now = new Date();
-    const targetYear = parseInt(request.query.year, 10) || now.getFullYear();
-    const targetMonth = parseInt(request.query.month, 10) || (now.getMonth() + 1);
+    const { year, month, startDate: queryStartDate, endDate: queryEndDate, startDay: queryStartDay, monthStartDay } = request.query;
+    const startDay = (queryStartDay || monthStartDay)
+      ? Math.min(31, Math.max(1, parseInt(queryStartDay || monthStartDay, 10) || 10))
+      : await getSystemMonthStartDay(pool);
 
-    const startDate = `${targetYear}-${String(targetMonth).padStart(2, '0')}-01`;
-    const lastDay = new Date(targetYear, targetMonth, 0).getDate();
-    const endDate = `${targetYear}-${String(targetMonth).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+    let startDate = queryStartDate;
+    let endDate = queryEndDate;
+    let targetYear = parseInt(year, 10);
+    let targetMonth = parseInt(month, 10);
+
+    if (!startDate || !endDate) {
+      if (targetYear && targetMonth) {
+        const bounds = getFinancialMonthBounds(targetYear, targetMonth, startDay);
+        startDate = bounds.startDate;
+        endDate = bounds.endDate;
+      } else {
+        const currentBounds = getCurrentFinancialMonthBounds(startDay);
+        startDate = currentBounds.startDate;
+        endDate = currentBounds.endDate;
+        targetYear = currentBounds.year;
+        targetMonth = currentBounds.month;
+      }
+    }
 
     const query = `
       SELECT 
@@ -306,7 +378,9 @@ export default async function analyticsRoutes(fastify, options) {
         COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0) AS "income",
         COUNT(*) AS "count"
       FROM transactions
-      WHERE date >= $1 AND date <= $2 AND is_ignored = false
+      WHERE date >= $1 AND date <= $2 
+        AND is_ignored = false
+        AND (is_cc_billing = false OR is_cc_billing IS NULL)
       GROUP BY date
       ORDER BY date ASC
     `;
@@ -332,21 +406,33 @@ export default async function analyticsRoutes(fastify, options) {
   // GET /api/analytics/category-averages - Monthly average spending per specific relevant category (strictly 12 months)
   fastify.get('/category-averages', async (request, reply) => {
     try {
-      // Build exactly 12 month keys from 11 months ago to current month
+      const { startDay: queryStartDay, monthStartDay } = request.query;
+      const startDay = (queryStartDay || monthStartDay)
+        ? Math.min(31, Math.max(1, parseInt(queryStartDay || monthStartDay, 10) || 10))
+        : await getSystemMonthStartDay(pool);
+
+      // Build exactly 12 financial month keys from 11 cycles ago to current cycle
       const monthLabels = [];
       const heMonths = ['ינו׳', 'פבר׳', 'מרץ', 'אפר׳', 'מאי', 'יוני', 'יולי', 'אוג׳', 'ספט׳', 'אוק׳', 'נוב׳', 'דצמ׳'];
-      const now = new Date();
-      for (let i = 11; i >= 0; i--) {
-        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-        const yyyy = d.getFullYear();
-        const mm = String(d.getMonth() + 1).padStart(2, '0');
-        const key = `${yyyy}-${mm}`;
-        monthLabels.push({
-          key,
-          label: `${heMonths[d.getMonth()]} ${String(yyyy).slice(2)}`,
-          year: yyyy,
-          month: d.getMonth() + 1,
+      const currentBounds = getCurrentFinancialMonthBounds(startDay);
+      let curYear = currentBounds.year;
+      let curMonth = currentBounds.month;
+
+      for (let i = 0; i < 12; i++) {
+        const bounds = getFinancialMonthBounds(curYear, curMonth, startDay);
+        monthLabels.unshift({
+          key: bounds.monthKey,
+          label: `${heMonths[bounds.month - 1]} ${String(bounds.year).slice(2)}`,
+          year: bounds.year,
+          month: bounds.month,
+          startDate: bounds.startDate,
+          endDate: bounds.endDate,
         });
+        curMonth -= 1;
+        if (curMonth < 1) {
+          curMonth = 12;
+          curYear -= 1;
+        }
       }
 
       // Define focused, highly relevant everyday spending categories
@@ -402,6 +488,8 @@ export default async function analyticsRoutes(fastify, options) {
         },
       ];
 
+      const monthSql = getFinancialMonthSqlExpression(startDay, 't.date');
+
       // Query historical transactions in the last 12-13 months (non-ignored expenses, capturing both positive & negative amount expense records)
       // Including split transactions itemized by split category & split amount
       const historicalRes = await pool.query(`
@@ -409,7 +497,7 @@ export default async function analyticsRoutes(fastify, options) {
           SELECT 
             t.id,
             t.date,
-            TO_CHAR(t.date, 'YYYY-MM') AS "monthKey",
+            ${monthSql} AS "monthKey",
             t.amount,
             COALESCE(t.category, '') AS "category",
             COALESCE(t.user_description, '') AS "userDescription",
@@ -421,6 +509,7 @@ export default async function analyticsRoutes(fastify, options) {
           FROM transactions t
           LEFT JOIN bank_accounts a ON t.account_id = a.id
           WHERE t.is_ignored = false 
+            AND (t.is_cc_billing = false OR t.is_cc_billing IS NULL)
             AND (t.is_split = false OR t.is_split IS NULL)
             AND (
               t.amount < 0 
@@ -429,14 +518,14 @@ export default async function analyticsRoutes(fastify, options) {
                 AND COALESCE(t.category, '') NOT IN ('משכורת', 'הכנסה', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות', 'הכנסות', 'Salary', 'Income')
               )
             )
-            AND t.date >= (CURRENT_DATE - INTERVAL '13 months')
+            AND t.date >= (CURRENT_DATE - INTERVAL '14 months')
 
           UNION ALL
 
           SELECT 
             t.id,
             t.date,
-            TO_CHAR(t.date, 'YYYY-MM') AS "monthKey",
+            ${monthSql} AS "monthKey",
             ts.amount,
             COALESCE(ts.category, '') AS "category",
             COALESCE(ts.description, t.user_description, '') AS "userDescription",
@@ -449,6 +538,7 @@ export default async function analyticsRoutes(fastify, options) {
           JOIN transactions t ON ts.transaction_id = t.id
           LEFT JOIN bank_accounts a ON t.account_id = a.id
           WHERE t.is_ignored = false 
+            AND (t.is_cc_billing = false OR t.is_cc_billing IS NULL)
             AND t.is_split = true
             AND (
               ts.amount < 0 
@@ -457,7 +547,7 @@ export default async function analyticsRoutes(fastify, options) {
                 AND COALESCE(ts.category, '') NOT IN ('משכורת', 'הכנסה', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות', 'הכנסות', 'Salary', 'Income')
               )
             )
-            AND t.date >= (CURRENT_DATE - INTERVAL '13 months')
+            AND t.date >= (CURRENT_DATE - INTERVAL '14 months')
         )
         SELECT * FROM itemized
         ORDER BY date DESC
@@ -548,14 +638,29 @@ export default async function analyticsRoutes(fastify, options) {
 
   // GET /api/analytics/top-expenses - Largest single expenses
   fastify.get('/top-expenses', async (request, reply) => {
-    const { year, month, limit = 5 } = request.query;
-    const now = new Date();
-    const targetYear = parseInt(year, 10) || now.getFullYear();
-    const targetMonth = parseInt(month, 10) || (now.getMonth() + 1);
+    const { year, month, startDate: queryStartDate, endDate: queryEndDate, startDay: queryStartDay, monthStartDay, limit = 5 } = request.query;
+    const startDay = (queryStartDay || monthStartDay)
+      ? Math.min(31, Math.max(1, parseInt(queryStartDay || monthStartDay, 10) || 10))
+      : await getSystemMonthStartDay(pool);
 
-    const startDate = `${targetYear}-${String(targetMonth).padStart(2, '0')}-01`;
-    const lastDay = new Date(targetYear, targetMonth, 0).getDate();
-    const endDate = `${targetYear}-${String(targetMonth).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+    let startDate = queryStartDate;
+    let endDate = queryEndDate;
+    let targetYear = parseInt(year, 10);
+    let targetMonth = parseInt(month, 10);
+
+    if (!startDate || !endDate) {
+      if (targetYear && targetMonth) {
+        const bounds = getFinancialMonthBounds(targetYear, targetMonth, startDay);
+        startDate = bounds.startDate;
+        endDate = bounds.endDate;
+      } else {
+        const currentBounds = getCurrentFinancialMonthBounds(startDay);
+        startDate = currentBounds.startDate;
+        endDate = currentBounds.endDate;
+        targetYear = currentBounds.year;
+        targetMonth = currentBounds.month;
+      }
+    }
 
     const query = `
       SELECT 
@@ -571,6 +676,7 @@ export default async function analyticsRoutes(fastify, options) {
       FROM transactions t
       JOIN bank_accounts b ON t.account_id = b.id
       WHERE t.is_ignored = false 
+        AND (t.is_cc_billing = false OR t.is_cc_billing IS NULL)
         AND t.amount < 0
         AND t.date >= $1 AND t.date <= $2
         AND LOWER(COALESCE(t.merchant_name, '')) NOT LIKE '%משיכת מזומן%'
@@ -582,7 +688,7 @@ export default async function analyticsRoutes(fastify, options) {
     try {
       const res = await pool.query(query, [startDate, endDate, Math.min(parseInt(limit, 10) || 5, 20)]);
       return reply.code(200).send({
-        period: { year: targetYear, month: targetMonth },
+        period: { year: targetYear, month: targetMonth, startDate, endDate, startDay },
         data: res.rows.map(r => ({
           ...r,
           amount: parseFloat(r.amount),

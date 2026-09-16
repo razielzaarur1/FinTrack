@@ -34,6 +34,7 @@ import {
 import { api } from '@/lib/api';
 import { formatILS, formatDate } from '@/lib/formatters';
 import { useApp } from '@/lib/app-context';
+import { getFinancialMonthRange } from '@/lib/date-utils';
 import CategoryBadge from '@/components/common/CategoryBadge';
 import CategoryAverageModal from '@/components/analytics/CategoryAverageModal';
 
@@ -45,8 +46,7 @@ const PERIOD_PRESETS = [
 ];
 
 export default function AnalyticsPage() {
-  const { lang, t, theme } = useApp();
-  const now = new Date();
+  const { lang, t, theme, monthStartDay, currentFinancialMonth, previousFinancialMonth } = useApp();
 
   const [period, setPeriod] = useState('current_month');
   const [breakdownType, setBreakdownType] = useState('expense');
@@ -60,32 +60,73 @@ export default function AnalyticsPage() {
   const [topExpenses, setTopExpenses] = useState([]);
   const [selectedAvgCat, setSelectedAvgCat] = useState(null);
 
-  // Compute Year/Month parameters for endpoints based on period preset
-  const getParamsForPeriod = () => {
-    if (period === 'current_month') {
-      return { year: now.getFullYear(), month: now.getMonth() + 1, trendMonths: 6 };
+  // Compute exact Date parameters for endpoints based on period preset & financial billing cycle
+  const activePeriodRange = React.useMemo(() => {
+    if (period === 'current_month' && currentFinancialMonth) {
+      return {
+        startDate: currentFinancialMonth.startDate,
+        endDate: currentFinancialMonth.endDate,
+        label: currentFinancialMonth.label,
+        displayRange: currentFinancialMonth.displayRange,
+        trendMonths: 6,
+      };
     }
-    if (period === 'last_month') {
-      const lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-      return { year: lastMonthDate.getFullYear(), month: lastMonthDate.getMonth() + 1, trendMonths: 6 };
+    if (period === 'last_month' && previousFinancialMonth) {
+      return {
+        startDate: previousFinancialMonth.startDate,
+        endDate: previousFinancialMonth.endDate,
+        label: previousFinancialMonth.label,
+        displayRange: previousFinancialMonth.displayRange,
+        trendMonths: 6,
+      };
     }
-    if (period === '3_months') {
-      return { year: undefined, month: undefined, trendMonths: 3 };
+    if (period === '3_months' && currentFinancialMonth) {
+      let m = currentFinancialMonth.month - 2;
+      let y = currentFinancialMonth.year;
+      if (m < 1) {
+        m += 12;
+        y -= 1;
+      }
+      const range3m = getFinancialMonthRange(y, m, monthStartDay);
+      return {
+        startDate: range3m.startDate,
+        endDate: currentFinancialMonth.endDate,
+        label: `3 מחזורים אחרונים`,
+        displayRange: `${range3m.startDate.slice(5).replace('-', '/')} – ${currentFinancialMonth.endDate.slice(5).replace('-', '/')}`,
+        trendMonths: 3,
+      };
     }
-    return { year: undefined, month: undefined, trendMonths: 12 };
-  };
+    // Default: 12 months (year)
+    if (currentFinancialMonth) {
+      let m = currentFinancialMonth.month - 11;
+      let y = currentFinancialMonth.year;
+      if (m < 1) {
+        m += 12;
+        y -= 1;
+      }
+      const range12m = getFinancialMonthRange(y, m, monthStartDay);
+      return {
+        startDate: range12m.startDate,
+        endDate: currentFinancialMonth.endDate,
+        label: `שנה אחרונה`,
+        displayRange: `${range12m.startDate.slice(5).replace('-', '/')} – ${currentFinancialMonth.endDate.slice(5).replace('-', '/')}`,
+        trendMonths: 12,
+      };
+    }
+    return { trendMonths: 12 };
+  }, [period, currentFinancialMonth, previousFinancialMonth, monthStartDay]);
 
   const loadData = async () => {
     setLoading(true);
-    const { year, month, trendMonths } = getParamsForPeriod();
+    const { startDate, endDate, trendMonths } = activePeriodRange;
 
     try {
       const [catRes, merchRes, trendRes, avgRes, topExpRes] = await Promise.all([
-        api.getCategoryBreakdown({ year, month, type: breakdownType }),
-        api.getTopMerchants(year, month, 8),
-        api.getMonthlyTrend(trendMonths),
-        api.getCategoryAverages(),
-        api.getTopExpenses(year, month, 5),
+        api.getCategoryBreakdown({ startDate, endDate, type: breakdownType, startDay: monthStartDay }),
+        api.getTopMerchants({ startDate, endDate, limit: 8, startDay: monthStartDay }),
+        api.getMonthlyTrend(trendMonths, undefined, monthStartDay),
+        api.getCategoryAverages(monthStartDay),
+        api.getTopExpenses({ startDate, endDate, limit: 5, startDay: monthStartDay }),
       ]);
 
       if (catRes.data) setBreakdown(catRes.data);
@@ -112,13 +153,15 @@ export default function AnalyticsPage() {
     window.addEventListener('focus', handleFocus);
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('fintrack_tx_updated', handleTxUpdate);
+    window.addEventListener('fintrack_settings_updated', handleTxUpdate);
 
     return () => {
       window.removeEventListener('focus', handleFocus);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('fintrack_tx_updated', handleTxUpdate);
+      window.removeEventListener('fintrack_settings_updated', handleTxUpdate);
     };
-  }, [period, breakdownType]);
+  }, [period, breakdownType, monthStartDay, activePeriodRange.startDate, activePeriodRange.endDate]);
 
   const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899', '#8b5cf6', '#14b8a6'];
 
@@ -201,6 +244,25 @@ export default function AnalyticsPage() {
           </button>
         </div>
       </div>
+
+      {/* Active Financial Cycle Info Banner */}
+      {activePeriodRange?.startDate && activePeriodRange?.endDate && (
+        <div className="flex items-center justify-between flex-wrap gap-2 px-4 py-2.5 rounded-xl bg-brand-primary/5 border border-brand-primary/15 text-xs">
+          <div className="flex items-center gap-2 text-dark-text light:text-light-text">
+            <Calendar className="w-4 h-4 text-brand-primary" />
+            <span className="font-semibold text-brand-primary">{lang === 'he' ? 'טווח חישוב נבחר:' : 'Selected Range:'}</span>
+            <span className="font-bold">{activePeriodRange.displayRange}</span>
+            <span className="text-dark-text-muted light:text-light-text-muted text-[11px]">
+              ({activePeriodRange.startDate} עד {activePeriodRange.endDate})
+            </span>
+          </div>
+          <div className="text-[11px] text-dark-text-muted light:text-light-text-muted">
+            {lang === 'he'
+              ? `מחזור חודשי מוגדר מה-${monthStartDay} לחודש`
+              : `Monthly cycle starts on day ${monthStartDay}`}
+          </div>
+        </div>
+      )}
 
       {/* Monthly Category Averages Cards */}
       <div className="space-y-3">

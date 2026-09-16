@@ -227,6 +227,10 @@ export default async function systemRoutes(fastify, options) {
       const val = parseInt(settings.notifyMaxAgeDays, 10);
       settings.notifyMaxAgeDays = Math.max(1, isNaN(val) ? 7 : val);
     }
+    if (settings.monthStartDay !== undefined) {
+      const val = parseInt(settings.monthStartDay, 10);
+      settings.monthStartDay = isNaN(val) ? 10 : Math.min(31, Math.max(1, val));
+    }
 
     try {
       const result = await pool.query(

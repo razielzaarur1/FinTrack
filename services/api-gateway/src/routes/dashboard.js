@@ -1,4 +1,9 @@
 import { pool } from '../db.js';
+import { 
+  getSystemMonthStartDay, 
+  getCurrentFinancialMonthBounds, 
+  getFinancialMonthSqlExpression 
+} from '../services/settings-helper.js';
 
 const DEFAULT_USER_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -63,7 +68,17 @@ export default async function dashboardRoutes(fastify, options) {
       // Net worth strictly from liquid bank accounts, cash wallet, and investments (excluding credit cards)
       const netWorth = liquidCash + investments;
 
-      // 2. Fetch current month income & expenses
+      // Determine financial cycle startDay from query or system_settings
+      const queryStartDay = request.query?.startDay || request.query?.monthStartDay;
+      const startDay = queryStartDay 
+        ? Math.min(31, Math.max(1, parseInt(queryStartDay, 10) || 10))
+        : await getSystemMonthStartDay(pool, DEFAULT_USER_ID);
+
+      const cycleBounds = getCurrentFinancialMonthBounds(startDay);
+      const { startDate, endDate, monthKey } = cycleBounds;
+
+      // 2. Fetch current financial month income & expenses
+      // Ignore ignored transactions AND CC billing debits from bank (to prevent double-counting)
       const monthlyRes = await pool.query(
         `SELECT
            COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0) AS monthly_income,
@@ -72,8 +87,10 @@ export default async function dashboardRoutes(fastify, options) {
          JOIN bank_accounts a ON t.account_id = a.id
          WHERE a.user_id = $1
            AND a.is_active = true
-           AND t.date >= DATE_TRUNC('month', CURRENT_DATE)`
-        , [DEFAULT_USER_ID]
+           AND t.is_ignored = false
+           AND (t.is_cc_billing = false OR t.is_cc_billing IS NULL)
+           AND t.date >= $2 AND t.date <= $3`,
+        [DEFAULT_USER_ID, startDate, endDate]
       );
 
       const monthlyIncome = parseFloat(monthlyRes.rows[0].monthly_income) || 0;
@@ -82,7 +99,7 @@ export default async function dashboardRoutes(fastify, options) {
         ? Math.max(0, Math.round(((monthlyIncome - monthlyExpenses) / monthlyIncome) * 100))
         : 0;
 
-      // 3. Category Breakdown for current month (expenses only)
+      // 3. Category Breakdown for current financial month (expenses only)
       const catRes = await pool.query(
         `SELECT
            COALESCE(category, 'שונות') AS name,
@@ -91,11 +108,13 @@ export default async function dashboardRoutes(fastify, options) {
          JOIN bank_accounts a ON t.account_id = a.id
          WHERE a.user_id = $1
            AND a.is_active = true
+           AND t.is_ignored = false
+           AND (t.is_cc_billing = false OR t.is_cc_billing IS NULL)
            AND t.amount < 0
-           AND t.date >= DATE_TRUNC('month', CURRENT_DATE)
+           AND t.date >= $2 AND t.date <= $3
          GROUP BY COALESCE(category, 'שונות')
          ORDER BY amount DESC`,
-        [DEFAULT_USER_ID]
+        [DEFAULT_USER_ID, startDate, endDate]
       );
 
       const categoryBreakdown = catRes.rows.map((row) => ({
@@ -104,29 +123,34 @@ export default async function dashboardRoutes(fastify, options) {
         color: CATEGORY_COLORS[row.name] || '#06b6d4',
       }));
 
-      // 4. Monthly Trend (Past 6 Months)
+      // 4. Monthly Trend (Past 6 Financial Months)
+      const monthSql = getFinancialMonthSqlExpression(startDay, 't.date');
       const trendRes = await pool.query(
         `SELECT
-           TO_CHAR(DATE_TRUNC('month', t.date), 'YYYY-MM') AS month_key,
-           EXTRACT(MONTH FROM t.date)::INT AS month_num,
+           ${monthSql} AS month_key,
            COALESCE(SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END), 0) AS income,
            COALESCE(SUM(CASE WHEN t.amount < 0 THEN ABS(t.amount) ELSE 0 END), 0) AS expenses
          FROM transactions t
          JOIN bank_accounts a ON t.account_id = a.id
          WHERE a.user_id = $1
            AND a.is_active = true
-           AND t.date >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '5 months')
-         GROUP BY DATE_TRUNC('month', t.date), EXTRACT(MONTH FROM t.date)
-         ORDER BY DATE_TRUNC('month', t.date) ASC`,
+           AND t.is_ignored = false
+           AND (t.is_cc_billing = false OR t.is_cc_billing IS NULL)
+           AND t.date >= (CURRENT_DATE - INTERVAL '8 months')
+         GROUP BY ${monthSql}
+         ORDER BY month_key ASC`,
         [DEFAULT_USER_ID]
       );
 
-      let monthlyTrend = trendRes.rows.map((row) => {
+      const trendRows = trendRes.rows.slice(-6);
+      let monthlyTrend = trendRows.map((row) => {
         const inc = parseFloat(row.income) || 0;
         const exp = parseFloat(row.expenses) || 0;
-        const mIndex = (row.month_num - 1) % 12;
+        const mKeyParts = (row.month_key || '').split('-');
+        const mIndex = mKeyParts.length === 2 ? (parseInt(mKeyParts[1], 10) - 1) % 12 : 0;
         return {
           month: HEBREW_MONTHS[mIndex] || row.month_key,
+          monthKey: row.month_key,
           income: inc,
           expenses: exp,
           savings: Math.max(0, inc - exp),
@@ -138,6 +162,7 @@ export default async function dashboardRoutes(fastify, options) {
         const currentMonthIdx = new Date().getMonth();
         monthlyTrend = [{
           month: HEBREW_MONTHS[currentMonthIdx],
+          monthKey,
           income: monthlyIncome,
           expenses: monthlyExpenses,
           savings: Math.max(0, monthlyIncome - monthlyExpenses),
@@ -177,6 +202,12 @@ export default async function dashboardRoutes(fastify, options) {
         monthlyTrend,
         categoryBreakdown,
         recentTransactions: recentTxRes.rows,
+        financialCycle: {
+          startDay,
+          startDate,
+          endDate,
+          monthKey,
+        },
       });
     } catch (err) {
       fastify.log.error(err, 'Failed to fetch dashboard KPIs');

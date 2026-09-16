@@ -25,7 +25,7 @@ import CategoryBadge from '@/components/common/CategoryBadge';
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { t, lang, theme } = useApp();
+  const { t, lang, theme, monthStartDay, currentFinancialMonth } = useApp();
   const [overview, setOverview] = useState(null);
   const [trend, setTrend] = useState([]);
   const [accounts, setAccounts] = useState([]);
@@ -34,7 +34,8 @@ export default function DashboardPage() {
   const lastTapRef = React.useRef({ time: 0, month: null });
 
   const handleChartPointClick = (e) => {
-    const monthVal = e?.activePayload?.[0]?.payload?.month;
+    const payload = e?.activePayload?.[0]?.payload;
+    const monthVal = payload?.monthKey || payload?.month;
     if (!monthVal) return;
 
     const now = Date.now();
@@ -53,8 +54,12 @@ export default function DashboardPage() {
     try {
       setLoading(true);
       const [overviewRes, trendRes, accountsRes, txRes] = await Promise.all([
-        api.getAnalyticsOverview(),
-        api.getMonthlyTrend(6),
+        api.getAnalyticsOverview({ 
+          startDate: currentFinancialMonth?.startDate,
+          endDate: currentFinancialMonth?.endDate,
+          startDay: monthStartDay,
+        }),
+        api.getMonthlyTrend(6, undefined, monthStartDay),
         api.getAccounts(),
         api.getTransactionsV2({ limit: 5 }),
       ]);
@@ -72,17 +77,19 @@ export default function DashboardPage() {
 
   useEffect(() => {
     loadDashboard();
-  }, []);
+  }, [monthStartDay, currentFinancialMonth?.startDate]);
 
   useEffect(() => {
     const handleSync = () => {
       loadDashboard();
     };
     window.addEventListener('fintrack_tx_updated', handleSync);
+    window.addEventListener('fintrack_settings_updated', handleSync);
     return () => {
       window.removeEventListener('fintrack_tx_updated', handleSync);
+      window.removeEventListener('fintrack_settings_updated', handleSync);
     };
-  }, []);
+  }, [monthStartDay, currentFinancialMonth?.startDate]);
 
   return (
     <div className="space-y-8 relative">
@@ -124,8 +131,13 @@ export default function DashboardPage() {
           <div className="text-2xl md:text-3xl font-bold tracking-tight text-brand-income">
             {overview ? formatILS(overview.totalIncome) : '₪0.00'}
           </div>
-          <div className="text-xs text-dark-text-muted light:text-light-text-muted">
-            {lang === 'he' ? 'החודש הנוכחי' : 'Current month'}
+          <div className="text-xs text-dark-text-muted light:text-light-text-muted flex items-center gap-1.5 flex-wrap">
+            <span>{lang === 'he' ? 'החודש הנוכחי' : 'Current month'}</span>
+            {currentFinancialMonth && (
+              <span className="font-semibold text-brand-income bg-brand-income/10 px-1.5 py-0.5 rounded text-[11px]">
+                {currentFinancialMonth.displayRange}
+              </span>
+            )}
           </div>
         </div>
 
@@ -138,8 +150,13 @@ export default function DashboardPage() {
           <div className="text-2xl md:text-3xl font-bold tracking-tight text-brand-expense">
             {overview ? formatILS(overview.totalExpense) : '₪0.00'}
           </div>
-          <div className="text-xs text-dark-text-muted light:text-light-text-muted">
-            {lang === 'he' ? 'החודש הנוכחי' : 'Current month'}
+          <div className="text-xs text-dark-text-muted light:text-light-text-muted flex items-center gap-1.5 flex-wrap">
+            <span>{lang === 'he' ? 'החודש הנוכחי' : 'Current month'}</span>
+            {currentFinancialMonth && (
+              <span className="font-semibold text-brand-expense bg-brand-expense/10 px-1.5 py-0.5 rounded text-[11px]">
+                {currentFinancialMonth.displayRange}
+              </span>
+            )}
           </div>
         </div>
 

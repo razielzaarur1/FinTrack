@@ -5,6 +5,13 @@ import { translations } from './i18n';
 import { api } from './api';
 import LockScreen from '@/components/auth/LockScreen';
 import { CATEGORIES_DATA, setDynamicCategories } from './categories';
+import { 
+  getFinancialMonthRange, 
+  getCurrentFinancialMonth, 
+  getPreviousFinancialMonth, 
+  getFinancialMonthKey, 
+  getPastFinancialMonths 
+} from './date-utils';
 
 const AppContext = createContext(null);
 
@@ -56,6 +63,58 @@ export function AppProvider({ children }) {
     const filtered = categoriesTree.filter((c) => c.type === 'income');
     return filtered.length > 0 ? filtered : CATEGORIES_DATA.incomes;
   }, [categoriesTree]);
+
+  // Financial Month Cycle State (day 1 to 31)
+  const [monthStartDay, setMonthStartDayState] = useState(10);
+
+  const loadSettings = useCallback(async () => {
+    try {
+      const res = await api.getSystemSettings();
+      if (res.data?.settings?.monthStartDay !== undefined) {
+        const val = parseInt(res.data.settings.monthStartDay, 10);
+        if (!isNaN(val)) {
+          setMonthStartDayState(Math.min(31, Math.max(1, val)));
+        }
+      }
+    } catch (err) {
+      console.warn('[AppContext] Failed to load settings:', err);
+    }
+  }, []);
+
+  const setMonthStartDay = useCallback((day) => {
+    const val = Math.min(31, Math.max(1, parseInt(day, 10) || 10));
+    setMonthStartDayState(val);
+  }, []);
+
+  useEffect(() => {
+    loadSettings();
+
+    const handleSettingsUpdate = (e) => {
+      if (e?.detail?.monthStartDay !== undefined) {
+        const val = parseInt(e.detail.monthStartDay, 10);
+        if (!isNaN(val)) setMonthStartDayState(Math.min(31, Math.max(1, val)));
+      } else {
+        loadSettings();
+      }
+    };
+
+    window.addEventListener('fintrack_settings_updated', handleSettingsUpdate);
+    return () => {
+      window.removeEventListener('fintrack_settings_updated', handleSettingsUpdate);
+    };
+  }, [loadSettings]);
+
+  const currentFinancialMonth = useMemo(() => {
+    return getCurrentFinancialMonth(monthStartDay);
+  }, [monthStartDay]);
+
+  const previousFinancialMonth = useMemo(() => {
+    return getPreviousFinancialMonth(monthStartDay);
+  }, [monthStartDay]);
+
+  const pastFinancialMonths = useMemo(() => {
+    return getPastFinancialMonths(24, monthStartDay);
+  }, [monthStartDay]);
 
   // Security & Authentication State
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -226,6 +285,13 @@ export function AppProvider({ children }) {
         expenseCategories,
         incomeCategories,
         refreshCategories: loadCategories,
+        monthStartDay,
+        setMonthStartDay,
+        currentFinancialMonth,
+        previousFinancialMonth,
+        pastFinancialMonths,
+        getFinancialMonthRange: (y, m) => getFinancialMonthRange(y, m, monthStartDay),
+        getFinancialMonthKey: (date) => getFinancialMonthKey(date, monthStartDay),
       }}
     >
       {/* If mounted and not authenticated, render secure LockScreen (except for scoped TMA views) */}

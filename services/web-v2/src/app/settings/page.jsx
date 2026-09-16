@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Tag, 
   Plus, 
@@ -30,7 +30,8 @@ import {
   ShieldCheck,
   HelpCircle,
   ExternalLink,
-  RotateCcw
+  RotateCcw,
+  Calendar
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useApp } from '@/lib/app-context';
@@ -39,9 +40,10 @@ import { CATEGORIES_DATA, setDynamicCategories } from '@/lib/categories';
 import { generateDesignSystemPrompt } from '@/lib/designSystemPrompt';
 import { normalizeCategorySvg, getIconSvgMarkup } from '@/lib/svg-normalizer';
 import { formatILS, formatDate, cleanSpacedHebrew } from '@/lib/formatters';
+import { getCurrentFinancialMonth } from '@/lib/date-utils';
 
 export default function SettingsPage() {
-  const { lang, t, theme, toggleTheme, toggleLanguage } = useApp();
+  const { lang, t, theme, toggleTheme, toggleLanguage, setMonthStartDay: contextSetMonthStartDay } = useApp();
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -63,9 +65,10 @@ export default function SettingsPage() {
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsSaved, setSettingsSaved] = useState(false);
 
-  // Monthly Billing Cycle Start Day
+  // Monthly Billing Cycle Start Day (1 to 31)
   const [monthStartDay, setMonthStartDay] = useState(10);
   const [monthSaved, setMonthSaved] = useState(false);
+  const currentCycle = useMemo(() => getCurrentFinancialMonth(monthStartDay), [monthStartDay]);
 
   // Telegram & Real-time Notification States
   const [telegramBotToken, setTelegramBotToken] = useState('');
@@ -527,14 +530,19 @@ export default function SettingsPage() {
   };
 
   const handleSaveMonthStartDay = async (day) => {
-    const val = parseInt(day, 10) || 10;
+    const val = Math.min(31, Math.max(1, parseInt(day, 10) || 1));
     setMonthStartDay(val);
+    if (contextSetMonthStartDay) contextSetMonthStartDay(val);
     setMonthSaved(false);
     try {
       const res = await api.getSystemSettings();
       const current = res.data?.settings || {};
       await api.updateSystemSettings({ ...current, monthStartDay: val });
       setMonthSaved(true);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('fintrack_settings_updated', { detail: { monthStartDay: val } }));
+        window.dispatchEvent(new CustomEvent('fintrack_tx_updated'));
+      }
       setTimeout(() => setMonthSaved(false), 3000);
     } catch (err) {
       console.error('Failed to save month start day:', err);
@@ -893,39 +901,87 @@ export default function SettingsPage() {
         </div>
 
         {/* Monthly Billing Cycle Definition */}
-        <div className="p-4 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated space-y-3">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+        <div className="p-5 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated space-y-4">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
-              <div className="font-semibold text-sm text-dark-text light:text-light-text">
-                {lang === 'he' ? 'יום תחילת חודש / מחזור תקציבי (ברירת מחדל)' : 'Default Monthly Cycle Start Day'}
+              <div className="font-bold text-sm text-dark-text light:text-light-text flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-brand-primary" />
+                <span>{lang === 'he' ? 'יום תחילת חודש ומחזור פיננסי' : 'Monthly Financial Cycle Start Day'}</span>
               </div>
-              <div className="text-dark-text-muted light:text-light-text-muted text-[11px] mt-0.5">
+              <div className="text-dark-text-muted light:text-light-text-muted text-xs mt-1">
                 {lang === 'he'
-                  ? 'הגדר לפי איזה יום לסנן את החודש (ה-1 לחודש קלנדרי, או ה-10/15 לחודש לפי חיוב כרטיסי אשראי)'
-                  : 'Define billing cycle start day for monthly budgeting and credit card calculations'}
+                  ? 'בחר כל יום בין 1 ל-31. כל הסטטיסטיקות, הגרפים, המאזן והסינונים במערכת יחושבו לפי מחזור זה.'
+                  : 'Choose any day between 1 and 31. All dashboard metrics, charts, balances, and filters will calculate according to this cycle.'}
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
-              <select
-                value={monthStartDay}
-                onChange={(e) => handleSaveMonthStartDay(e.target.value)}
-                className="p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text font-semibold text-xs focus:ring-2 focus:ring-brand-primary/50 cursor-pointer"
-              >
-                <option value="1">1 לחודש (חודש קלנדרי רגיל)</option>
-                <option value="2">2 לחודש</option>
-                <option value="10">10 לחודש (מועד חיוב אשראי נפוץ)</option>
-                <option value="15">15 לחודש</option>
-                <option value="20">20 לחודש</option>
-                <option value="25">25 לחודש</option>
-              </select>
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-dark-text-muted light:text-light-text-muted font-medium">
+                  {lang === 'he' ? 'יום בחודש:' : 'Day:'}
+                </span>
+                <select
+                  value={monthStartDay}
+                  onChange={(e) => handleSaveMonthStartDay(e.target.value)}
+                  className="p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text font-bold text-xs focus:ring-2 focus:ring-brand-primary/50 cursor-pointer min-w-[150px]"
+                >
+                  {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => (
+                    <option key={d} value={d}>
+                      {d === 1
+                        ? (lang === 'he' ? '1 (חודש קלנדרי רגיל)' : '1 (Calendar Month)')
+                        : d === 10
+                        ? (lang === 'he' ? '10 (חיוב אשראי נפוץ)' : '10 (Common CC Billing)')
+                        : (lang === 'he' ? `ה-${d} לחודש` : `Day ${d}`)}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
               {monthSaved && (
-                <span className="flex items-center gap-1 text-brand-income font-medium text-xs">
-                  <Check className="w-4 h-4" />
-                  <span>{lang === 'he' ? 'נשמר' : 'Saved'}</span>
+                <span className="flex items-center gap-1 text-brand-income font-medium text-xs bg-brand-income/10 px-2.5 py-1 rounded-lg">
+                  <Check className="w-3.5 h-3.5" />
+                  <span>{lang === 'he' ? 'נשמר בהצלחה' : 'Saved'}</span>
                 </span>
               )}
+            </div>
+          </div>
+
+          {/* Quick preset chips */}
+          <div className="flex items-center gap-2 flex-wrap pt-2 border-t border-dark-border/40 light:border-light-border/40">
+            <span className="text-[11px] text-dark-text-muted light:text-light-text-muted font-medium">
+              {lang === 'he' ? 'קיצורים נפוצים:' : 'Quick Presets:'}
+            </span>
+            {[1, 2, 10, 15, 20, 25].map((presetDay) => (
+              <button
+                key={presetDay}
+                type="button"
+                onClick={() => handleSaveMonthStartDay(presetDay)}
+                className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
+                  monthStartDay === presetDay
+                    ? 'bg-brand-primary text-white shadow-sm shadow-brand-primary/30 ring-2 ring-brand-primary/40'
+                    : 'bg-dark-surface light:bg-light-surface text-dark-text-muted light:text-light-text-muted border border-dark-border light:border-light-border hover:text-dark-text light:hover:text-light-text'
+                }`}
+              >
+                {presetDay === 1 ? (lang === 'he' ? '1 (קלנדרי)' : '1 (Cal)') : presetDay}
+              </button>
+            ))}
+          </div>
+
+          {/* Dynamic Live Preview Banner */}
+          <div className="p-3 rounded-xl bg-brand-primary/10 border border-brand-primary/20 flex items-start gap-2.5 text-xs">
+            <Calendar className="w-4 h-4 text-brand-primary shrink-0 mt-0.5" />
+            <div className="space-y-0.5">
+              <div className="font-semibold text-brand-primary">
+                {lang === 'he' ? 'מחזור חודשי פעיל כעת:' : 'Active Monthly Billing Cycle:'}
+                <span className="font-bold text-dark-text light:text-light-text mx-1.5">
+                  {currentCycle?.displayRange} ({currentCycle?.startDate} עד {currentCycle?.endDate})
+                </span>
+              </div>
+              <div className="text-[11px] text-dark-text-muted light:text-light-text-muted">
+                {lang === 'he'
+                  ? `כל התנועות בין תאריכים אלו ישוכללו בדשבורד, בגרפים, במאזן ובסינוני החודש כחלק מ${currentCycle?.label || 'המחזור'}.`
+                  : `All transactions within these dates will be aggregated in dashboard, charts, balances and filters.`}
+              </div>
             </div>
           </div>
         </div>
