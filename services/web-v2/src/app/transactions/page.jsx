@@ -23,7 +23,10 @@ import {
   Square,
   Check,
   Receipt,
-  Coins
+  Coins,
+  Banknote,
+  EyeOff,
+  Zap
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { formatILS, formatDate, cleanSpacedHebrew, getTransactionTitle, formatCurrency, extractInstallmentInfo } from '@/lib/formatters';
@@ -85,6 +88,8 @@ function TransactionsContent() {
   const [selectedAccountIds, setSelectedAccountIds] = useState(initialAccountId ? [initialAccountId] : []);
   const [selectedCategories, setSelectedCategories] = useState([]);
   const [selectedCurrencies, setSelectedCurrencies] = useState([]);
+  const [selectedSpecialFilters, setSelectedSpecialFilters] = useState([]);
+  const [filterCounts, setFilterCounts] = useState({ accounts: {}, categories: {}, specials: {} });
   const [minAmount, setMinAmount] = useState('');
   const [maxAmount, setMaxAmount] = useState('');
   const [datePreset, setDatePreset] = useState(initPreset);
@@ -166,13 +171,16 @@ function TransactionsContent() {
 
   const observer = useRef();
 
-  // Load user accounts and available currencies for filter options
+  // Load user accounts, currencies, and filter counts
   useEffect(() => {
     api.getAccounts().then((res) => {
       if (res.data) setAccounts(res.data);
     });
     api.getCurrencies().then((res) => {
       if (res.data?.data) setAvailableCurrencies(res.data.data);
+    });
+    api.getFilterCounts().then((res) => {
+      if (res.data) setFilterCounts(res.data);
     });
   }, []);
 
@@ -266,12 +274,15 @@ function TransactionsContent() {
   useEffect(() => {
     const handleSync = () => {
       loadTransactions(null, null, true);
+      api.getFilterCounts().then((res) => {
+        if (res.data) setFilterCounts(res.data);
+      });
     };
     window.addEventListener('fintrack_tx_updated', handleSync);
     return () => {
       window.removeEventListener('fintrack_tx_updated', handleSync);
     };
-  }, [type, selectedAccountIds, selectedCategories, selectedCurrencies, datePreset, startDate, endDate]);
+  }, [type, selectedAccountIds, selectedCategories, selectedCurrencies, selectedSpecialFilters, datePreset, startDate, endDate]);
 
   // Options for Account Multi-Select
   const accountOptions = useMemo(() => {
@@ -279,9 +290,10 @@ function TransactionsContent() {
       id: acc.id,
       label: acc.displayName || acc.bankCompany,
       secondaryLabel: acc.accountNumber ? `•••• ${acc.accountNumber.slice(-4)}` : undefined,
+      count: filterCounts.accounts?.[acc.id] ?? 0,
       icon: <InstitutionLogo institution={acc.bankCompany} size={18} />,
     }));
-  }, [accounts]);
+  }, [accounts, filterCounts.accounts]);
 
   // Options for Category Multi-Select
   const categoryOptions = useMemo(() => {
@@ -295,6 +307,7 @@ function TransactionsContent() {
         id: cat.name,
         label: cat.name,
         secondaryLabel: 'הוצאה',
+        count: filterCounts.categories?.[cat.name] ?? 0,
         icon: <CategoryBadge category={cat.name} customSvg={cat.customSvg} size={18} />,
       });
       if (cat.subs && cat.subs.length > 0) {
@@ -304,6 +317,7 @@ function TransactionsContent() {
             id: sub.name,
             label: `  ↳ ${sub.name}`,
             secondaryLabel: cat.name,
+            count: filterCounts.categories?.[sub.name] ?? 0,
             icon: <CategoryBadge category={sub.name} customSvg={sub.customSvg} size={16} />,
           });
         });
@@ -316,6 +330,7 @@ function TransactionsContent() {
         id: cat.name,
         label: cat.name,
         secondaryLabel: 'הכנסה',
+        count: filterCounts.categories?.[cat.name] ?? 0,
         icon: <CategoryBadge category={cat.name} customSvg={cat.customSvg} size={18} />,
       });
       if (cat.subs && cat.subs.length > 0) {
@@ -325,6 +340,7 @@ function TransactionsContent() {
             id: sub.name,
             label: `  ↳ ${sub.name}`,
             secondaryLabel: cat.name,
+            count: filterCounts.categories?.[sub.name] ?? 0,
             icon: <CategoryBadge category={sub.name} customSvg={sub.customSvg} size={16} />,
           });
         });
@@ -332,14 +348,14 @@ function TransactionsContent() {
     });
 
     return list;
-  }, [expenseCategories, incomeCategories]);
+  }, [expenseCategories, incomeCategories, filterCounts.categories]);
 
   // Options for Currency Multi-Select
   const currencyOptions = useMemo(() => {
     return availableCurrencies.map((c) => ({
       id: c.currency,
       label: `${c.symbol || c.currency} - ${c.currency}`,
-      secondaryLabel: `${c.count} תנועות`,
+      count: c.count,
       icon: (
         <span className="w-5 h-5 rounded-md bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold text-xs">
           {c.symbol || c.currency}
@@ -347,6 +363,64 @@ function TransactionsContent() {
       ),
     }));
   }, [availableCurrencies]);
+
+  // Options for Special Characteristics Multi-Select
+  const specialOptions = useMemo(() => [
+    {
+      id: 'installments',
+      label: 'תשלומים',
+      count: filterCounts.specials?.installments ?? 0,
+      icon: <CreditCard className="w-4 h-4 text-indigo-400" />,
+    },
+    {
+      id: 'foreign',
+      label: 'עסקאות במט"ח',
+      count: filterCounts.specials?.foreign ?? 0,
+      icon: <Coins className="w-4 h-4 text-amber-400" />,
+    },
+    {
+      id: 'bit',
+      label: 'העברות בביט (Bit)',
+      count: filterCounts.specials?.bit ?? 0,
+      icon: <Zap className="w-4 h-4 text-blue-400" />,
+    },
+    {
+      id: 'cash',
+      label: 'משיכת מזומן / כספומט',
+      count: filterCounts.specials?.cash ?? 0,
+      icon: <Banknote className="w-4 h-4 text-emerald-400" />,
+    },
+    {
+      id: 'splits',
+      label: 'תנועות מפוצלות',
+      count: filterCounts.specials?.splits ?? 0,
+      icon: <Split className="w-4 h-4 text-purple-400" />,
+    },
+    {
+      id: 'receipts',
+      label: 'קבלות וחשבוניות',
+      count: filterCounts.specials?.receipts ?? 0,
+      icon: <Receipt className="w-4 h-4 text-pink-400" />,
+    },
+    {
+      id: 'notes',
+      label: 'הערות אישיות',
+      count: filterCounts.specials?.notes ?? 0,
+      icon: <MessageSquare className="w-4 h-4 text-sky-400" />,
+    },
+    {
+      id: 'links',
+      label: 'תנועות מקושרות (זיכוי/חיוב)',
+      count: filterCounts.specials?.links ?? 0,
+      icon: <Link2 className="w-4 h-4 text-teal-400" />,
+    },
+    {
+      id: 'ignored',
+      label: 'תנועות שהוחרגו מהתקציב',
+      count: filterCounts.specials?.ignored ?? 0,
+      icon: <EyeOff className="w-4 h-4 text-slate-400" />,
+    },
+  ], [filterCounts.specials]);
 
   // Quick month selector helper options (last 24 months)
   const monthOptions = useMemo(() => {
@@ -409,6 +483,7 @@ function TransactionsContent() {
     selectedAccountIds.length > 0 ? selectedAccountIds.length : 0,
     selectedCategories.length > 0 ? selectedCategories.length : 0,
     selectedCurrencies.length > 0 ? selectedCurrencies.length : 0,
+    selectedSpecialFilters.length > 0 ? selectedSpecialFilters.length : 0,
     minAmount ? 1 : 0,
     maxAmount ? 1 : 0,
     datePreset !== 'all' || startDate || endDate ? 1 : 0,
@@ -451,6 +526,7 @@ function TransactionsContent() {
         accountIds: selectedAccountIds.length > 0 ? selectedAccountIds : undefined,
         categories: selectedCategories.length > 0 ? selectedCategories : undefined,
         currencies: selectedCurrencies.length > 0 ? selectedCurrencies : undefined,
+        specialFilters: selectedSpecialFilters.length > 0 ? selectedSpecialFilters.join(',') : undefined,
         minAmount: minAmount ? parseFloat(minAmount) : undefined,
         maxAmount: maxAmount ? parseFloat(maxAmount) : undefined,
         startDate: range.start,
@@ -473,7 +549,7 @@ function TransactionsContent() {
   // Reload transactions on filter change
   useEffect(() => {
     loadTransactions(null, null, true);
-  }, [type, selectedAccountIds, selectedCategories, selectedCurrencies, datePreset, startDate, endDate]);
+  }, [type, selectedAccountIds, selectedCategories, selectedCurrencies, selectedSpecialFilters, datePreset, startDate, endDate]);
 
   const handleSearchSubmit = (e) => {
     e?.preventDefault();
@@ -486,6 +562,7 @@ function TransactionsContent() {
     setSelectedAccountIds([]);
     setSelectedCategories([]);
     setSelectedCurrencies([]);
+    setSelectedSpecialFilters([]);
     setMinAmount('');
     setMaxAmount('');
     setDatePreset('all');
@@ -688,14 +765,6 @@ function TransactionsContent() {
               >
                 הכנסות
               </button>
-              <button
-                onClick={() => setType('installments')}
-                className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg font-semibold text-center transition-all ${
-                  type === 'installments' ? 'bg-indigo-600 text-white shadow-sm' : 'text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
-                }`}
-              >
-                תשלומים 💳
-              </button>
             </div>
 
             {/* Toggle Advanced Filters Button */}
@@ -720,7 +789,7 @@ function TransactionsContent() {
 
         {/* Expandable Advanced Multi-Select Filters */}
         {showFilters && (
-          <div className="pt-3 border-t border-dark-border/60 light:border-light-border/60 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 animate-in fade-in duration-200">
+          <div className="pt-3 border-t border-dark-border/60 light:border-light-border/60 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 animate-in fade-in duration-200">
             {/* 1. Account / Card Multi-Select Filter */}
             <div className="space-y-1">
               <label className="text-[11px] font-semibold text-dark-text-muted light:text-light-text-muted flex items-center gap-1">
@@ -755,7 +824,24 @@ function TransactionsContent() {
               />
             </div>
 
-            {/* 3. Currency Multi-Select Filter */}
+            {/* 3. Special Characteristics Multi-Select Filter */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-semibold text-dark-text-muted light:text-light-text-muted flex items-center gap-1">
+                <SlidersHorizontal className="w-3 h-3 text-purple-400" />
+                <span>מאפייני עסקה</span>
+              </label>
+              <MultiSelectDropdown
+                label="מאפיינים מיוחדים"
+                options={specialOptions}
+                selectedValues={selectedSpecialFilters}
+                onChange={setSelectedSpecialFilters}
+                placeholder="הכל"
+                icon={SlidersHorizontal}
+                className="w-full"
+              />
+            </div>
+
+            {/* 4. Currency Multi-Select Filter */}
             <div className="space-y-1">
               <label className="text-[11px] font-semibold text-dark-text-muted light:text-light-text-muted flex items-center gap-1">
                 <Coins className="w-3 h-3 text-emerald-400" />

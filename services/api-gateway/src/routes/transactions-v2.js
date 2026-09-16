@@ -320,6 +320,7 @@ const cursorPaginationQuerySchema = z.object({
   currencies: z.string().optional(),
   type: z.enum(['income', 'expense', 'installments', 'all']).optional(),
   isInstallment: z.coerce.boolean().optional(),
+  specialFilters: z.string().optional(),
   startDate: z.string().optional(),
   endDate: z.string().optional(),
   search: z.string().optional(),
@@ -359,6 +360,7 @@ export default async function transactionsV2Routes(fastify, options) {
       currencies,
       type,
       isInstallment,
+      specialFilters,
       startDate,
       endDate,
       search,
@@ -453,6 +455,53 @@ export default async function transactionsV2Routes(fastify, options) {
         OR (t.raw_data->>'description') ~* '(תשלום|תשלומים|עסקה)?\\s*\\(?[0-9]{1,2}\\s*(מתוך|/)\\s*[0-9]{1,2}\\)?'
         OR ((t.raw_data->>'originalAmount')::numeric > ABS(t.amount) * 1.5 AND t.amount < 0)
       )`);
+    }
+
+    // Special Attributes Multi-Filter (installments, foreign, cash, splits, receipts, notes, links, ignored, bit)
+    if (specialFilters) {
+      const specials = String(specialFilters).split(',').map((s) => s.trim()).filter(Boolean);
+      for (const sp of specials) {
+        if (sp === 'installments') {
+          conditions.push(`(
+            (t.raw_data->'installments'->>'total' ~ '^[0-9]+$' AND (t.raw_data->'installments'->>'total')::int > 1)
+            OR (t.raw_data->'installments'->>'count' ~ '^[0-9]+$' AND (t.raw_data->'installments'->>'count')::int > 1)
+            OR (t.raw_data->>'installments') ILIKE '%מתוך%'
+            OR (t.raw_data->>'installments') ILIKE '%/%'
+            OR t.description ~* '(תשלום|תשלומים|עסקה)?\\s*\\(?[0-9]{1,2}\\s*(מתוך|/)\\s*[0-9]{1,2}\\)?'
+            OR t.merchant_name ~* '(תשלום|תשלומים|עסקה)?\\s*\\(?[0-9]{1,2}\\s*(מתוך|/)\\s*[0-9]{1,2}\\)?'
+            OR (t.raw_data->>'memo') ~* '(תשלום|תשלומים|עסקה)?\\s*\\(?[0-9]{1,2}\\s*(מתוך|/)\\s*[0-9]{1,2}\\)?'
+            OR (t.raw_data->>'description') ~* '(תשלום|תשלומים|עסקה)?\\s*\\(?[0-9]{1,2}\\s*(מתוך|/)\\s*[0-9]{1,2}\\)?'
+            OR ((t.raw_data->>'originalAmount')::numeric > ABS(t.amount) * 1.5 AND t.amount < 0)
+          )`);
+        } else if (sp === 'foreign') {
+          conditions.push(`(t.currency != 'ILS' OR (t.original_currency IS NOT NULL AND t.original_currency != 'ILS'))`);
+        } else if (sp === 'cash') {
+          conditions.push(`(
+            t.category = 'משיכת מזומן' 
+            OR LOWER(t.merchant_name) LIKE '%משיכת מזומן%' 
+            OR LOWER(t.description) LIKE '%משיכת מזומן%'
+            OR LOWER(t.merchant_name) LIKE '%כספומט%'
+            OR LOWER(t.description) LIKE '%כספומט%' 
+            OR LOWER(t.merchant_name) LIKE '%atm%'
+          )`);
+        } else if (sp === 'splits') {
+          conditions.push(`t.is_split = true`);
+        } else if (sp === 'receipts') {
+          conditions.push(`EXISTS (SELECT 1 FROM transaction_receipts tr WHERE tr.transaction_id = t.id)`);
+        } else if (sp === 'notes') {
+          conditions.push(`EXISTS (SELECT 1 FROM transaction_notes tn WHERE tn.transaction_id = t.id)`);
+        } else if (sp === 'links') {
+          conditions.push(`EXISTS (SELECT 1 FROM transaction_links tl WHERE tl.transaction_id_a = t.id OR tl.transaction_id_b = t.id)`);
+        } else if (sp === 'ignored') {
+          conditions.push(`t.is_ignored = true`);
+        } else if (sp === 'bit') {
+          conditions.push(`(
+            t.merchant_name ~* '(bit|ביט)' 
+            OR t.description ~* '(bit|ביט)' 
+            OR (t.raw_data->>'memo') ~* '(bit|ביט)'
+          )`);
+        }
+      }
     }
 
     // Amount range (absolute or signed)
@@ -692,6 +741,85 @@ export default async function transactionsV2Routes(fastify, options) {
       });
     } catch (err) {
       fastify.log.error(err, 'Error querying transaction currencies');
+      return reply.code(500).send({ error: 'Database error', message: err.message });
+    }
+  });
+
+  // GET /api/v2/transactions/filter-counts - Aggregated transaction counts for filter options
+  fastify.get('/filter-counts', async (request, reply) => {
+    try {
+      // 1. Counts by account
+      const accountCountsRes = await pool.query(`
+        SELECT account_id, COUNT(*)::int AS count 
+        FROM transactions 
+        GROUP BY account_id
+      `);
+      const accounts = {};
+      accountCountsRes.rows.forEach((r) => { accounts[r.account_id] = r.count; });
+
+      // 2. Counts by category (both regular transactions and split items)
+      const categoryCountsRes = await pool.query(`
+        SELECT category, COUNT(*)::int AS count 
+        FROM (
+          SELECT category FROM transactions WHERE (is_split = false OR is_split IS NULL) AND category IS NOT NULL
+          UNION ALL
+          SELECT category FROM transaction_splits WHERE category IS NOT NULL
+        ) sub
+        GROUP BY category
+      `);
+      const categories = {};
+      categoryCountsRes.rows.forEach((r) => { categories[r.category] = r.count; });
+
+      // 3. Special filters counts
+      const specialsRes = await pool.query(`
+        SELECT
+          COUNT(*) FILTER (
+            WHERE (raw_data->'installments'->>'total' ~ '^[0-9]+$' AND (raw_data->'installments'->>'total')::int > 1)
+               OR (raw_data->'installments'->>'count' ~ '^[0-9]+$' AND (raw_data->'installments'->>'count')::int > 1)
+               OR (raw_data->>'installments') ILIKE '%מתוך%'
+               OR (raw_data->>'installments') ILIKE '%/%'
+               OR description ~* '(תשלום|תשלומים|עסקה)?\\s*\\(?[0-9]{1,2}\\s*(מתוך|/)\\s*[0-9]{1,2}\\)?'
+               OR merchant_name ~* '(תשלום|תשלומים|עסקה)?\\s*\\(?[0-9]{1,2}\\s*(מתוך|/)\\s*[0-9]{1,2}\\)?'
+               OR (raw_data->>'memo') ~* '(תשלום|תשלומים|עסקה)?\\s*\\(?[0-9]{1,2}\\s*(מתוך|/)\\s*[0-9]{1,2}\\)?'
+               OR (raw_data->>'description') ~* '(תשלום|תשלומים|עסקה)?\\s*\\(?[0-9]{1,2}\\s*(מתוך|/)\\s*[0-9]{1,2}\\)?'
+               OR ((raw_data->>'originalAmount')::numeric > ABS(amount) * 1.5 AND amount < 0)
+          )::int AS "installments",
+          COUNT(*) FILTER (
+            WHERE currency != 'ILS' OR (original_currency IS NOT NULL AND original_currency != 'ILS')
+          )::int AS "foreign",
+          COUNT(*) FILTER (
+            WHERE category = 'משיכת מזומן' 
+               OR LOWER(merchant_name) LIKE '%משיכת מזומן%' 
+               OR LOWER(description) LIKE '%משיכת מזומן%' 
+               OR LOWER(merchant_name) LIKE '%כספומט%'
+               OR LOWER(description) LIKE '%כספומט%' 
+               OR LOWER(merchant_name) LIKE '%atm%'
+          )::int AS "cash",
+          COUNT(*) FILTER (WHERE is_split = true)::int AS "splits",
+          COUNT(*) FILTER (WHERE is_ignored = true)::int AS "ignored",
+          COUNT(*) FILTER (
+            WHERE EXISTS (SELECT 1 FROM transaction_receipts tr WHERE tr.transaction_id = transactions.id)
+          )::int AS "receipts",
+          COUNT(*) FILTER (
+            WHERE EXISTS (SELECT 1 FROM transaction_notes tn WHERE tn.transaction_id = transactions.id)
+          )::int AS "notes",
+          COUNT(*) FILTER (
+            WHERE EXISTS (SELECT 1 FROM transaction_links tl WHERE tl.transaction_id_a = transactions.id OR tl.transaction_id_b = transactions.id)
+          )::int AS "links",
+          COUNT(*) FILTER (
+            WHERE merchant_name ~* '(bit|ביט)' OR description ~* '(bit|ביט)' OR (raw_data->>'memo') ~* '(bit|ביט)'
+          )::int AS "bit"
+        FROM transactions
+      `);
+      const specials = specialsRes.rows[0] || {};
+
+      return reply.code(200).send({
+        accounts,
+        categories,
+        specials,
+      });
+    } catch (err) {
+      fastify.log.error(err, 'Failed to calculate filter counts');
       return reply.code(500).send({ error: 'Database error', message: err.message });
     }
   });
@@ -1771,7 +1899,7 @@ export default async function transactionsV2Routes(fastify, options) {
     try {
       // 1. Fetch current transaction state
       const currentRes = await pool.query(
-        `SELECT id, category, merchant_name, description, user_description, is_ignored
+        `SELECT id, category, merchant_name, description, user_description, is_ignored, raw_data
          FROM transactions WHERE id = $1`,
         [id]
       );
@@ -1780,34 +1908,123 @@ export default async function transactionsV2Routes(fastify, options) {
       }
       const current = currentRes.rows[0];
 
-      const newCategory = category !== undefined ? (category?.trim() || null) : current.category;
-      const newUserDescription = userDescription !== undefined ? (userDescription?.trim() || null) : current.user_description;
-      const newMerchantName = merchantName !== undefined ? (merchantName?.trim() || null) : current.merchant_name;
-      const newIsIgnored = isIgnored !== undefined ? Boolean(isIgnored) : Boolean(current.is_ignored);
+      const setClauses = [];
+      const values = [];
 
-      // 2. Update transaction
+      if (category !== undefined) {
+        values.push(category?.trim() || null);
+        setClauses.push(`category = $${values.length}`);
+        setClauses.push(`is_manual_category = true`);
+        setClauses.push(`is_reviewed = true`);
+      }
+      if (userDescription !== undefined) {
+        values.push(userDescription?.trim() || null);
+        setClauses.push(`user_description = $${values.length}`);
+      }
+      if (merchantName !== undefined) {
+        values.push(merchantName?.trim() || null);
+        setClauses.push(`merchant_name = $${values.length}`);
+      }
+      if (isIgnored !== undefined) {
+        values.push(Boolean(isIgnored));
+        setClauses.push(`is_ignored = $${values.length}`);
+      }
+
+      if (setClauses.length === 0) {
+        return reply.code(400).send({ error: 'Nothing to update', message: 'לא נמסרו שדות לעדכון' });
+      }
+
+      let updatedSimilarCount = 0;
+
+      // 2. If applyToSimilar is checked, apply changes to similar transactions
+      if (applyToSimilar) {
+        const rawMemo = current.raw_data?.memo;
+        const rawDesc = current.raw_data?.description;
+        const mName = cleanSpacedHebrew(current.merchant_name || '').trim();
+        const desc = cleanSpacedHebrew(current.description || rawDesc || '').trim();
+        const isCurrentBit = isBitTransaction(mName, desc, rawMemo);
+
+        const similarSetClauses = [];
+        const similarValues = [];
+
+        if (category !== undefined) {
+          similarValues.push(category?.trim() || null);
+          similarSetClauses.push(`category = $${similarValues.length}`);
+          similarSetClauses.push(`is_manual_category = true`);
+          similarSetClauses.push(`is_reviewed = true`);
+        }
+        if (userDescription !== undefined) {
+          similarValues.push(userDescription?.trim() || null);
+          similarSetClauses.push(`user_description = $${similarValues.length}`);
+        }
+        if (isIgnored !== undefined) {
+          similarValues.push(Boolean(isIgnored));
+          similarSetClauses.push(`is_ignored = $${similarValues.length}`);
+        }
+
+        if (similarSetClauses.length > 0) {
+          if (isCurrentBit) {
+            const currentBitTitle = formatBitTransactionName(mName, desc, rawMemo);
+            const currentDetail = currentBitTitle && currentBitTitle.startsWith('bit ')
+              ? currentBitTitle.slice(4).trim()
+              : '';
+
+            if (currentDetail) {
+              similarValues.push(`%${currentDetail}%`);
+              const bulkQuery = `
+                UPDATE transactions
+                SET ${similarSetClauses.join(', ')}
+                WHERE (
+                  (merchant_name ILIKE $${similarValues.length} OR description ILIKE $${similarValues.length} OR (raw_data->>'memo') ILIKE $${similarValues.length})
+                  AND (merchant_name ILIKE '%bit%' OR merchant_name ILIKE '%ביט%' OR merchant_name ILIKE '%בביט%' OR description ILIKE '%bit%' OR description ILIKE '%ביט%')
+                )
+              `;
+              const bulkRes = await pool.query(bulkQuery, similarValues);
+              updatedSimilarCount = bulkRes.rowCount || 0;
+            }
+          } else {
+            let whereSql = '';
+            if (mName && mName !== 'בית עסק' && mName !== '') {
+              similarValues.push(mName);
+              whereSql = `TRIM(merchant_name) = TRIM($${similarValues.length})`;
+            } else if (desc && desc !== '') {
+              similarValues.push(desc);
+              whereSql = `TRIM(description) = TRIM($${similarValues.length})`;
+            }
+
+            if (whereSql) {
+              const bulkQuery = `
+                UPDATE transactions
+                SET ${similarSetClauses.join(', ')}
+                WHERE ${whereSql}
+              `;
+              const bulkRes = await pool.query(bulkQuery, similarValues);
+              updatedSimilarCount = bulkRes.rowCount || 0;
+            }
+          }
+        }
+      }
+
+      // 3. Update target transaction
+      values.push(id);
       const updateRes = await pool.query(
         `UPDATE transactions
-         SET category = $1,
-             user_description = $2,
-             merchant_name = $3,
-             is_ignored = $4,
-             is_reviewed = true,
-             is_manual_category = CASE WHEN $1 IS NOT NULL AND $1 <> COALESCE($5, '') THEN true ELSE is_manual_category END
-         WHERE id = $6
-         RETURNING id, category, user_description, merchant_name, is_ignored`,
-        [newCategory, newUserDescription, newMerchantName, newIsIgnored, current.category, id]
+         SET ${setClauses.join(', ')}
+         WHERE id = $${values.length}
+         RETURNING id, category, user_description AS "userDescription", merchant_name AS "merchantName", is_ignored AS "isIgnored"`,
+        values
       );
 
-      // 3. If applyToSimilar is checked and category provided, save rule for future transactions
-      if (applyToSimilar && newCategory) {
-        const pattern = newMerchantName || current.merchant_name || current.description;
-        if (pattern && pattern.length >= 2) {
-          try {
-            await saveUserRule('00000000-0000-0000-0000-000000000001', pattern, newCategory);
-          } catch (ruleErr) {
-            fastify.log.warn(`Failed to save user category rule: ${ruleErr.message}`);
-          }
+      // 4. If category provided, save rule for future transactions
+      if (category && applyToSimilar) {
+        const pattern = (merchantName || current.merchant_name || current.description || '').trim();
+        if (pattern && pattern.length >= 2 && !pattern.startsWith('bit ')) {
+          saveUserRule({
+            userId: '00000000-0000-0000-0000-000000000001',
+            merchantPattern: pattern,
+            category: category.trim(),
+            matchType: 'exact',
+          }).catch((err) => fastify.log.warn(`Failed to save user category rule: ${err.message}`));
         }
       }
 
@@ -1815,10 +2032,11 @@ export default async function transactionsV2Routes(fastify, options) {
         success: true,
         message: 'התנועה עודכנה בהצלחה!',
         data: updateRes.rows[0],
+        updatedSimilarCount,
       });
     } catch (err) {
       fastify.log.error(err, 'Failed to update TMA transaction');
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: err.message || 'Database error', message: err.message });
     }
   });
 
@@ -1863,7 +2081,7 @@ export default async function transactionsV2Routes(fastify, options) {
       }));
       return reply.send({ success: true, data: rows });
     } catch (err) {
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: err.message || 'Database error', message: err.message });
     }
   });
 
@@ -1884,7 +2102,7 @@ export default async function transactionsV2Routes(fastify, options) {
       const splits = res.rows.map(s => ({ ...s, amount: parseFloat(s.amount) }));
       return reply.send({ success: true, data: splits });
     } catch (err) {
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      return reply.code(500).send({ error: err.message || 'Database error', message: err.message });
     }
   });
 
@@ -1899,16 +2117,17 @@ export default async function transactionsV2Routes(fastify, options) {
 
     const { splits } = request.body || {};
     if (!Array.isArray(splits) || splits.length === 0) {
-      return reply.code(400).send({ error: 'At least one split required' });
+      return reply.code(400).send({ error: 'At least one split required', message: 'נדרש לפחות פיצול אחד' });
     }
 
     const txRes = await pool.query('SELECT amount, category, description FROM transactions WHERE id = $1', [id]);
-    if (txRes.rows.length === 0) return reply.code(404).send({ error: 'Not Found' });
+    if (txRes.rows.length === 0) return reply.code(404).send({ error: 'Not Found', message: 'התנועה לא נמצאה' });
 
-    const parentAmount = Math.abs(parseFloat(txRes.rows[0].amount));
+    const rawParentAmount = parseFloat(txRes.rows[0].amount);
+    const parentAmount = Math.abs(rawParentAmount);
     let splitsList = splits.map((s) => ({
       amount: Math.abs(parseFloat(s.amount) || 0),
-      category: s.category,
+      category: s.category || txRes.rows[0].category || 'אחר / שונות',
       description: s.description || null,
     }));
     const splitsTotal = splitsList.reduce((acc, s) => acc + s.amount, 0);
@@ -1916,6 +2135,7 @@ export default async function transactionsV2Routes(fastify, options) {
     if (splitsTotal > parentAmount + 0.01) {
       return reply.code(400).send({
         error: `סכום הפיצולים (${splitsTotal.toFixed(2)} ₪) אינו יכול לעלות על סכום התנועה (${parentAmount.toFixed(2)} ₪)`,
+        message: `סכום הפיצולים (${splitsTotal.toFixed(2)} ₪) אינו יכול לעלות על סכום התנועה (${parentAmount.toFixed(2)} ₪)`,
       });
     }
 
@@ -1934,9 +2154,10 @@ export default async function transactionsV2Routes(fastify, options) {
       await client.query('DELETE FROM transaction_splits WHERE transaction_id = $1', [id]);
 
       for (const s of splitsList) {
+        const signedSplitAmount = rawParentAmount < 0 ? -Math.abs(s.amount) : Math.abs(s.amount);
         await client.query(
-          `INSERT INTO transaction_splits (transaction_id, category, amount, description) VALUES ($1, $2, $3, $4)`,
-          [id, s.category, s.amount, s.description || null]
+          `INSERT INTO transaction_splits (transaction_id, amount, category, description) VALUES ($1, $2, $3, $4)`,
+          [id, signedSplitAmount, s.category, s.description || null]
         );
       }
       await client.query('UPDATE transactions SET is_split = true WHERE id = $1', [id]);
@@ -1945,7 +2166,8 @@ export default async function transactionsV2Routes(fastify, options) {
       return reply.send({ success: true, message: 'הפיצולים נשמרו בהצלחה' });
     } catch (err) {
       await client.query('ROLLBACK');
-      return reply.code(500).send({ error: 'Database error', message: err.message });
+      fastify.log.error(err, 'Failed to save TMA splits');
+      return reply.code(500).send({ error: err.message || 'Database error', message: err.message });
     } finally {
       client.release();
     }

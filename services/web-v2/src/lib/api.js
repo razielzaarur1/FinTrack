@@ -27,7 +27,7 @@ async function request(endpoint, options = {}) {
     const data = isJson ? await res.json() : await res.text();
 
     if (!res.ok) {
-      let errMsg = data?.error || data?.message;
+      let errMsg = (data?.error && data?.error !== 'Database error') ? data.error : (data?.message || data?.error);
       if (!errMsg && typeof data === 'string' && data.trim().length > 0 && data.length < 200) {
         errMsg = data.trim();
       }
@@ -89,6 +89,7 @@ export const api = {
     });
     return request(`/api/v2/transactions?${searchParams.toString()}`);
   },
+  getFilterCounts: () => request('/api/v2/transactions/filter-counts'),
   getTransaction: (id) => request(`/api/v2/transactions/${id}`),
   getCurrencies: (params) => request(`/api/v2/transactions/currencies${params?.refresh ? '?refresh=true' : ''}`),
   updateTransaction: (id, data) => request(`/api/v2/transactions/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),

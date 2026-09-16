@@ -29,7 +29,9 @@ import {
   RefreshCw,
   Hash,
   ExternalLink,
-  Globe
+  Globe,
+  Sun,
+  Moon
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import CategoryBadge from '@/components/common/CategoryBadge';
@@ -218,11 +220,21 @@ export default function TmaTransactionPage() {
   // Telegram WebApp state
   const [initData, setInitData] = useState('');
   const [isTelegramEnv, setIsTelegramEnv] = useState(null); // null: detecting, true: in telegram, false: blocked browser
+  const [isLightMode, setIsLightMode] = useState(false);
 
   // Telegram WebApp initialization & detection
   useEffect(() => {
     let checkInterval = null;
     let attempts = 0;
+
+    if (typeof window !== 'undefined') {
+      const savedTheme = localStorage.getItem('tma_theme');
+      if (savedTheme === 'light') {
+        setIsLightMode(true);
+      } else if (!savedTheme && window.Telegram?.WebApp?.colorScheme === 'light') {
+        setIsLightMode(true);
+      }
+    }
 
     const checkTg = () => {
       attempts++;
@@ -232,7 +244,10 @@ export default function TmaTransactionPage() {
           try {
             tg.ready();
             tg.expand();
-            if (tg.setHeaderColor) tg.setHeaderColor('#0f172a');
+            if (tg.setHeaderColor) {
+              const currentLight = localStorage.getItem('tma_theme') === 'light' || tg.colorScheme === 'light';
+              tg.setHeaderColor(currentLight ? '#ffffff' : '#0f172a');
+            }
           } catch (e) {
             console.warn('Telegram WebApp init error:', e);
           }
@@ -386,12 +401,15 @@ export default function TmaTransactionPage() {
 
       const res = await api.updateTmaTransaction(id, payload, token, initData);
       if (res.error) {
-        setSaveError(res.error || 'שגיאה בשמירת השינויים');
+        setSaveError(res.error || res.message || 'שגיאה בשמירת השינויים');
         if (typeof window !== 'undefined' && window.Telegram?.WebApp?.HapticFeedback) {
           window.Telegram.WebApp.HapticFeedback.notificationOccurred('error');
         }
       } else {
         setSaveSuccess(true);
+        if (res.data?.data) {
+          setTx((prev) => ({ ...prev, ...res.data.data }));
+        }
         if (typeof window !== 'undefined' && window.Telegram?.WebApp?.HapticFeedback) {
           window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
         }
@@ -530,24 +548,71 @@ export default function TmaTransactionPage() {
   };
 
   const handleSaveSplits = async () => {
-    if (!splitsBalanced) {
-      setSplitError(`סכום הפיצולים חייב להיות שווה במדויק לסכום התנועה (נותרה יתרה: ${formatILS(remainingAmount)})`);
+    if (splits.length === 0) {
+      setSplitError('יש להזין לפחות פיצול אחד');
+      return;
+    }
+    const currentSplitsTotal = splits.reduce((acc, s) => acc + (Math.abs(parseFloat(s.amount)) || 0), 0);
+    if (currentSplitsTotal > parentAmount + 0.01) {
+      setSplitError(`סכום הפיצולים (${currentSplitsTotal.toFixed(2)} ₪) אינו יכול לעלות על סכום התנועה (${parentAmount.toFixed(2)} ₪)`);
       return;
     }
     setSplitError('');
     setSavingSplits(true);
     try {
-      const res = await api.saveTmaSplits(id, splits, token, initData);
+      const sanitized = splits.map((s) => ({
+        ...s,
+        amount: Math.abs(parseFloat(s.amount) || 0),
+        category: s.category || tx?.category || 'אחר / שונות',
+      }));
+      const res = await api.saveTmaSplits(id, sanitized, token, initData);
       if (res.error) {
-        setSplitError(res.error);
+        setSplitError(res.error || res.message || 'שגיאה בשמירת פיצולים');
+        if (typeof window !== 'undefined' && window.Telegram?.WebApp?.HapticFeedback) {
+          window.Telegram.WebApp.HapticFeedback.notificationOccurred('error');
+        }
       } else {
         if (typeof window !== 'undefined' && window.Telegram?.WebApp?.HapticFeedback) {
           window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
         }
+        api.getTmaSplits(id, token, initData).then((r) => {
+          if (r.data?.data) setSplits(r.data.data);
+        });
         setActiveTab('details');
       }
+    } catch (err) {
+      setSplitError(err.message || 'שגיאה בשמירת פיצולים');
     } finally {
       setSavingSplits(false);
+    }
+  };
+
+  const handleSplitByReceipt = (r) => {
+    if (!r.extracted_data?.items || r.extracted_data.items.length === 0) return;
+    const newSplits = r.extracted_data.items.map((item, idx) => ({
+      id: `receipt-item-${idx}`,
+      amount: Math.abs(parseFloat(item.price) || 0),
+      category: item.category || category || tx?.category || 'אחר / שונות',
+      description: item.name ? (item.qty > 1 ? `${item.name} (x${item.qty})` : item.name) : 'פריט מחשבונית',
+    }));
+    setSplits(newSplits);
+    setActiveTab('splits');
+    if (typeof window !== 'undefined' && window.Telegram?.WebApp?.HapticFeedback) {
+      window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
+    }
+  };
+
+  const toggleTheme = () => {
+    const next = !isLightMode;
+    setIsLightMode(next);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('tma_theme', next ? 'light' : 'dark');
+      if (window.Telegram?.WebApp?.setHeaderColor) {
+        window.Telegram.WebApp.setHeaderColor(next ? '#ffffff' : '#0f172a');
+      }
+      if (window.Telegram?.WebApp?.HapticFeedback) {
+        window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+      }
     }
   };
 
@@ -569,13 +634,15 @@ export default function TmaTransactionPage() {
     <>
       <Script src="https://telegram.org/js/telegram-web-app.js" strategy="beforeInteractive" />
 
-      <div className="min-h-screen bg-slate-950 text-slate-100 font-sans rtl flex flex-col justify-between overflow-x-hidden">
+      <div className={`min-h-screen font-sans rtl flex flex-col justify-between overflow-x-hidden transition-colors ${
+        isLightMode ? 'bg-slate-100 text-slate-900' : 'bg-slate-950 text-slate-100'
+      }`}>
 
         {/* Loading State */}
         {loading && isTelegramEnv !== false && (
           <div className="p-12 text-center space-y-3 my-auto">
             <div className="w-9 h-9 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto" />
-            <p className="text-xs text-slate-400">טוען את פרטי התנועה...</p>
+            <p className={`text-xs ${isLightMode ? 'text-slate-500' : 'text-slate-400'}`}>טוען את פרטי התנועה...</p>
           </div>
         )}
 
@@ -586,7 +653,7 @@ export default function TmaTransactionPage() {
               <AlertCircle className="w-5 h-5 shrink-0" />
               <span>שגיאה בגישה לתנועה</span>
             </div>
-            <p className="text-slate-300 leading-relaxed">{error}</p>
+            <p className={isLightMode ? 'text-slate-700 leading-relaxed' : 'text-slate-300 leading-relaxed'}>{error}</p>
             <p className="text-[11px] text-slate-400 pt-2 border-t border-rose-500/20">
               ודא שפתחת את הקישור מתוך הודעת הבוט בטלגרם ושלא חלפו יותר מ-7 ימים מעת קבלתה.
             </p>
@@ -597,9 +664,13 @@ export default function TmaTransactionPage() {
         {!loading && tx && isTelegramEnv !== false && (() => {
           const instInfo = extractInstallmentInfo(tx);
           return (
-          <div className="w-full max-w-lg mx-auto min-h-screen flex flex-col justify-between bg-slate-950 border-x border-slate-800/80 shadow-2xl">
+          <div className={`w-full max-w-lg mx-auto min-h-screen flex flex-col justify-between border-x shadow-2xl transition-colors ${
+            isLightMode ? 'bg-white border-slate-200' : 'bg-slate-950 border-slate-800/80'
+          }`}>
             {/* Header (Exact TransactionDrawer layout) */}
-            <div className="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between bg-slate-900/60 sticky top-0 backdrop-blur-md z-20">
+            <div className={`p-4 sm:p-5 border-b flex items-center justify-between sticky top-0 backdrop-blur-md z-20 transition-colors ${
+              isLightMode ? 'bg-white/95 border-slate-200' : 'bg-slate-900/60 border-slate-800'
+            }`}>
               <div className="flex items-center gap-3 min-w-0">
                 <CategoryBadge category={category || tx.category} size={22} />
                 <div className="min-w-0">
@@ -613,13 +684,19 @@ export default function TmaTransactionPage() {
                       </span>
                     )}
                   </div>
-                  <div className="text-base sm:text-lg font-bold mt-0.5 truncate text-slate-100 max-w-[220px] sm:max-w-xs">
+                  <div className={`text-base sm:text-lg font-bold mt-0.5 truncate max-w-[220px] sm:max-w-xs ${
+                    isLightMode ? 'text-slate-900' : 'text-slate-100'
+                  }`}>
                     {userDescription || cleanSpacedHebrew(getTransactionTitle(tx))}
                   </div>
-                  <div className="text-xs text-slate-400 font-mono flex items-center gap-1.5 flex-wrap">
+                  <div className={`text-xs font-mono flex items-center gap-1.5 flex-wrap ${
+                    isLightMode ? 'text-slate-500' : 'text-slate-400'
+                  }`}>
                     <span>{formatDate(tx.date, 'he')}</span>
                     <span>•</span>
-                    <span className="font-bold text-slate-200">{formatILS(tx.amount, { showSign: true })}</span>
+                    <span className={`font-bold ${isLightMode ? 'text-slate-900' : 'text-slate-200'}`}>
+                      {formatILS(tx.amount, { showSign: true })}
+                    </span>
                     {instInfo.isInstallment && (
                       <>
                         <span className="px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 text-[10px] font-semibold">
@@ -637,23 +714,29 @@ export default function TmaTransactionPage() {
               </div>
               <button
                 type="button"
-                onClick={handleClose}
-                className="p-2 rounded-xl bg-slate-800/80 hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
-                title="סגור"
+                onClick={toggleTheme}
+                className={`p-2 rounded-xl border transition-colors ${
+                  isLightMode
+                    ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+                    : 'bg-slate-800/80 hover:bg-slate-800 text-slate-300 hover:text-white border-slate-700'
+                }`}
+                title={isLightMode ? 'מעבר למצב כהה' : 'מעבר למצב בהיר'}
               >
-                <X className="w-5 h-5" />
+                {isLightMode ? <Moon className="w-5 h-5 text-indigo-600" /> : <Sun className="w-5 h-5 text-amber-400" />}
               </button>
             </div>
 
             {/* Tab Selector Bar (All 7 TransactionDrawer tabs) */}
-            <div className="flex border-b border-slate-800 px-3 gap-1 text-xs font-medium bg-slate-900/40 overflow-x-auto no-scrollbar select-none sticky top-[73px] backdrop-blur-md z-10">
+            <div className={`flex border-b px-3 gap-1 text-xs font-medium overflow-x-auto no-scrollbar select-none sticky top-[73px] backdrop-blur-md z-10 transition-colors ${
+              isLightMode ? 'bg-slate-50/95 border-slate-200' : 'bg-slate-900/40 border-slate-800'
+            }`}>
               <button
                 type="button"
                 onClick={() => setActiveTab('details')}
                 className={`py-3 px-2.5 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
                   activeTab === 'details'
                     ? 'border-indigo-500 text-indigo-400 font-semibold'
-                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                    : `border-transparent ${isLightMode ? 'text-slate-500 hover:text-slate-900' : 'text-slate-400 hover:text-slate-200'}`
                 }`}
               >
                 <FileText className="w-3.5 h-3.5" />
@@ -666,7 +749,7 @@ export default function TmaTransactionPage() {
                 className={`py-3 px-2.5 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
                   activeTab === 'receipts'
                     ? 'border-indigo-500 text-indigo-400 font-semibold'
-                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                    : `border-transparent ${isLightMode ? 'text-slate-500 hover:text-slate-900' : 'text-slate-400 hover:text-slate-200'}`
                 }`}
               >
                 <Receipt className="w-3.5 h-3.5" />
@@ -679,7 +762,7 @@ export default function TmaTransactionPage() {
                 className={`py-3 px-2.5 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
                   activeTab === 'notes'
                     ? 'border-indigo-500 text-indigo-400 font-semibold'
-                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                    : `border-transparent ${isLightMode ? 'text-slate-500 hover:text-slate-900' : 'text-slate-400 hover:text-slate-200'}`
                 }`}
               >
                 <span>💬</span>
@@ -692,7 +775,7 @@ export default function TmaTransactionPage() {
                 className={`py-3 px-2.5 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
                   activeTab === 'links'
                     ? 'border-indigo-500 text-indigo-400 font-semibold'
-                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                    : `border-transparent ${isLightMode ? 'text-slate-500 hover:text-slate-900' : 'text-slate-400 hover:text-slate-200'}`
                 }`}
               >
                 <Link2 className="w-3.5 h-3.5" />
@@ -705,7 +788,7 @@ export default function TmaTransactionPage() {
                 className={`py-3 px-2.5 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
                   activeTab === 'splits'
                     ? 'border-indigo-500 text-indigo-400 font-semibold'
-                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                    : `border-transparent ${isLightMode ? 'text-slate-500 hover:text-slate-900' : 'text-slate-400 hover:text-slate-200'}`
                 }`}
               >
                 <Split className="w-3.5 h-3.5" />
@@ -718,7 +801,7 @@ export default function TmaTransactionPage() {
                 className={`py-3 px-2.5 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
                   activeTab === 'similar'
                     ? 'border-indigo-500 text-indigo-400 font-semibold'
-                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                    : `border-transparent ${isLightMode ? 'text-slate-500 hover:text-slate-900' : 'text-slate-400 hover:text-slate-200'}`
                 }`}
               >
                 <Layers className="w-3.5 h-3.5" />
@@ -731,7 +814,7 @@ export default function TmaTransactionPage() {
                 className={`py-3 px-2.5 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
                   activeTab === 'scraper'
                     ? 'border-indigo-500 text-indigo-400 font-semibold'
-                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                    : `border-transparent ${isLightMode ? 'text-slate-500 hover:text-slate-900' : 'text-slate-400 hover:text-slate-200'}`
                 }`}
               >
                 <Database className="w-3.5 h-3.5" />
@@ -1081,57 +1164,153 @@ export default function TmaTransactionPage() {
                       קבלות וחשבוניות מקושרות ({receipts.length})
                     </div>
                     {receipts.length === 0 ? (
-                      <div className="p-6 rounded-xl border border-dashed border-slate-800 text-center text-xs text-slate-500 bg-slate-900/30">
+                      <div className={`p-6 rounded-xl border border-dashed text-center text-xs ${
+                        isLightMode ? 'border-slate-300 text-slate-400 bg-slate-50' : 'border-slate-800 text-slate-500 bg-slate-900/30'
+                      }`}>
                         לא צורפו קבלות או חשבוניות לתנועה זו עדיין.
                       </div>
                     ) : (
-                      receipts.map((r) => (
-                        <div key={r.id} className="p-3 rounded-xl border border-slate-800 bg-slate-900/60 flex items-center justify-between gap-3 text-xs">
-                          <div className="flex items-center gap-2.5 min-w-0">
-                            <Receipt className="w-4 h-4 text-indigo-400 shrink-0" />
-                            <div className="min-w-0">
-                              <div className="font-semibold text-slate-200 truncate">
-                                {r.file_name || 'קבלה'}
-                              </div>
-                              <div className="text-[11px] text-slate-500 flex items-center gap-2">
-                                <span>{r.source_url ? 'קישור דיגיטלי' : 'קובץ'}</span>
-                                {r.ai_analyzed && <span className="text-indigo-400">✨ נותח ע״י AI</span>}
+                      receipts.map((r) => {
+                        const extracted = r.extracted_data || {};
+                        const hasItems = Array.isArray(extracted.items) && extracted.items.length > 0;
+                        return (
+                        <div key={r.id} className={`p-3.5 rounded-xl border space-y-3 text-xs transition-colors ${
+                          isLightMode ? 'bg-white border-slate-200 shadow-xs' : 'bg-slate-900/60 border-slate-800'
+                        }`}>
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <Receipt className="w-4 h-4 text-indigo-400 shrink-0" />
+                              <div className="min-w-0">
+                                <div className={`font-semibold truncate ${isLightMode ? 'text-slate-900' : 'text-slate-200'}`}>
+                                  {extracted.vendor || r.file_name || 'קבלה / חשבונית'}
+                                </div>
+                                <div className={`text-[11px] flex items-center gap-2 ${isLightMode ? 'text-slate-500' : 'text-slate-400'}`}>
+                                  <span>{r.source_url ? 'קישור דיגיטלי' : 'קובץ'}</span>
+                                  {r.ai_analyzed && <span className="text-indigo-400 font-medium">✨ נותח ע״י AI</span>}
+                                </div>
                               </div>
                             </div>
-                          </div>
-                          <div className="flex items-center gap-2 shrink-0">
-                            {r.source_url ? (
-                              <a
-                                href={r.source_url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="p-1.5 text-indigo-400 hover:text-indigo-300 rounded-lg"
-                                title="פתח קישור"
+                            <div className="flex items-center gap-2 shrink-0">
+                              {r.source_url ? (
+                                <a
+                                  href={r.source_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className={`p-1.5 rounded-lg transition-colors ${
+                                    isLightMode ? 'text-indigo-600 hover:bg-slate-100' : 'text-indigo-400 hover:bg-slate-800'
+                                  }`}
+                                  title="פתח קישור"
+                                >
+                                  <ExternalLink className="w-4 h-4" />
+                                </a>
+                              ) : r.file_path ? (
+                                <a
+                                  href={`/api/v2/transactions/tma/receipts/file/${r.file_path}?token=${encodeURIComponent(token)}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className={`p-1.5 rounded-lg transition-colors ${
+                                    isLightMode ? 'text-indigo-600 hover:bg-slate-100' : 'text-indigo-400 hover:bg-slate-800'
+                                  }`}
+                                  title="הצג קובץ"
+                                >
+                                  <ExternalLink className="w-4 h-4" />
+                                </a>
+                              ) : null}
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteReceipt(r.id)}
+                                className={`p-1.5 text-rose-400 hover:text-rose-500 rounded-lg transition-colors ${
+                                  isLightMode ? 'hover:bg-rose-50' : 'hover:bg-slate-800'
+                                }`}
+                                title="מחק קבלה"
                               >
-                                <ExternalLink className="w-4 h-4" />
-                              </a>
-                            ) : r.file_path ? (
-                              <a
-                                href={`/api/v2/transactions/tma/receipts/file/${r.file_path}?token=${encodeURIComponent(token)}`}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="p-1.5 text-indigo-400 hover:text-indigo-300 rounded-lg"
-                                title="הצג קובץ"
-                              >
-                                <ExternalLink className="w-4 h-4" />
-                              </a>
-                            ) : null}
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteReceipt(r.id)}
-                              className="p-1.5 text-rose-400 hover:text-rose-300 rounded-lg"
-                              title="מחק קבלה"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
                           </div>
+
+                          {/* Extracted Receipt Metadata: Date, Invoice Number, Total */}
+                          {(extracted.date || extracted.total || extracted.invoice_number) && (
+                            <div className={`p-2 rounded-lg border text-[11px] flex flex-wrap items-center justify-between gap-2 ${
+                              isLightMode ? 'bg-slate-50 border-slate-200' : 'bg-slate-950/60 border-slate-800/80'
+                            }`}>
+                              {extracted.date && (
+                                <span className={isLightMode ? 'text-slate-600' : 'text-slate-400'}>
+                                  📅 {extracted.date}
+                                </span>
+                              )}
+                              {extracted.invoice_number && (
+                                <span className={isLightMode ? 'text-slate-600' : 'text-slate-400'}>
+                                  מס' חשבונית: {extracted.invoice_number}
+                                </span>
+                              )}
+                              {extracted.total && (
+                                <span className="font-bold text-indigo-500">
+                                  סכום חשבונית: {formatILS(extracted.total)}
+                                </span>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Line Items List */}
+                          {hasItems ? (
+                            <div className="space-y-1.5 pt-1">
+                              <div className={`text-[11px] font-bold flex items-center justify-between px-1 ${
+                                isLightMode ? 'text-slate-700' : 'text-slate-300'
+                              }`}>
+                                <span>פירוט פריטים ({extracted.items.length}):</span>
+                                <span className="text-indigo-500 font-mono">
+                                  סה"כ: {formatILS(extracted.items.reduce((sum, it) => sum + (parseFloat(it.price) || 0), 0))}
+                                </span>
+                              </div>
+                              <div className={`max-h-48 overflow-y-auto space-y-1 p-1.5 rounded-lg border ${
+                                isLightMode ? 'bg-slate-50 border-slate-200' : 'bg-slate-950 border-slate-800'
+                              }`}>
+                                {extracted.items.map((item, itIdx) => (
+                                  <div key={itIdx} className={`p-1.5 rounded-md flex items-center justify-between text-[11px] ${
+                                    isLightMode ? 'bg-white hover:bg-slate-100/60 text-slate-800' : 'bg-slate-900/60 hover:bg-slate-900 text-slate-200'
+                                  }`}>
+                                    <div className="min-w-0 flex items-center gap-1.5">
+                                      <span className="font-medium truncate">{item.name || 'פריט'}</span>
+                                      {item.qty > 1 && (
+                                        <span className={`text-[10px] font-mono px-1 rounded ${
+                                          isLightMode ? 'bg-slate-200 text-slate-700' : 'bg-slate-800 text-slate-300'
+                                        }`}>
+                                          x{item.qty}
+                                        </span>
+                                      )}
+                                      {item.category && (
+                                        <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-indigo-500/10 text-indigo-500 border border-indigo-500/20">
+                                          {item.category}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <span className="font-bold font-mono text-emerald-500 shrink-0">
+                                      {formatILS(item.price)}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => handleSplitByReceipt(r)}
+                                className="w-full mt-1.5 py-1.5 px-3 rounded-lg bg-indigo-600/15 hover:bg-indigo-600/25 border border-indigo-500/30 text-indigo-500 hover:text-indigo-600 text-[11px] font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                              >
+                                <Split className="w-3.5 h-3.5" />
+                                <span>פצל תנועה זו לפי פריטי החשבונית</span>
+                              </button>
+                            </div>
+                          ) : r.ai_analyzed ? (
+                            <div className={`p-2 rounded-lg text-center text-[11px] ${
+                              isLightMode ? 'text-slate-400 bg-slate-50' : 'text-slate-500 bg-slate-950/40'
+                            }`}>
+                              לא חולצו פריטים בודדים מחשבונית זו
+                            </div>
+                          ) : null}
                         </div>
-                      ))
+                        );
+                      })
                     )}
                   </div>
                 </div>
@@ -1348,20 +1527,26 @@ export default function TmaTransactionPage() {
               {/* 5. Splits Tab */}
               {activeTab === 'splits' && (
                 <div className="space-y-4">
-                  <div className="p-3.5 rounded-xl border border-slate-800 bg-slate-900 text-xs space-y-2">
+                  <div className={`p-3.5 rounded-xl border text-xs space-y-2 ${
+                    isLightMode ? 'bg-slate-50 border-slate-200' : 'bg-slate-900 border-slate-800'
+                  }`}>
                     <div className="flex justify-between font-semibold">
-                      <span className="text-slate-400">סכום מקורי:</span>
-                      <span className="font-bold text-sm">{formatILS(parentAmount)}</span>
+                      <span className={isLightMode ? 'text-slate-500' : 'text-slate-400'}>סכום מקורי:</span>
+                      <span className="font-bold text-sm font-mono">{formatILS(parentAmount)}</span>
                     </div>
                     <div className="flex justify-between items-center">
-                      <span className="text-slate-400">סכום פיצולים נוכחי:</span>
-                      <span className={splitsBalanced ? 'text-emerald-400 font-bold text-sm' : 'text-rose-400 font-bold text-sm'}>
+                      <span className={isLightMode ? 'text-slate-500' : 'text-slate-400'}>סכום פיצולים נוכחי:</span>
+                      <span className={splitsTotal <= parentAmount + 0.01 && splitsTotal > 0 ? 'text-emerald-500 font-bold text-sm font-mono' : 'text-rose-400 font-bold text-sm font-mono'}>
                         {formatILS(splitsTotal)}
                       </span>
                     </div>
-                    <div className="flex justify-between items-center pt-2 border-t border-slate-800">
-                      <span className="font-semibold text-slate-200">יתרה לחלוקה:</span>
-                      <span className={`font-bold text-sm ${Math.abs(remainingAmount) < 0.01 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                    <div className={`flex justify-between items-center pt-2 border-t ${
+                      isLightMode ? 'border-slate-200' : 'border-slate-800'
+                    }`}>
+                      <span className={`font-semibold ${isLightMode ? 'text-slate-700' : 'text-slate-200'}`}>
+                        {remainingAmount > 0.01 ? 'יתרה שתוקצה לקטגוריה הראשית:' : 'יתרה לחלוקה:'}
+                      </span>
+                      <span className={`font-bold text-sm font-mono ${Math.abs(remainingAmount) < 0.01 ? 'text-emerald-500' : 'text-indigo-400'}`}>
                         {formatILS(remainingAmount)}
                       </span>
                     </div>
@@ -1376,7 +1561,9 @@ export default function TmaTransactionPage() {
 
                   <div className="space-y-2.5">
                     {splits.map((s, idx) => (
-                      <div key={idx} className="p-3 rounded-xl border border-slate-800 bg-slate-900/60 space-y-2">
+                      <div key={idx} className={`p-3 rounded-xl border space-y-2 ${
+                        isLightMode ? 'border-slate-200 bg-slate-50' : 'border-slate-800 bg-slate-900/60'
+                      }`}>
                         <div className="flex items-center gap-2">
                           <input
                             type="number"
@@ -1384,7 +1571,9 @@ export default function TmaTransactionPage() {
                             value={s.amount || ''}
                             onChange={(e) => handleSplitChange(idx, 'amount', e.target.value)}
                             placeholder="0.00"
-                            className="w-28 p-2 rounded-lg border border-slate-800 bg-slate-950 text-xs font-mono text-slate-100"
+                            className={`w-28 p-2 rounded-lg border text-xs font-mono ${
+                              isLightMode ? 'border-slate-300 bg-white text-slate-900' : 'border-slate-800 bg-slate-950 text-slate-100'
+                            }`}
                           />
                           <div className="flex-1 min-w-[130px]">
                             <CategoryPicker
@@ -1396,7 +1585,9 @@ export default function TmaTransactionPage() {
                           <button
                             type="button"
                             onClick={() => handleRemoveSplitRow(idx)}
-                            className="p-2 text-rose-400 hover:bg-slate-800 rounded-lg shrink-0"
+                            className={`p-2 text-rose-400 rounded-lg shrink-0 ${
+                              isLightMode ? 'hover:bg-rose-50' : 'hover:bg-slate-800'
+                            }`}
                             title="הסר שורה"
                           >
                             <Trash2 className="w-4 h-4" />
@@ -1407,7 +1598,9 @@ export default function TmaTransactionPage() {
                           value={s.description || ''}
                           onChange={(e) => handleSplitChange(idx, 'description', e.target.value)}
                           placeholder="תיאור לפיצול (אופציונלי)..."
-                          className="w-full p-2 rounded-lg border border-slate-800 bg-slate-950 text-slate-200 text-xs"
+                          className={`w-full p-2 rounded-lg border text-xs ${
+                            isLightMode ? 'border-slate-300 bg-white text-slate-800' : 'border-slate-800 bg-slate-950 text-slate-200'
+                          }`}
                         />
                       </div>
                     ))}
@@ -1417,7 +1610,11 @@ export default function TmaTransactionPage() {
                     <button
                       type="button"
                       onClick={handleAddSplitRow}
-                      className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-slate-800 bg-slate-900 hover:border-indigo-500 text-xs font-semibold text-slate-200 transition-colors"
+                      className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl border text-xs font-semibold transition-colors ${
+                        isLightMode
+                          ? 'border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-700'
+                          : 'border-slate-800 bg-slate-900 hover:border-indigo-500 text-slate-200'
+                      }`}
                     >
                       <Plus className="w-4 h-4" />
                       <span>הוסף שורת פיצול</span>
@@ -1425,10 +1622,10 @@ export default function TmaTransactionPage() {
                     <button
                       type="button"
                       onClick={handleSaveSplits}
-                      disabled={savingSplits || splits.length === 0 || !splitsBalanced}
+                      disabled={savingSplits || splits.length === 0 || splitsTotal > parentAmount + 0.01 || splitsTotal <= 0}
                       className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-white text-xs font-semibold transition-all ${
-                        splitsBalanced
-                          ? 'bg-indigo-600 hover:bg-indigo-500 shadow-md shadow-indigo-600/20'
+                        splitsTotal > 0 && splitsTotal <= parentAmount + 0.01
+                          ? 'bg-indigo-600 hover:bg-indigo-500 shadow-md shadow-indigo-600/20 cursor-pointer'
                           : 'bg-slate-800 text-slate-500 cursor-not-allowed'
                       }`}
                     >

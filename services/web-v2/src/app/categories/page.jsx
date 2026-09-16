@@ -43,25 +43,31 @@ function CategoryTransactionsDrawer({ categoryName, startDate, endDate, dateRang
     };
   }, []);
 
+  const targetCategoryList = useMemo(() => {
+    const allMain = [...CATEGORIES_DATA.expenses, ...CATEGORIES_DATA.incomes];
+    const foundMain = allMain.find((c) => c.name === categoryName);
+    
+    if (categoryName === 'אחר / שונות' || categoryName === 'אחר' || categoryName === 'שונות') {
+      return ['אחר', 'שונות', 'אחר / שונות', 'ללא סיווג', ''];
+    }
+    if (foundMain && foundMain.subs?.length > 0) {
+      return [categoryName, ...foundMain.subs.map((s) => s.name)];
+    }
+    return [categoryName];
+  }, [categoryName]);
+
+  const isCategoryInScope = useCallback((catName) => {
+    if (!catName) return false;
+    const clean = cleanSpacedHebrew(catName).trim().toLowerCase();
+    return targetCategoryList.some((c) => cleanSpacedHebrew(c).trim().toLowerCase() === clean);
+  }, [targetCategoryList]);
+
   useEffect(() => {
     if (!categoryName) return;
     setLoading(true);
 
-    // If categoryName is a main category, gather all its subcategories too
-    const allMain = [...CATEGORIES_DATA.expenses, ...CATEGORIES_DATA.incomes];
-    const foundMain = allMain.find((c) => c.name === categoryName);
-    
-    let categoryList;
-    if (categoryName === 'אחר / שונות' || categoryName === 'אחר' || categoryName === 'שונות') {
-      categoryList = ['אחר', 'שונות', 'אחר / שונות', 'ללא סיווג', ''];
-    } else if (foundMain && foundMain.subs?.length > 0) {
-      categoryList = [categoryName, ...foundMain.subs.map((s) => s.name)];
-    } else {
-      categoryList = [categoryName];
-    }
-
     api.getTransactionsV2({
-      categories: categoryList,
+      categories: targetCategoryList,
       startDate,
       endDate,
       accountIds: accountIds.length > 0 ? accountIds : undefined,
@@ -73,18 +79,19 @@ function CategoryTransactionsDrawer({ categoryName, startDate, endDate, dateRang
     }).finally(() => {
       setLoading(false);
     });
-  }, [categoryName, startDate, endDate, accountIds]);
+  }, [categoryName, startDate, endDate, accountIds, targetCategoryList]);
 
-  const totalSum = useMemo(() => {
-    return txs.reduce((acc, t) => acc + (parseFloat(t.amount) || 0), 0);
-  }, [txs]);
-
-  // Group transactions by category name (unrolling splits so split items appear under their respective categories)
-  const groupedTxs = useMemo(() => {
+  // Group transactions by category name (unrolling splits so only relevant split items appear under their respective categories)
+  const { groupedTxs, totalSum, matchingCount } = useMemo(() => {
     const groups = {};
+    let sum = 0;
+    let count = 0;
+
     txs.forEach((t) => {
       if (t.isSplit && Array.isArray(t.splits) && t.splits.length > 0) {
-        t.splits.forEach((s) => {
+        // Only include split items that belong to the drawer's category scope!
+        const matchingSplits = t.splits.filter((s) => isCategoryInScope(s.category));
+        matchingSplits.forEach((s) => {
           const cat = cleanSpacedHebrew(s.category || t.category || 'אחר / שונות').trim();
           if (!groups[cat]) {
             groups[cat] = {
@@ -93,6 +100,7 @@ function CategoryTransactionsDrawer({ categoryName, startDate, endDate, dateRang
               total: 0,
             };
           }
+          const itemAmount = parseFloat(s.amount) || 0;
           groups[cat].items.push({
             ...t,
             id: `${t.id}-split-${s.id}`,
@@ -102,19 +110,26 @@ function CategoryTransactionsDrawer({ categoryName, startDate, endDate, dateRang
             rawTx: t,
             isSplitItem: true,
           });
-          groups[cat].total += parseFloat(s.amount) || 0;
+          groups[cat].total += itemAmount;
+          sum += itemAmount;
+          count += 1;
         });
       } else {
         const cat = cleanSpacedHebrew(t.category || 'אחר / שונות').trim();
-        if (!groups[cat]) {
-          groups[cat] = {
-            name: cat,
-            items: [],
-            total: 0,
-          };
+        if (isCategoryInScope(cat) || isCategoryInScope(t.category)) {
+          if (!groups[cat]) {
+            groups[cat] = {
+              name: cat,
+              items: [],
+              total: 0,
+            };
+          }
+          const itemAmount = parseFloat(t.amount) || 0;
+          groups[cat].items.push(t);
+          groups[cat].total += itemAmount;
+          sum += itemAmount;
+          count += 1;
         }
-        groups[cat].items.push(t);
-        groups[cat].total += parseFloat(t.amount) || 0;
       }
     });
 
@@ -124,8 +139,9 @@ function CategoryTransactionsDrawer({ categoryName, startDate, endDate, dateRang
     });
 
     // Return groups array sorted by total amount descending
-    return Object.values(groups).sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
-  }, [txs]);
+    const sortedGroups = Object.values(groups).sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
+    return { groupedTxs: sortedGroups, totalSum: sum, matchingCount: count };
+  }, [txs, isCategoryInScope]);
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-xs transition-opacity animate-in fade-in duration-150">
@@ -139,7 +155,7 @@ function CategoryTransactionsDrawer({ categoryName, startDate, endDate, dateRang
                 {categoryName}
               </h2>
               <div className="text-xs text-dark-text-muted light:text-light-text-muted mt-0.5">
-                {dateRangeLabel || 'הטווח הנבחר'} • {txs.length} תנועות • <span className="font-bold text-brand-primary font-mono">{formatILS(totalSum)}</span>
+                {dateRangeLabel || 'הטווח הנבחר'} • {matchingCount} תנועות • <span className="font-bold text-brand-primary font-mono">{formatILS(totalSum)}</span>
               </div>
             </div>
           </div>

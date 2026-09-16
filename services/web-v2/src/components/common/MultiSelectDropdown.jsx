@@ -175,11 +175,18 @@ export default function MultiSelectDropdown({
                       <span className="truncate">{opt.label}</span>
                     </div>
 
-                    {opt.secondaryLabel && (
-                      <span className="text-[10px] text-dark-text-muted light:text-light-text-muted shrink-0 font-mono">
-                        {opt.secondaryLabel}
-                      </span>
-                    )}
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {opt.secondaryLabel && (
+                        <span className="text-[10px] text-dark-text-muted light:text-light-text-muted font-mono">
+                          {opt.secondaryLabel}
+                        </span>
+                      )}
+                      {opt.count !== undefined && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-dark-surface light:bg-light-surface border border-dark-border light:border-light-border text-dark-text-muted light:text-light-text-muted font-mono">
+                          {opt.count}
+                        </span>
+                      )}
+                    </div>
                   </button>
                 );
               })
