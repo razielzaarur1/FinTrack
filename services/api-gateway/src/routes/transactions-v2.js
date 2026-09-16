@@ -46,12 +46,19 @@ const noteSchema = z.object({
 });
 
 const linkSchema = z.object({
-  targetTransactionId: z.string().uuid('Target transaction ID must be a valid UUID'),
+  targetTransactionId: z.string().uuid('Target transaction ID must be a valid UUID').optional(),
+  linkedTxId: z.string().uuid('Linked transaction ID must be a valid UUID').optional(),
   linkType: z.enum(['refund', 'correction', 'related', 'installment', 'cc_billing_match']).default('related'),
   note: z.string().optional().nullable(),
   feeAmount: z.number().optional().nullable(),
   feeCategory: z.string().optional().nullable(),
   isFeeClassified: z.boolean().optional().default(false),
+}).transform((data) => ({
+  ...data,
+  targetTransactionId: data.targetTransactionId || data.linkedTxId,
+})).refine((data) => !!data.targetTransactionId, {
+  message: 'Target transaction ID must be provided',
+  path: ['targetTransactionId'],
 });
 
 const updateTransactionSchema = z.object({
@@ -1775,7 +1782,7 @@ export default async function transactionsV2Routes(fastify, options) {
   // GET /api/v2/transactions/:id/reconciliation-candidates - Get matching candidate transactions
   fastify.get('/:id/reconciliation-candidates', async (request, reply) => {
     const { id } = request.params;
-    const minScore = request.query.minScore ? parseInt(request.query.minScore, 10) : 35;
+    const minScore = request.query.minScore ? parseInt(request.query.minScore, 10) : 15;
     const daysWindow = request.query.daysWindow ? parseInt(request.query.daysWindow, 10) : 45;
     try {
       const candidates = await findMatchesForTransaction(pool, id, { minScore, daysWindow });

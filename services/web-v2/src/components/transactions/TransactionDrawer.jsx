@@ -24,7 +24,9 @@ import {
   CheckCircle2,
   RefreshCw,
   Receipt,
-  Globe
+  Globe,
+  Eye,
+  ArrowRight
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useApp } from '@/lib/app-context';
@@ -65,9 +67,15 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
     };
   }, []);
 
+  // Navigation history stack for drilling into candidate/linked transactions
+  const [txHistory, setTxHistory] = useState([]);
+
   // Synchronize activeTx with prop
   useEffect(() => {
-    if (tx) setActiveTx(tx);
+    if (tx) {
+      setActiveTx(tx);
+      setTxHistory([]);
+    }
   }, [tx]);
 
   // Categories list
@@ -91,6 +99,22 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
   const [loadingCandidates, setLoadingCandidates] = useState(false);
   const [linkingCandidateId, setLinkingCandidateId] = useState(null);
   const [feeModalCandidate, setFeeModalCandidate] = useState(null);
+
+  const fetchCandidates = async (txId) => {
+    if (!txId) return;
+    setLoadingCandidates(true);
+    try {
+      const res = await api.getReconciliationCandidates(txId);
+      const list = Array.isArray(res.data?.data)
+        ? res.data.data
+        : (Array.isArray(res.data?.data?.candidates) ? res.data.data.candidates : []);
+      setCandidates(list);
+    } catch {
+      setCandidates([]);
+    } finally {
+      setLoadingCandidates(false);
+    }
+  };
 
   useEffect(() => {
     if (!activeTx) return;
@@ -132,22 +156,8 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
       if (res.data) setLinks(res.data.data || []);
     });
 
-    // Fetch reconciliation candidates if CC billing
-    if (activeTx.isCcBilling || activeTx.category === 'חיוב אשראי') {
-      setLoadingCandidates(true);
-      api.getReconciliationCandidates(activeTx.id)
-        .then((res) => {
-          if (Array.isArray(res.data?.data)) {
-            setCandidates(res.data.data);
-          } else if (Array.isArray(res.data?.data?.candidates)) {
-            setCandidates(res.data.data.candidates);
-          } else {
-            setCandidates([]);
-          }
-        })
-        .catch(() => setCandidates([]))
-        .finally(() => setLoadingCandidates(false));
-    }
+    // Fetch reconciliation candidates if CC billing or on demands
+    fetchCandidates(activeTx.id);
 
     // Check foreign currency & fetch FX details
     const isForeignTx = Boolean(
@@ -337,34 +347,45 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
   useEffect(() => {
     if (!activeTx?.id) return;
     if (activeTab === 'links' && candidates.length === 0 && !loadingCandidates) {
-      setLoadingCandidates(true);
-      api.getReconciliationCandidates(activeTx.id)
-        .then((res) => {
-          if (res.data?.data?.candidates) {
-            setCandidates(res.data.data.candidates);
-          }
-        })
-        .catch(() => {})
-        .finally(() => setLoadingCandidates(false));
+      fetchCandidates(activeTx.id);
     }
   }, [activeTab, activeTx?.id]);
 
+  const handleViewCandidate = (candidate) => {
+    const candTx = candidate.candidate || candidate;
+    setTxHistory((prev) => [...prev, activeTx]);
+    setActiveTx(candTx);
+    setActiveTab('details');
+  };
+
+  const handleBackToPrevTx = () => {
+    if (txHistory.length === 0) return;
+    const prevTx = txHistory[txHistory.length - 1];
+    setTxHistory((prev) => prev.slice(0, -1));
+    setActiveTx(prevTx);
+    setActiveTab('links');
+  };
+
   const handleCandidateClick = (candidate) => {
-    const diff = Math.abs(candidate.amountDiff || 0);
+    const candTx = candidate.candidate || candidate;
+    const diff = Math.abs(candidate.diffAmount !== undefined ? candidate.diffAmount : (candidate.amountDiff || 0));
     if (diff > 0.01) {
-      setFeeModalCandidate(candidate);
+      setFeeModalCandidate({ ...candidate, ...candTx, diffAmount: diff, amountDiff: diff });
     } else {
       handleExecuteCandidateLink(candidate, false);
     }
   };
 
   const handleExecuteCandidateLink = async (candidate, isFeeClassified) => {
-    setLinkingCandidateId(candidate.id);
+    const candTx = candidate.candidate || candidate;
+    const candId = candTx.id || candidate.id;
+    setLinkingCandidateId(candId);
     try {
-      const diff = Math.abs(candidate.amountDiff || 0);
+      const diff = Math.abs(candidate.diffAmount !== undefined ? candidate.diffAmount : (candidate.amountDiff || 0));
       const hasFee = diff > 0.01;
       const res = await api.linkTransaction(activeTx.id, {
-        linkedTxId: candidate.id,
+        targetTransactionId: candId,
+        linkedTxId: candId,
         linkType: 'related',
         feeAmount: hasFee ? diff : undefined,
         feeCategory: hasFee ? 'עמלות' : undefined,
@@ -373,7 +394,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
       if (res.data) {
         const updatedLinks = await api.getLinks(activeTx.id);
         if (updatedLinks.data) setLinks(updatedLinks.data.data || []);
-        setCandidates((prev) => prev.filter((c) => c.id !== candidate.id));
+        setCandidates((prev) => prev.filter((c) => (c.candidate?.id || c.id) !== candId));
         setFeeModalCandidate(null);
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('fintrack_tx_updated'));
@@ -444,11 +465,34 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
           </div>
           <button
             onClick={onClose}
-            className="p-2 rounded-xl hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text"
+            className="p-2 rounded-xl hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
+
+        {/* Navigation History Banner (when viewing a candidate transaction) */}
+        {txHistory.length > 0 && (
+          <div className="bg-brand-primary/10 border-b border-brand-primary/20 px-4 py-2.5 flex items-center justify-between text-xs animate-in slide-in-from-top-1">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className="text-dark-text-muted light:text-light-text-muted">מציג תנועה מתוך:</span>
+              <span className="font-bold text-brand-primary truncate max-w-[150px] sm:max-w-[200px]">
+                {cleanSpacedHebrew(getTransactionTitle(txHistory[txHistory.length - 1]))}
+              </span>
+              <span className="font-mono text-dark-text light:text-light-text font-bold">
+                ({formatILS(txHistory[txHistory.length - 1].amount)})
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={handleBackToPrevTx}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-brand-primary text-white font-bold hover:bg-brand-primary-hover transition-colors cursor-pointer shrink-0 shadow-xs"
+            >
+              <ArrowRight className="w-3.5 h-3.5" />
+              <span>חזור לתנועת המקור</span>
+            </button>
+          </div>
+        )}
 
         {/* Tab Selector */}
         <div 
@@ -1048,61 +1092,103 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
 
                 {candidates.length === 0 && !loadingCandidates && (
                   <p className="text-[11px] text-dark-text-muted light:text-light-text-muted px-1">
-                    לא נמצאו תנועות מועמדות להתאמה אוטומטית (ציון מעל 35%).
+                    לא נמצאו תנועות מועמדות להתאמה בטווח התאריכים.
                   </p>
                 )}
 
                 {candidates.map((cand) => {
-                  const isExact = cand.isExactAmount || Math.abs(cand.amountDiff || 0) <= 0.01;
-                  const scoreColor = cand.score >= 85
+                  const candTx = cand.candidate || cand;
+                  const candId = candTx.id || cand.id;
+                  const merchant = cleanSpacedHebrew(candTx.merchantName || candTx.description || cand.merchantName || cand.description || 'ללא תיאור');
+                  const account = candTx.accountDisplayName || candTx.bankCompany || cand.accountDisplayName || cand.bankCompany || 'חשבון';
+                  const txDate = candTx.date || cand.date;
+                  const txAmount = candTx.amount !== undefined ? candTx.amount : cand.amount;
+                  const diffAmt = cand.diffAmount !== undefined ? cand.diffAmount : (cand.amountDiff !== undefined ? cand.amountDiff : 0);
+                  const isExact = cand.isExactAmount || Math.abs(diffAmt) <= 0.01;
+                  const daysDiff = cand.diffDays !== undefined ? cand.diffDays : cand.dateDiffDays;
+
+                  const scoreColor = cand.score >= 80
                     ? 'text-emerald-500 bg-emerald-500/15 border-emerald-500/30'
-                    : cand.score >= 60
+                    : cand.score >= 50
                     ? 'text-amber-500 bg-amber-500/15 border-amber-500/30'
                     : 'text-slate-400 bg-slate-500/15 border-slate-500/30';
+
+                  let dateExplanation = '';
+                  if (daysDiff !== undefined) {
+                    if (daysDiff === 0) {
+                      dateExplanation = 'באותו היום';
+                    } else if (daysDiff > 0) {
+                      dateExplanation = `${daysDiff} ימים לפני החיוב`;
+                    } else {
+                      dateExplanation = `${Math.abs(daysDiff)} ימים אחרי החיוב`;
+                    }
+                  }
+
                   return (
-                    <div key={cand.id} className="p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated/60 light:bg-light-surface-elevated/60 space-y-2 text-xs">
+                    <div key={candId} className="p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated/60 light:bg-light-surface-elevated/60 space-y-2 text-xs">
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-2 min-w-0">
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${scoreColor}`}>
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border shrink-0 ${scoreColor}`}>
                             {cand.score}% התאמה
                           </span>
-                          <span className="font-semibold text-dark-text light:text-light-text truncate">
-                            {cleanSpacedHebrew(cand.merchantName || cand.description || 'ללא תיאור')}
+                          <span 
+                            onClick={() => handleViewCandidate(cand)}
+                            className="font-semibold text-dark-text light:text-light-text truncate cursor-pointer hover:underline hover:text-brand-primary"
+                            title="לחץ לצפייה בפרטי התנועה"
+                          >
+                            {merchant}
                           </span>
                         </div>
-                        <button
-                          type="button"
-                          disabled={linkingCandidateId === cand.id}
-                          onClick={() => handleCandidateClick(cand)}
-                          className="px-2.5 py-1 rounded-lg bg-brand-primary hover:bg-brand-primary-hover text-white font-bold text-xs transition-all shadow-xs shrink-0 cursor-pointer disabled:opacity-50 flex items-center gap-1"
-                        >
-                          {linkingCandidateId === cand.id ? (
-                            <RefreshCw className="w-3 h-3 animate-spin" />
-                          ) : (
-                            <Link2 className="w-3 h-3" />
-                          )}
-                          <span>קשר</span>
-                        </button>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleViewCandidate(cand)}
+                            className="px-2.5 py-1 rounded-lg border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-dark-text light:text-light-text font-medium text-xs transition-all cursor-pointer flex items-center gap-1"
+                            title="צפה בפרטי תנועה זו"
+                          >
+                            <Eye className="w-3 h-3 text-brand-primary" />
+                            <span>פרטים</span>
+                          </button>
+                          <button
+                            type="button"
+                            disabled={linkingCandidateId === candId}
+                            onClick={() => handleCandidateClick(cand)}
+                            className="px-2.5 py-1 rounded-lg bg-brand-primary hover:bg-brand-primary-hover text-white font-bold text-xs transition-all shadow-xs cursor-pointer disabled:opacity-50 flex items-center gap-1"
+                          >
+                            {linkingCandidateId === candId ? (
+                              <RefreshCw className="w-3 h-3 animate-spin" />
+                            ) : (
+                              <Link2 className="w-3 h-3" />
+                            )}
+                            <span>קשר</span>
+                          </button>
+                        </div>
                       </div>
 
                       <div className="flex items-center justify-between text-[11px] text-dark-text-muted light:text-light-text-muted">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span>{cand.accountDisplayName || cand.bankCompany}</span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-medium text-dark-text light:text-light-text">{account}</span>
                           <span>•</span>
-                          <span>{formatDate(cand.date, lang)}</span>
-                          {cand.dateDiffDays !== undefined && (
-                            <span className="text-[10px]">({cand.dateDiffDays === 0 ? 'אותו יום' : `הפרש ${cand.dateDiffDays} ימים`})</span>
+                          <span>{formatDate(txDate, lang)}</span>
+                          {dateExplanation && (
+                            <span className={`text-[10px] px-1.5 py-0.2 rounded ${
+                              daysDiff < 0 
+                                ? 'bg-amber-500/10 text-amber-500' 
+                                : 'bg-dark-surface light:bg-light-surface text-dark-text-muted light:text-light-text-muted border border-dark-border/40 light:border-light-border/40'
+                            }`}>
+                              {dateExplanation}
+                            </span>
                           )}
                         </div>
                         <div className="flex items-center gap-2">
                           <span className="font-bold text-dark-text light:text-light-text font-mono" dir="ltr">
-                            {formatILS(cand.amount)}
+                            {formatILS(txAmount)}
                           </span>
                           {isExact ? (
                             <span className="text-[10px] text-emerald-500 font-semibold">סכום זהה ✓</span>
                           ) : (
                             <span className="text-[10px] text-amber-500 font-medium font-mono" dir="ltr">
-                              הפרש: ₪{Math.abs(cand.amountDiff).toFixed(2)}
+                              הפרש: ₪{Math.abs(diffAmt).toFixed(2)}
                             </span>
                           )}
                         </div>
@@ -1520,7 +1606,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
                 <p className="text-xs text-dark-text-muted light:text-light-text-muted">
                   קיים הפרש של{' '}
                   <span className="font-bold text-amber-500 font-mono" dir="ltr">
-                    ₪{Math.abs(feeModalCandidate.amountDiff || 0).toFixed(2)}
+                    ₪{Math.abs(feeModalCandidate.diffAmount !== undefined ? feeModalCandidate.diffAmount : (feeModalCandidate.amountDiff || 0)).toFixed(2)}
                   </span>{' '}
                   בין החיוב בחשבון לתנועת האשראי.
                 </p>

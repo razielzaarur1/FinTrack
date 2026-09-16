@@ -58,10 +58,12 @@ export function isCcBillingPattern(text, userPatterns = []) {
  * Calculates reconciliation match score between a bank billing transaction and candidate transaction.
  * 
  * Rules:
- * - Amount proximity has DOMINANT weight (up to 80 pts).
+ * - Amount proximity has DOMINANT weight (up to 75 pts).
  * - Proximity in date provides up to 20 pts.
+ *   - Real credit card charges happen BEFORE bank debits: high points (up to 20 pts).
+ *   - When bank billing is BEFORE the card charge ("קודם הבנק ואז התנועה"): much fewer points (max 4 pts, dropping to 0).
  * - Account complementarity (bank checking vs credit card) adds 5 pts.
- * - Exact amount match is strictly required for auto-link eligibility (>= 85%).
+ * - Exact amount match is strictly required for auto-link eligibility (>= 85% score AND isExactAmount).
  */
 export function calculateReconciliationScore(bankTx, candTx) {
   if (!bankTx || !candTx || bankTx.id === candTx.id) {
@@ -78,57 +80,94 @@ export function calculateReconciliationScore(bankTx, candTx) {
   const isExactAmount = diffAmount < 0.01;
   const pctDiff = diffAmount / Math.max(amtBank, 1);
 
-  // 1. Amount Proximity Score (up to 80 points)
+  // 1. Amount Proximity Score (up to 75 points)
   let amountScore = 0;
   if (isExactAmount) {
-    amountScore = 80;
-  } else if (pctDiff <= 0.002) { // 0.2%
-    amountScore = 65;
-  } else if (pctDiff <= 0.005) { // 0.5% (e.g. few agorot)
-    amountScore = 55;
-  } else if (pctDiff <= 0.015) { // 1.5% (typical FX fee)
-    amountScore = 45;
-  } else if (pctDiff <= 0.03) {  // 3% (e.g. ₪15 fee on ₪3,000)
-    amountScore = 32;
-  } else if (pctDiff <= 0.05) {  // 5%
+    amountScore = 75;
+  } else if (pctDiff <= 0.005) { // within 0.5% (e.g. few agorot)
+    amountScore = 70;
+  } else if (pctDiff <= 0.01) {  // within 1%
+    amountScore = 64;
+  } else if (pctDiff <= 0.02) {  // within 2%
+    amountScore = 58;
+  } else if (pctDiff <= 0.03) {  // within 3%
+    amountScore = 52;
+  } else if (pctDiff <= 0.05) {  // within 5%
+    amountScore = 44;
+  } else if (pctDiff <= 0.10) {  // within 10%
+    amountScore = 34;
+  } else if (pctDiff <= 0.15) {  // within 15%
+    amountScore = 26;
+  } else if (pctDiff <= 0.25) {  // within 25%
     amountScore = 18;
+  } else if (pctDiff <= 0.40) {  // within 40%
+    amountScore = 12;
+  } else if (pctDiff <= 0.60) {  // within 60%
+    amountScore = 6;
   } else {
-    amountScore = 0;
-  }
-
-  // If amount difference exceeds 5%, no match
-  if (amountScore === 0) {
-    return { score: 0, isExactAmount, diffAmount, diffDays: 0 };
+    amountScore = 2;
   }
 
   // 2. Date Proximity Score (up to 20 points)
-  const dBank = new Date(bankTx.date);
-  const dCand = new Date(candTx.date);
-  const diffDays = Math.round((dBank - dCand) / (1000 * 3600 * 24)); // Positive if cand is before bank
+  // Identify bank billing transaction vs candidate card transaction
+  const aIsBilling = Boolean(bankTx.isCcBilling || bankTx.category === 'חיוב אשראי');
+  const bIsBilling = Boolean(candTx.isCcBilling || candTx.category === 'חיוב אשראי');
+
+  let bankDate, cardDate;
+  if (aIsBilling && !bIsBilling) {
+    bankDate = new Date(bankTx.date);
+    cardDate = new Date(candTx.date);
+  } else if (!aIsBilling && bIsBilling) {
+    bankDate = new Date(candTx.date);
+    cardDate = new Date(bankTx.date);
+  } else {
+    // Default: treat bankTx as billing, candTx as candidate transaction
+    bankDate = new Date(bankTx.date);
+    cardDate = new Date(candTx.date);
+  }
+
+  // diffDays > 0: card transaction happened BEFORE bank billing (normal credit card cycle)
+  // diffDays < 0: bank billing happened BEFORE card transaction ("קודם הבנק ואז התנועה" - unusual, much fewer points)
+  const diffDays = Math.round((bankDate - cardDate) / (1000 * 3600 * 24));
 
   let dateScore = 0;
-  if (diffDays >= 0 && diffDays <= 4) {
-    dateScore = 20;
-  } else if (diffDays >= 5 && diffDays <= 10) {
-    dateScore = 16;
-  } else if (diffDays >= 11 && diffDays <= 20) {
-    dateScore = 12;
-  } else if (diffDays >= 21 && diffDays <= 35) {
-    dateScore = 8;
-  } else if (diffDays >= -5 && diffDays < 0) {
-    // Booking delay: bank showed charge 1-5 days before card synced
-    dateScore = 10;
+  if (diffDays >= 0) {
+    // Normal flow: card transaction happened BEFORE or on bank billing date
+    if (diffDays === 0) {
+      dateScore = 20; // Exact same day
+    } else if (diffDays <= 5) {
+      dateScore = 20; // 1-5 days before bank billing
+    } else if (diffDays <= 12) {
+      dateScore = 18; // 6-12 days before
+    } else if (diffDays <= 22) {
+      dateScore = 15; // ~2-3 weeks before
+    } else if (diffDays <= 35) {
+      dateScore = 12; // ~1 month cycle before
+    } else if (diffDays <= 45) {
+      dateScore = 6;
+    } else {
+      dateScore = 2;
+    }
   } else {
-    dateScore = 0;
+    // Abnormal flow: bank billing happened BEFORE card transaction (קודם הבנק ואז התנועה)
+    // Much fewer points as requested by the user:
+    const absAfterDays = Math.abs(diffDays);
+    if (absAfterDays === 1) {
+      dateScore = 4; // 1 day after bank (possible midnight sync margin)
+    } else if (absAfterDays === 2) {
+      dateScore = 2; // 2 days after bank
+    } else {
+      dateScore = 0; // 3+ days after bank billing: 0 date points
+    }
   }
 
   // 3. Complementary account bonus (+5 points)
   let accountBonus = 0;
-  if (bankTx.accountId !== candTx.accountId) {
+  if (bankTx.accountId && candTx.accountId && bankTx.accountId !== candTx.accountId) {
     accountBonus = 5;
   }
 
-  const totalScore = Math.min(100, Math.round(amountScore + dateScore + accountBonus));
+  const totalScore = Math.min(100, Math.max(1, Math.round(amountScore + dateScore + accountBonus)));
 
   return {
     score: totalScore,
@@ -143,7 +182,7 @@ export function calculateReconciliationScore(bankTx, candTx) {
  * Finds matching candidates for a given credit card billing transaction.
  */
 export async function findMatchesForTransaction(pool, txId, options = {}) {
-  const minScore = options.minScore ?? 35;
+  const minScore = options.minScore ?? 15;
   const daysWindow = options.daysWindow ?? 45;
 
   // 1. Fetch the target transaction
@@ -159,12 +198,14 @@ export async function findMatchesForTransaction(pool, txId, options = {}) {
 
   if (targetRes.rows.length === 0) return [];
   const target = targetRes.rows[0];
+  const targetAmount = Math.abs(parseFloat(target.amount) || 0);
 
   // 2. Fetch candidate transactions in +/- daysWindow window that are NOT already linked to this transaction
   const candRes = await pool.query(`
     SELECT t.id, t.account_id AS "accountId", t.date, t.amount, t.currency,
            t.merchant_name AS "merchantName", t.description, t.category,
            t.user_description AS "userDescription",
+           t.is_cc_billing AS "isCcBilling",
            b.bank_company AS "bankCompany", b.display_name AS "accountDisplayName"
     FROM transactions t
     JOIN bank_accounts b ON t.account_id = b.id
@@ -175,17 +216,31 @@ export async function findMatchesForTransaction(pool, txId, options = {}) {
         WHERE (tl.transaction_id_a = $1 AND tl.transaction_id_b = t.id)
            OR (tl.transaction_id_b = $1 AND tl.transaction_id_a = t.id)
       )
-    ORDER BY t.date DESC
-    LIMIT 100
-  `, [txId, target.date, daysWindow]);
+    ORDER BY ABS(ABS(t.amount) - $4) ASC, t.date DESC
+    LIMIT 200
+  `, [txId, target.date, daysWindow, targetAmount]);
 
   const candidates = [];
   for (const cand of candRes.rows) {
     const match = calculateReconciliationScore(target, cand);
     if (match.score >= minScore) {
       candidates.push({
+        ...cand,
+        id: cand.id,
+        merchantName: cand.merchantName,
+        description: cand.description,
+        amount: cand.amount,
+        date: cand.date,
+        accountDisplayName: cand.accountDisplayName,
+        bankCompany: cand.bankCompany,
+        score: match.score,
+        isExactAmount: match.isExactAmount,
+        diffAmount: match.diffAmount,
+        amountDiff: match.diffAmount,
+        diffDays: match.diffDays,
+        dateDiffDays: match.diffDays,
+        eligibleForAutoLink: match.eligibleForAutoLink,
         candidate: cand,
-        ...match,
       });
     }
   }
