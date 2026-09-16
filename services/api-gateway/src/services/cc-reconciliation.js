@@ -182,7 +182,7 @@ export function calculateReconciliationScore(bankTx, candTx) {
  * Finds matching candidates for a given credit card billing transaction.
  */
 export async function findMatchesForTransaction(pool, txId, options = {}) {
-  const minScore = options.minScore ?? 15;
+  const minScore = options.minScore ?? 35;
   const daysWindow = options.daysWindow ?? 45;
 
   // 1. Fetch the target transaction

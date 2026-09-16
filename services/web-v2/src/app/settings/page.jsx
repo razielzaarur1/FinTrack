@@ -38,6 +38,7 @@ import CategoryBadge from '@/components/common/CategoryBadge';
 import { CATEGORIES_DATA, setDynamicCategories } from '@/lib/categories';
 import { generateDesignSystemPrompt } from '@/lib/designSystemPrompt';
 import { normalizeCategorySvg, getIconSvgMarkup } from '@/lib/svg-normalizer';
+import { formatILS, formatDate, cleanSpacedHebrew } from '@/lib/formatters';
 
 export default function SettingsPage() {
   const { lang, t, theme, toggleTheme, toggleLanguage } = useApp();
@@ -97,10 +98,11 @@ export default function SettingsPage() {
   const [ccManualScoreThreshold, setCcManualScoreThreshold] = useState(35);
   const [ccCustomPatterns, setCcCustomPatterns] = useState([]);
   const [newCcPattern, setNewCcPattern] = useState('');
-  const [runningCcReconcile, setRunningCcReconcile] = useState(false);
-  const [ccReconcileResult, setCcReconcileResult] = useState(null);
-  const [detectingCcBillings, setDetectingCcBillings] = useState(false);
-  const [detectCcResult, setDetectCcResult] = useState(null);
+  const [ccSettingsSaved, setCcSettingsSaved] = useState(false);
+  const [runningCcScanAndMatch, setRunningCcScanAndMatch] = useState(false);
+  const [ccScanAndMatchResult, setCcScanAndMatchResult] = useState(null);
+  const [detectedCcMerchants, setDetectedCcMerchants] = useState([]);
+  const [loadingDetectedMerchants, setLoadingDetectedMerchants] = useState(false);
 
   // Auto-Scrape Schedule States (in HOURS, minimum 3h safety limit)
   const [autoScrapeEnabled, setAutoScrapeEnabled] = useState(true);
@@ -179,8 +181,23 @@ export default function SettingsPage() {
         if (s.enableAiAnalysis !== undefined) setEnableAiAnalysis(s.enableAiAnalysis);
       }
       await checkBotStatus();
+      await fetchDetectedCcMerchants();
     } catch (err) {
       console.error('Failed to load system settings:', err);
+    }
+  };
+
+  const fetchDetectedCcMerchants = async () => {
+    setLoadingDetectedMerchants(true);
+    try {
+      const res = await api.getDetectedCcMerchants();
+      if (Array.isArray(res.data?.data)) {
+        setDetectedCcMerchants(res.data.data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch detected CC merchants:', err);
+    } finally {
+      setLoadingDetectedMerchants(false);
     }
   };
 
@@ -213,57 +230,47 @@ export default function SettingsPage() {
         autoReconcileCcEnabled: overrides.autoReconcileCc !== undefined ? overrides.autoReconcileCc : autoReconcileCc,
         ccAutoScoreThreshold: overrides.ccAutoScoreThreshold !== undefined ? overrides.ccAutoScoreThreshold : ccAutoScoreThreshold,
         ccManualScoreThreshold: overrides.ccManualScoreThreshold !== undefined ? overrides.ccManualScoreThreshold : ccManualScoreThreshold,
+        reconciliationMinScore: overrides.ccManualScoreThreshold !== undefined ? overrides.ccManualScoreThreshold : ccManualScoreThreshold,
         ccCustomPatterns: overrides.ccCustomPatterns !== undefined ? overrides.ccCustomPatterns : ccCustomPatterns,
       };
       await api.saveSystemSettings(updated);
+      setCcSettingsSaved(true);
+      setTimeout(() => setCcSettingsSaved(false), 3000);
     } catch (err) {
       console.error('Failed to save CC settings:', err);
     }
   };
 
-  const handleRunReconcileAuto = async () => {
-    setRunningCcReconcile(true);
-    setCcReconcileResult(null);
+  const handleScanAndReconcileCc = async () => {
+    setRunningCcScanAndMatch(true);
+    setCcScanAndMatchResult(null);
     try {
-      const res = await api.reconcileCcAuto({ minScore: ccAutoScoreThreshold, thresholdAmountDiff: 0.01 });
-      if (res.data) {
-        setCcReconcileResult({
-          success: true,
-          message: `הסתיים בהצלחה: הותאמו וקושרו ${res.data.linkedCount ?? 0} חיובי אשראי עם תנועות מקבילות (סכום מדויק בלבד)`,
-        });
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('fintrack_tx_updated'));
-        }
-      } else {
-        setCcReconcileResult({ success: false, message: res.error || 'שגיאה בהרצת ההתאמה' });
-      }
-    } catch (err) {
-      setCcReconcileResult({ success: false, message: err.message || 'שגיאה בהרצת ההתאמה' });
-    } finally {
-      setRunningCcReconcile(false);
-    }
-  };
+      // 1. Scan and detect credit card billings in bank accounts
+      const detectRes = await api.detectCcBillings({ userPatterns: ccCustomPatterns });
+      const taggedCount = detectRes.data?.taggedCount ?? 0;
 
-  const handleDetectCcBillings = async () => {
-    setDetectingCcBillings(true);
-    setDetectCcResult(null);
-    try {
-      const res = await api.detectCcBillings({ userPatterns: ccCustomPatterns });
-      if (res.data) {
-        setDetectCcResult({
-          success: true,
-          message: `נסרקו חשבונות הבנק: זוהו ותויגו ${res.data.taggedCount ?? 0} חיובי אשראי חדשים`,
-        });
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('fintrack_tx_updated'));
-        }
-      } else {
-        setDetectCcResult({ success: false, message: res.error || 'שגיאה בסריקה' });
+      // 2. Run auto-reconciliation on exact 100% matches
+      const reconcileRes = await api.reconcileCcAuto({ autoThreshold: ccAutoScoreThreshold });
+      const linkedCount = reconcileRes.data?.linkedCount ?? 0;
+
+      setCcScanAndMatchResult({
+        success: true,
+        message: `הסריקה וההתאמה הושלמו בהצלחה: זוהו ${taggedCount} חיובי אשראי בחשבונות, והותאמו וקושרו ${linkedCount} תנועות בסכום זהה 100%.`,
+      });
+
+      // Refresh list of detected CC companies
+      await fetchDetectedCcMerchants();
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('fintrack_tx_updated'));
       }
     } catch (err) {
-      setDetectCcResult({ success: false, message: err.message || 'שגיאה בסריקה' });
+      setCcScanAndMatchResult({
+        success: false,
+        message: err.message || 'שגיאה בביצוע הסריקה וההתאמה',
+      });
     } finally {
-      setDetectingCcBillings(false);
+      setRunningCcScanAndMatch(false);
     }
   };
 
@@ -1353,38 +1360,101 @@ export default function SettingsPage() {
                 </div>
               </div>
 
-              {/* Action Buttons */}
+              {/* Single Action Button: Scan and Auto-Reconcile */}
               <div className="pt-2 border-t border-indigo-500/20 flex items-center gap-2.5 flex-wrap">
                 <button
                   type="button"
-                  onClick={handleDetectCcBillings}
-                  disabled={detectingCcBillings}
-                  className="px-3.5 py-2 rounded-xl border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 font-bold text-xs transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  onClick={handleScanAndReconcileCc}
+                  disabled={runningCcScanAndMatch}
+                  className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs transition-all flex items-center gap-2 shadow-sm cursor-pointer disabled:opacity-50"
                 >
-                  <RefreshCw className={`w-3.5 h-3.5 ${detectingCcBillings ? 'animate-spin' : ''}`} />
-                  <span>{detectingCcBillings ? 'סורק חשבונות...' : 'סרוק ותייג חיובי אשראי בבנק עכשיו'}</span>
+                  <RefreshCw className={`w-3.5 h-3.5 ${runningCcScanAndMatch ? 'animate-spin' : ''}`} />
+                  <span>{runningCcScanAndMatch ? 'סורק חשבונות ומבצע התאמות...' : 'סרוק חיובי אשראי ובצע התאמות עכשיו'}</span>
                 </button>
 
-                <button
-                  type="button"
-                  onClick={handleRunReconcileAuto}
-                  disabled={runningCcReconcile}
-                  className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs transition-all flex items-center gap-1.5 shadow-sm cursor-pointer disabled:opacity-50"
-                >
-                  <Link2 className={`w-3.5 h-3.5 ${runningCcReconcile ? 'animate-spin' : ''}`} />
-                  <span>{runningCcReconcile ? 'מבצע התאמות...' : 'הרץ התאמה וקישור עכשיו (סכום זהה 100%)'}</span>
-                </button>
-
-                {detectCcResult && (
-                  <span className={`text-xs font-medium ${detectCcResult.success ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    {detectCcResult.message}
+                {ccSettingsSaved && (
+                  <span className="text-xs font-semibold text-emerald-400 flex items-center gap-1 animate-in fade-in">
+                    <Check className="w-3.5 h-3.5" />
+                    <span>ההגדרות נשמרו בהצלחה!</span>
                   </span>
                 )}
 
-                {ccReconcileResult && (
-                  <span className={`text-xs font-medium ${ccReconcileResult.success ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    {ccReconcileResult.message}
+                {ccScanAndMatchResult && (
+                  <span className={`text-xs font-medium ${ccScanAndMatchResult.success ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {ccScanAndMatchResult.message}
                   </span>
+                )}
+              </div>
+
+              {/* Detected Credit Card Companies & Merchants List */}
+              <div className="space-y-2.5 pt-3 border-t border-indigo-500/20">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <CreditCard className="w-4 h-4 text-indigo-400" />
+                    <span className="text-xs font-bold text-dark-text light:text-light-text">
+                      חברות אשראי ובתי עסק שזוהו כחיובי אשראי בבנק ({detectedCcMerchants.length})
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={fetchDetectedCcMerchants}
+                    disabled={loadingDetectedMerchants}
+                    className="text-[11px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 cursor-pointer"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${loadingDetectedMerchants ? 'animate-spin' : ''}`} />
+                    <span>רענן</span>
+                  </button>
+                </div>
+
+                {loadingDetectedMerchants ? (
+                  <div className="p-4 text-center text-xs text-dark-text-muted flex items-center justify-center gap-2">
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-400" />
+                    <span>טוען חברות אשראי שזוהו...</span>
+                  </div>
+                ) : detectedCcMerchants.length === 0 ? (
+                  <div className="p-4 rounded-xl border border-dashed border-indigo-500/30 bg-indigo-500/5 text-center text-xs text-dark-text-muted light:text-light-text-muted">
+                    טרם זוהו חיובי אשראי בחשבונות הבנק. לחץ על כפתור הסריקה למעלה כדי לסרוק את החשבונות ולזהות חברות אשראי.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-72 overflow-y-auto pr-1">
+                    {detectedCcMerchants.map((m, idx) => (
+                      <div
+                        key={idx}
+                        className="p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface flex items-center justify-between gap-2 text-xs"
+                      >
+                        <div className="min-w-0 space-y-0.5">
+                          <div className="font-bold text-dark-text light:text-light-text truncate">
+                            {cleanSpacedHebrew(m.merchantName)}
+                          </div>
+                          <div className="text-[10px] text-dark-text-muted light:text-light-text-muted flex items-center gap-1.5 flex-wrap">
+                            <span>{m.accountDisplayName || m.bankCompany}</span>
+                            {m.lastDate && (
+                              <>
+                                <span>•</span>
+                                <span>חיוב אחרון: {formatDate(m.lastDate, lang)}</span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="text-left shrink-0 space-y-0.5" dir="ltr">
+                          <div className="font-bold font-mono text-dark-text light:text-light-text text-[11px]">
+                            {formatILS(m.totalAmount)}
+                          </div>
+                          <div className="flex items-center justify-end gap-1 text-[10px]">
+                            <span className="px-1.5 py-0.2 rounded bg-indigo-500/15 text-indigo-400 font-semibold">
+                              {m.txCount} תנועות
+                            </span>
+                            {m.linkedCount > 0 && (
+                              <span className="px-1.5 py-0.2 rounded bg-emerald-500/15 text-emerald-400 font-semibold">
+                                {m.linkedCount} מקושרות ✓
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
             </div>

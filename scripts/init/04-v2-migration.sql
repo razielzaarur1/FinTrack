@@ -27,6 +27,9 @@ CREATE TABLE IF NOT EXISTS transaction_links (
     transaction_id_b UUID NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
     link_type VARCHAR(50) NOT NULL DEFAULT 'related',
     note TEXT,
+    fee_amount NUMERIC(12, 2) DEFAULT 0,
+    fee_category VARCHAR(100) DEFAULT 'עמלות',
+    is_fee_classified BOOLEAN DEFAULT false,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT uq_transaction_pair UNIQUE (transaction_id_a, transaction_id_b),
     CONSTRAINT chk_different_transactions CHECK (transaction_id_a <> transaction_id_b)

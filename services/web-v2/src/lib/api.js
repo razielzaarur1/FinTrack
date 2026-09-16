@@ -118,6 +118,7 @@ export const api = {
   getReconciliationCandidates: (txId, params) => request(`/api/v2/transactions/${txId}/reconciliation-candidates${params?.minScore ? `?minScore=${params.minScore}` : ''}`),
   reconcileCcAuto: (data) => request('/api/v2/transactions/reconcile-auto', { method: 'POST', body: JSON.stringify(data || {}) }),
   detectCcBillings: (data) => request('/api/v2/transactions/detect-cc-billings', { method: 'POST', body: JSON.stringify(data || {}) }),
+  getDetectedCcMerchants: () => request('/api/v2/transactions/detected-cc-merchants'),
 
   // Categories & Learning
   getCategories: (arg1, arg2) => {

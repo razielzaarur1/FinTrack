@@ -99,15 +99,28 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
   const [loadingCandidates, setLoadingCandidates] = useState(false);
   const [linkingCandidateId, setLinkingCandidateId] = useState(null);
   const [feeModalCandidate, setFeeModalCandidate] = useState(null);
+  const [minScoreThreshold, setMinScoreThreshold] = useState(35);
+
+  useEffect(() => {
+    api.getSystemSettings().then((res) => {
+      const s = res.data?.settings;
+      if (s?.ccManualScoreThreshold !== undefined) {
+        setMinScoreThreshold(parseInt(s.ccManualScoreThreshold, 10) || 35);
+      }
+    }).catch(() => {});
+  }, []);
 
   const fetchCandidates = async (txId) => {
     if (!txId) return;
     setLoadingCandidates(true);
     try {
-      const res = await api.getReconciliationCandidates(txId);
+      const res = await api.getReconciliationCandidates(txId, { minScore: minScoreThreshold });
       const list = Array.isArray(res.data?.data)
         ? res.data.data
         : (Array.isArray(res.data?.data?.candidates) ? res.data.data.candidates : []);
+      if (res.data?.minScore) {
+        setMinScoreThreshold(res.data.minScore);
+      }
       setCandidates(list);
     } catch {
       setCandidates([]);
@@ -1092,7 +1105,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
 
                 {candidates.length === 0 && !loadingCandidates && (
                   <p className="text-[11px] text-dark-text-muted light:text-light-text-muted px-1">
-                    לא נמצאו תנועות מועמדות להתאמה בטווח התאריכים.
+                    לא נמצאו תנועות מועמדות להתאמה (ציון מעל {minScoreThreshold}%).
                   </p>
                 )}
 

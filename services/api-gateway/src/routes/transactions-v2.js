@@ -1630,18 +1630,56 @@ export default async function transactionsV2Routes(fastify, options) {
     }
   });
 
+let feeColumnsChecked = false;
+let hasFeeColumns = false;
+
+async function ensureFeeColumnsExist(pool) {
+  if (feeColumnsChecked) return hasFeeColumns;
+  try {
+    const check = await pool.query(`
+      SELECT column_name FROM information_schema.columns 
+      WHERE table_name = 'transaction_links' AND column_name = 'fee_amount'
+    `);
+    if (check.rows.length > 0) {
+      hasFeeColumns = true;
+      feeColumnsChecked = true;
+      return true;
+    }
+    await pool.query(`
+      ALTER TABLE transaction_links ADD COLUMN IF NOT EXISTS fee_amount NUMERIC(12, 2) DEFAULT 0;
+      ALTER TABLE transaction_links ADD COLUMN IF NOT EXISTS fee_category VARCHAR(100) DEFAULT 'עמלות';
+      ALTER TABLE transaction_links ADD COLUMN IF NOT EXISTS is_fee_classified BOOLEAN DEFAULT false;
+    `);
+    hasFeeColumns = true;
+    feeColumnsChecked = true;
+    return true;
+  } catch (err) {
+    console.warn('[TransactionsV2] fee columns not present in transaction_links, using note fallback:', err.message);
+    hasFeeColumns = false;
+    feeColumnsChecked = true;
+    return false;
+  }
+}
+
   // GET /api/v2/transactions/:id/links - Get linked transactions
   fastify.get('/:id/links', async (request, reply) => {
     const { id } = request.params;
     await autoLinkInstallmentTransactions(pool, id).catch(() => {});
+    const feeCols = await ensureFeeColumnsExist(pool);
+    const feeSelect = feeCols 
+      ? `COALESCE(tl.fee_amount, 0) AS "feeAmount",
+         COALESCE(tl.fee_category, 'עמלות') AS "feeCategory",
+         COALESCE(tl.is_fee_classified, false) AS "isFeeClassified",`
+      : `0 AS "feeAmount",
+         'עמלות' AS "feeCategory",
+         false AS "isFeeClassified",`;
+
     const query = `
       SELECT 
         tl.id AS "linkId",
         tl.link_type AS "linkType",
         tl.note AS "linkNote",
-        COALESCE(tl.fee_amount, 0) AS "feeAmount",
-        COALESCE(tl.fee_category, 'עמלות') AS "feeCategory",
-        COALESCE(tl.is_fee_classified, false) AS "isFeeClassified",
+        ${feeSelect}
         tl.created_at AS "linkedAt",
         t.id,
         t.date,
@@ -1665,12 +1703,32 @@ export default async function transactionsV2Routes(fastify, options) {
     `;
     try {
       const result = await pool.query(query, [id]);
-      const data = result.rows.map((l) => ({
-        ...l,
-        merchantName: cleanSpacedHebrew(l.merchantName),
-        description: cleanSpacedHebrew(l.description),
-        userDescription: cleanSpacedHebrew(l.userDescription),
-      }));
+      const data = result.rows.map((l) => {
+        let feeAmount = parseFloat(l.feeAmount) || 0;
+        let feeCategory = l.feeCategory || 'עמלות';
+        let isFeeClassified = Boolean(l.isFeeClassified);
+        let linkNote = l.linkNote || '';
+
+        // If fallback [FEE:amt:cat:classified] is in linkNote, parse it
+        const match = linkNote.match(/\[FEE:([\d.]+):([^:]+):([01])\]/);
+        if (match) {
+          feeAmount = parseFloat(match[1]) || 0;
+          feeCategory = match[2] || 'עמלות';
+          isFeeClassified = match[3] === '1';
+          linkNote = linkNote.replace(match[0], '').trim();
+        }
+
+        return {
+          ...l,
+          feeAmount,
+          feeCategory,
+          isFeeClassified,
+          linkNote,
+          merchantName: cleanSpacedHebrew(l.merchantName),
+          description: cleanSpacedHebrew(l.description),
+          userDescription: cleanSpacedHebrew(l.userDescription),
+        };
+      });
       return reply.code(200).send({ data });
     } catch (err) {
       fastify.log.error(err, 'Failed to fetch transaction links');
@@ -1692,6 +1750,7 @@ export default async function transactionsV2Routes(fastify, options) {
     }
 
     try {
+      const feeCols = await ensureFeeColumnsExist(pool);
       // Check if a link in either direction already exists
       const existing = await pool.query(
         `SELECT id FROM transaction_links
@@ -1701,30 +1760,67 @@ export default async function transactionsV2Routes(fastify, options) {
       );
 
       let result;
+      if (feeCols) {
+        try {
+          if (existing.rows.length > 0) {
+            result = await pool.query(
+              `UPDATE transaction_links
+               SET link_type = $1, note = $2,
+                   fee_amount = COALESCE($4, fee_amount),
+                   fee_category = COALESCE($5, fee_category),
+                   is_fee_classified = COALESCE($6, is_fee_classified)
+               WHERE id = $3
+               RETURNING id, transaction_id_a AS "transactionIdA", transaction_id_b AS "transactionIdB",
+                         link_type AS "linkType", note, fee_amount AS "feeAmount",
+                         fee_category AS "feeCategory", is_fee_classified AS "isFeeClassified"`,
+              [linkType, note || null, existing.rows[0].id, feeAmount ?? null, feeCategory || 'עמלות', Boolean(isFeeClassified)]
+            );
+          } else {
+            result = await pool.query(
+              `INSERT INTO transaction_links (transaction_id_a, transaction_id_b, link_type, note, fee_amount, fee_category, is_fee_classified)
+               VALUES ($1, $2, $3, $4, COALESCE($5, 0), COALESCE($6, 'עמלות'), COALESCE($7, false))
+               RETURNING id, transaction_id_a AS "transactionIdA", transaction_id_b AS "transactionIdB",
+                         link_type AS "linkType", note, fee_amount AS "feeAmount",
+                         fee_category AS "feeCategory", is_fee_classified AS "isFeeClassified"`,
+              [id, targetTransactionId, linkType, note || null, feeAmount ?? null, feeCategory || 'עמלות', Boolean(isFeeClassified)]
+            );
+          }
+          return reply.code(201).send({ success: true, data: result.rows[0] });
+        } catch (dbErr) {
+          console.warn('[TransactionsV2] Insert with fee columns failed, falling back:', dbErr.message);
+          hasFeeColumns = false;
+        }
+      }
+
+      // Fallback: store fee info safely in note
+      const hasFee = feeAmount !== undefined && feeAmount !== null && Number(feeAmount) > 0;
+      const feeTag = hasFee ? `[FEE:${Number(feeAmount).toFixed(2)}:${feeCategory || 'עמלות'}:${isFeeClassified ? '1' : '0'}]` : '';
+      const finalNote = [note, feeTag].filter(Boolean).join(' ').trim() || null;
+
       if (existing.rows.length > 0) {
         result = await pool.query(
           `UPDATE transaction_links
-           SET link_type = $1, note = $2,
-               fee_amount = COALESCE($4, fee_amount),
-               fee_category = COALESCE($5, fee_category),
-               is_fee_classified = COALESCE($6, is_fee_classified)
+           SET link_type = $1, note = $2
            WHERE id = $3
            RETURNING id, transaction_id_a AS "transactionIdA", transaction_id_b AS "transactionIdB",
-                     link_type AS "linkType", note, fee_amount AS "feeAmount",
-                     fee_category AS "feeCategory", is_fee_classified AS "isFeeClassified"`,
-          [linkType, note || null, existing.rows[0].id, feeAmount, feeCategory, isFeeClassified]
+                     link_type AS "linkType", note`,
+          [linkType, finalNote, existing.rows[0].id]
         );
       } else {
         result = await pool.query(
-          `INSERT INTO transaction_links (transaction_id_a, transaction_id_b, link_type, note, fee_amount, fee_category, is_fee_classified)
-           VALUES ($1, $2, $3, $4, COALESCE($5, 0), COALESCE($6, 'עמלות'), COALESCE($7, false))
+          `INSERT INTO transaction_links (transaction_id_a, transaction_id_b, link_type, note)
+           VALUES ($1, $2, $3, $4)
            RETURNING id, transaction_id_a AS "transactionIdA", transaction_id_b AS "transactionIdB",
-                     link_type AS "linkType", note, fee_amount AS "feeAmount",
-                     fee_category AS "feeCategory", is_fee_classified AS "isFeeClassified"`,
-          [id, targetTransactionId, linkType, note || null, feeAmount, feeCategory, isFeeClassified]
+                     link_type AS "linkType", note`,
+          [id, targetTransactionId, linkType, finalNote]
         );
       }
-      return reply.code(201).send({ success: true, data: result.rows[0] });
+
+      const row = result.rows[0] || {};
+      row.feeAmount = feeAmount || 0;
+      row.feeCategory = feeCategory || 'עמלות';
+      row.isFeeClassified = Boolean(isFeeClassified);
+      return reply.code(201).send({ success: true, data: row });
     } catch (err) {
       fastify.log.error(err, 'Failed to link transaction');
       return reply.code(500).send({ error: 'Database error', message: err.message });
@@ -1736,30 +1832,58 @@ export default async function transactionsV2Routes(fastify, options) {
     const { linkId } = request.params;
     const { isFeeClassified, feeAmount, feeCategory } = request.body || {};
     try {
-      const setClauses = [];
-      const values = [];
-      if (isFeeClassified !== undefined) {
-        values.push(isFeeClassified);
-        setClauses.push(`is_fee_classified = $${values.length}`);
+      const feeCols = await ensureFeeColumnsExist(pool);
+      if (feeCols) {
+        try {
+          const setClauses = [];
+          const values = [];
+          if (isFeeClassified !== undefined) {
+            values.push(isFeeClassified);
+            setClauses.push(`is_fee_classified = $${values.length}`);
+          }
+          if (feeAmount !== undefined) {
+            values.push(feeAmount);
+            setClauses.push(`fee_amount = $${values.length}`);
+          }
+          if (feeCategory !== undefined) {
+            values.push(feeCategory);
+            setClauses.push(`fee_category = $${values.length}`);
+          }
+          if (setClauses.length > 0) {
+            values.push(linkId);
+            const res = await pool.query(
+              `UPDATE transaction_links SET ${setClauses.join(', ')} WHERE id = $${values.length} RETURNING *`,
+              values
+            );
+            if (res.rows.length === 0) return reply.code(404).send({ error: 'Link not found' });
+            return reply.code(200).send({ success: true, data: res.rows[0] });
+          }
+        } catch (updateErr) {
+          console.warn('[TransactionsV2] Fee update via columns failed, falling back to note:', updateErr.message);
+        }
       }
-      if (feeAmount !== undefined) {
-        values.push(feeAmount);
-        setClauses.push(`fee_amount = $${values.length}`);
+
+      // Fallback: update fee in note
+      const currentRes = await pool.query('SELECT note FROM transaction_links WHERE id = $1', [linkId]);
+      if (currentRes.rows.length === 0) return reply.code(404).send({ error: 'Link not found' });
+      let currentNote = currentRes.rows[0].note || '';
+      let existingAmount = 0;
+      let existingCat = 'עמלות';
+      let existingClassified = false;
+      const match = currentNote.match(/\[FEE:([\d.]+):([^:]+):([01])\]/);
+      if (match) {
+        existingAmount = parseFloat(match[1]) || 0;
+        existingCat = match[2] || 'עמלות';
+        existingClassified = match[3] === '1';
+        currentNote = currentNote.replace(match[0], '').trim();
       }
-      if (feeCategory !== undefined) {
-        values.push(feeCategory);
-        setClauses.push(`fee_category = $${values.length}`);
-      }
-      if (setClauses.length === 0) {
-        return reply.code(400).send({ error: 'Nothing to update' });
-      }
-      values.push(linkId);
-      const res = await pool.query(
-        `UPDATE transaction_links SET ${setClauses.join(', ')} WHERE id = $${values.length} RETURNING *`,
-        values
-      );
-      if (res.rows.length === 0) return reply.code(404).send({ error: 'Link not found' });
-      return reply.code(200).send({ success: true, data: res.rows[0] });
+      const newAmount = feeAmount !== undefined ? feeAmount : existingAmount;
+      const newCat = feeCategory !== undefined ? feeCategory : existingCat;
+      const newClassified = isFeeClassified !== undefined ? isFeeClassified : existingClassified;
+      const newTag = (newAmount > 0) ? `[FEE:${Number(newAmount).toFixed(2)}:${newCat}:${newClassified ? '1' : '0'}]` : '';
+      const updatedNote = [currentNote, newTag].filter(Boolean).join(' ').trim() || null;
+      await pool.query('UPDATE transaction_links SET note = $1 WHERE id = $2', [updatedNote, linkId]);
+      return reply.code(200).send({ success: true, data: { id: linkId, feeAmount: newAmount, feeCategory: newCat, isFeeClassified: newClassified } });
     } catch (err) {
       return reply.code(500).send({ error: 'Database error', message: err.message });
     }
@@ -1782,13 +1906,68 @@ export default async function transactionsV2Routes(fastify, options) {
   // GET /api/v2/transactions/:id/reconciliation-candidates - Get matching candidate transactions
   fastify.get('/:id/reconciliation-candidates', async (request, reply) => {
     const { id } = request.params;
-    const minScore = request.query.minScore ? parseInt(request.query.minScore, 10) : 15;
+    let minScore = request.query.minScore ? parseInt(request.query.minScore, 10) : undefined;
     const daysWindow = request.query.daysWindow ? parseInt(request.query.daysWindow, 10) : 45;
+
+    // Load minScore from settings if not explicitly passed
+    if (minScore === undefined || isNaN(minScore)) {
+      try {
+        const settingsRes = await pool.query(
+          `SELECT settings FROM system_settings WHERE user_id = '00000000-0000-0000-0000-000000000001'`
+        );
+        const settings = settingsRes.rows[0]?.settings || {};
+        minScore = typeof settings.ccManualScoreThreshold === 'number' 
+          ? settings.ccManualScoreThreshold 
+          : (typeof settings.reconciliationMinScore === 'number' ? settings.reconciliationMinScore : 35);
+      } catch {
+        minScore = 35;
+      }
+    }
+
     try {
       const candidates = await findMatchesForTransaction(pool, id, { minScore, daysWindow });
-      return reply.code(200).send({ data: candidates });
+      return reply.code(200).send({ data: candidates, minScore });
     } catch (err) {
       fastify.log.error(err, 'Failed to find reconciliation candidates');
+      return reply.code(500).send({ error: 'Database error', message: err.message });
+    }
+  });
+
+  // GET /api/v2/transactions/detected-cc-merchants - List identified credit card companies & billing merchants
+  fastify.get('/detected-cc-merchants', async (request, reply) => {
+    try {
+      const query = `
+        SELECT 
+          COALESCE(NULLIF(TRIM(t.merchant_name), ''), NULLIF(TRIM(t.description), ''), 'ללא שם') AS "merchantName",
+          b.bank_company AS "bankCompany",
+          b.display_name AS "accountDisplayName",
+          COUNT(t.id)::int AS "txCount",
+          ROUND(COALESCE(SUM(ABS(t.amount)), 0)::numeric, 2) AS "totalAmount",
+          MAX(t.date) AS "lastDate",
+          COUNT(t.id) FILTER (WHERE EXISTS (
+            SELECT 1 FROM transaction_links tl 
+            WHERE tl.transaction_id_a = t.id OR tl.transaction_id_b = t.id
+          ))::int AS "linkedCount"
+        FROM transactions t
+        JOIN bank_accounts b ON t.account_id = b.id
+        WHERE b.user_id = '00000000-0000-0000-0000-000000000001'
+          AND (t.is_cc_billing = true OR t.category = 'חיוב אשראי')
+        GROUP BY COALESCE(NULLIF(TRIM(t.merchant_name), ''), NULLIF(TRIM(t.description), ''), 'ללא שם'), b.bank_company, b.display_name
+        ORDER BY "txCount" DESC, "totalAmount" DESC;
+      `;
+      const res = await pool.query(query);
+      const merchants = res.rows.map((row) => ({
+        merchantName: cleanSpacedHebrew(row.merchantName),
+        bankCompany: row.bankCompany,
+        accountDisplayName: row.accountDisplayName,
+        txCount: parseInt(row.txCount, 10) || 0,
+        totalAmount: parseFloat(row.totalAmount) || 0,
+        lastDate: row.lastDate,
+        linkedCount: parseInt(row.linkedCount, 10) || 0,
+      }));
+      return reply.code(200).send({ data: merchants });
+    } catch (err) {
+      fastify.log.error(err, 'Failed to fetch detected CC merchants');
       return reply.code(500).send({ error: 'Database error', message: err.message });
     }
   });
