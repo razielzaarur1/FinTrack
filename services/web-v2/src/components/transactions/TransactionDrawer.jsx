@@ -137,7 +137,9 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
       setLoadingCandidates(true);
       api.getReconciliationCandidates(activeTx.id)
         .then((res) => {
-          if (res.data?.data?.candidates) {
+          if (Array.isArray(res.data?.data)) {
+            setCandidates(res.data.data);
+          } else if (Array.isArray(res.data?.data?.candidates)) {
             setCandidates(res.data.data.candidates);
           } else {
             setCandidates([]);

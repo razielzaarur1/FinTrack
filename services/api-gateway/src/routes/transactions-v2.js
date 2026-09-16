@@ -345,13 +345,32 @@ const cursorPaginationQuerySchema = z.object({
   isFlagged: z.coerce.boolean().optional(),
 });
 
+let isTxV2Initialized = false;
+async function preflightTxV2Check() {
+  if (isTxV2Initialized) return;
+  try {
+    await pool.query(`
+      ALTER TABLE transactions ADD COLUMN IF NOT EXISTS is_cc_billing BOOLEAN NOT NULL DEFAULT false;
+      ALTER TABLE transaction_links ADD COLUMN IF NOT EXISTS fee_amount NUMERIC(12, 2) DEFAULT 0;
+      ALTER TABLE transaction_links ADD COLUMN IF NOT EXISTS fee_category VARCHAR(100) DEFAULT 'עמלות';
+      ALTER TABLE transaction_links ADD COLUMN IF NOT EXISTS is_fee_classified BOOLEAN DEFAULT false;
+      CREATE INDEX IF NOT EXISTS idx_transactions_cc_billing ON transactions(is_cc_billing);
+    `);
+    isTxV2Initialized = true;
+  } catch (err) {
+    console.warn('[TransactionsV2 Preflight] Non-critical warning:', err.message);
+  }
+}
+
 export default async function transactionsV2Routes(fastify, options) {
+  preflightTxV2Check().catch(() => {});
   repair0AmountTransactions().catch(() => {});
   repairBitTransactions().catch(() => {});
   autoLinkInstallmentTransactions(pool).catch(() => {});
 
   // GET /api/v2/transactions - Cursor-based Infinite Scroll Transactions with rich multi-filters
   fastify.get('/', async (request, reply) => {
+    await preflightTxV2Check().catch(() => {});
     const parseResult = cursorPaginationQuerySchema.safeParse(request.query);
     if (!parseResult.success) {
       return reply.code(400).send({
@@ -515,9 +534,9 @@ export default async function transactionsV2Routes(fastify, options) {
         } else if (sp === 'bit') {
           conditions.push(`(
             (
-              t.merchant_name ~* '(^|[^a-zA-Z0-9\u0590-\u05FF])([בלמהכ]?-?bit|[בלמהכ]?-?ביט)([^a-zA-Z0-9\u0590-\u05FF]|$)'
-              OR t.description ~* '(^|[^a-zA-Z0-9\u0590-\u05FF])([בלמהכ]?-?bit|[בלמהכ]?-?ביט)([^a-zA-Z0-9\u0590-\u05FF]|$)'
-              OR (t.raw_data->>'memo') ~* '(^|[^a-zA-Z0-9\u0590-\u05FF])([בלמהכ]?-?bit|[בלמהכ]?-?ביט)([^a-zA-Z0-9\u0590-\u05FF]|$)'
+              t.merchant_name ~* '(^|[^a-zA-Z0-9א-ת])([בלמהכ]?-?bit|[בלמהכ]?-?ביט)([^a-zA-Z0-9א-ת]|$)'
+              OR t.description ~* '(^|[^a-zA-Z0-9א-ת])([בלמהכ]?-?bit|[בלמהכ]?-?ביט)([^a-zA-Z0-9א-ת]|$)'
+              OR (t.raw_data->>'memo') ~* '(^|[^a-zA-Z0-9א-ת])([בלמהכ]?-?bit|[בלמהכ]?-?ביט)([^a-zA-Z0-9א-ת]|$)'
             )
             AND NOT (
               t.merchant_name ~* '(ביטוח|ביטול|ביטחון|debit)'
@@ -793,6 +812,7 @@ export default async function transactionsV2Routes(fastify, options) {
   // GET /api/v2/transactions/filter-counts - Aggregated transaction counts for filter options
   fastify.get('/filter-counts', async (request, reply) => {
     try {
+      await preflightTxV2Check().catch(() => {});
       // 1. Counts by account
       const accountCountsRes = await pool.query(`
         SELECT account_id, COUNT(*)::int AS count 
@@ -858,9 +878,9 @@ export default async function transactionsV2Routes(fastify, options) {
           COUNT(*) FILTER (
             WHERE (
               (
-                merchant_name ~* '(^|[^a-zA-Z0-9\u0590-\u05FF])([בלמהכ]?-?bit|[בלמהכ]?-?ביט)([^a-zA-Z0-9\u0590-\u05FF]|$)'
-                OR description ~* '(^|[^a-zA-Z0-9\u0590-\u05FF])([בלמהכ]?-?bit|[בלמהכ]?-?ביט)([^a-zA-Z0-9\u0590-\u05FF]|$)'
-                OR (raw_data->>'memo') ~* '(^|[^a-zA-Z0-9\u0590-\u05FF])([בלמהכ]?-?bit|[בלמהכ]?-?ביט)([^a-zA-Z0-9\u0590-\u05FF]|$)'
+                merchant_name ~* '(^|[^a-zA-Z0-9א-ת])([בלמהכ]?-?bit|[בלמהכ]?-?ביט)([^a-zA-Z0-9א-ת]|$)'
+                OR description ~* '(^|[^a-zA-Z0-9א-ת])([בלמהכ]?-?bit|[בלמהכ]?-?ביט)([^a-zA-Z0-9א-ת]|$)'
+                OR (raw_data->>'memo') ~* '(^|[^a-zA-Z0-9א-ת])([בלמהכ]?-?bit|[בלמהכ]?-?ביט)([^a-zA-Z0-9א-ת]|$)'
               )
               AND NOT (
                 merchant_name ~* '(ביטוח|ביטול|ביטחון|debit)'

@@ -27,7 +27,8 @@ import {
   Banknote,
   EyeOff,
   Zap,
-  ShieldAlert
+  ShieldAlert,
+  AlertCircle
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { formatILS, formatDate, cleanSpacedHebrew, getTransactionTitle, formatCurrency, extractInstallmentInfo } from '@/lib/formatters';
@@ -77,6 +78,7 @@ function TransactionsContent() {
   const [nextCursor, setNextCursor] = useState(null);
   const [nextCursorId, setNextCursorId] = useState(null);
   const [hasNextPage, setHasNextPage] = useState(true);
+  const [fetchError, setFetchError] = useState(null);
 
   // Full-screen Linker Mode State
   const [linkingTx, setLinkingTx] = useState(null);
@@ -184,14 +186,21 @@ function TransactionsContent() {
   // Load user accounts, currencies, and filter counts
   useEffect(() => {
     api.getAccounts().then((res) => {
-      if (res.data) setAccounts(res.data);
-    });
+      if (res?.data && Array.isArray(res.data)) setAccounts(res.data);
+    }).catch(() => {});
     api.getCurrencies().then((res) => {
-      if (res.data?.data) setAvailableCurrencies(res.data.data);
-    });
+      if (res?.data?.data && Array.isArray(res.data.data)) setAvailableCurrencies(res.data.data);
+    }).catch(() => {});
     api.getFilterCounts().then((res) => {
-      if (res.data) setFilterCounts(res.data);
-    });
+      if (res?.data && typeof res.data === 'object' && !res.data.error) {
+        setFilterCounts({
+          accounts: res.data.accounts || {},
+          categories: res.data.categories || {},
+          specials: res.data.specials || {},
+          currencies: res.data.currencies || {},
+        });
+      }
+    }).catch(() => {});
   }, []);
 
   // Update filters if URL params change (accountId, month, startDate, endDate)
@@ -285,8 +294,15 @@ function TransactionsContent() {
     const handleSync = () => {
       loadTransactions(null, null, true);
       api.getFilterCounts().then((res) => {
-        if (res.data) setFilterCounts(res.data);
-      });
+        if (res?.data && typeof res.data === 'object' && !res.data.error) {
+          setFilterCounts({
+            accounts: res.data.accounts || {},
+            categories: res.data.categories || {},
+            specials: res.data.specials || {},
+            currencies: res.data.currencies || {},
+          });
+        }
+      }).catch(() => {});
     };
     window.addEventListener('fintrack_tx_updated', handleSync);
     return () => {
@@ -435,6 +451,7 @@ function TransactionsContent() {
     // Add individual currency options from availableCurrencies
     if (Array.isArray(availableCurrencies)) {
       availableCurrencies.forEach((c) => {
+        if (!c || !c.currency) return;
         if (['ILS', 'NIS', 'ש"ח', 'שח', '₪'].includes(c.currency)) return;
         list.push({
           id: `curr_${c.currency}`,
@@ -544,6 +561,9 @@ function TransactionsContent() {
 
   const loadTransactions = async (cursor = null, cursorId = null, reset = false) => {
     setLoading(true);
+    if (reset) {
+      setFetchError(null);
+    }
     try {
       const range = getDateRangeForPreset(datePreset);
 
@@ -572,14 +592,26 @@ function TransactionsContent() {
         endDate: range.end,
       });
 
-      if (res.data) {
+      if (res?.data && Array.isArray(res.data.data)) {
         setTransactions((prev) => (reset ? res.data.data : [...prev, ...res.data.data]));
-        setNextCursor(res.data.nextCursor);
-        setNextCursorId(res.data.nextCursorId);
-        setHasNextPage(res.data.hasNextPage);
+        setNextCursor(res.data.nextCursor || null);
+        setNextCursorId(res.data.nextCursorId || null);
+        setHasNextPage(Boolean(res.data.hasNextPage));
+        setFetchError(null);
+      } else {
+        if (reset) {
+          setTransactions([]);
+        }
+        if (res?.error) {
+          setFetchError(res.error);
+        }
       }
     } catch (err) {
       console.error('Failed to load transactions:', err);
+      if (reset) {
+        setTransactions([]);
+      }
+      setFetchError(err?.message || 'שגיאה בטעינת העסקאות');
     } finally {
       setLoading(false);
     }
@@ -1111,7 +1143,21 @@ function TransactionsContent() {
           </div>
         )}
 
-        {transactions.length === 0 && !loading ? (
+        {fetchError && transactions.length === 0 && !loading ? (
+          <div className="py-16 text-center text-red-500 text-sm space-y-3 px-4">
+            <AlertCircle className="w-10 h-10 mx-auto opacity-80" />
+            <div className="font-bold text-base">שגיאה בטעינת העסקאות</div>
+            <p className="text-xs text-dark-text-muted light:text-light-text-muted max-w-sm mx-auto">{fetchError}</p>
+            <button
+              type="button"
+              onClick={() => loadTransactions(null, null, true)}
+              className="px-4 py-2 rounded-xl bg-brand-primary text-white text-xs font-semibold hover:bg-brand-primary-hover transition-colors inline-flex items-center gap-1.5 shadow-sm cursor-pointer"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>נסה שוב</span>
+            </button>
+          </div>
+        ) : transactions.length === 0 && !loading ? (
           <div className="py-16 text-center text-dark-text-muted light:text-light-text-muted text-sm space-y-2">
             <ArrowLeftRight className="w-10 h-10 mx-auto opacity-40" />
             <div className="font-semibold">{t('noTransactions')}</div>
@@ -1409,10 +1455,57 @@ function TransactionsContent() {
   );
 }
 
+class TransactionsErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error('TransactionsPage caught error:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="p-8 max-w-lg mx-auto text-center space-y-4 my-12 bg-dark-surface light:bg-light-surface rounded-2xl border border-red-500/20 shadow-lg">
+          <div className="w-12 h-12 mx-auto rounded-full bg-red-500/15 text-red-500 flex items-center justify-center">
+            <AlertCircle className="w-6 h-6" />
+          </div>
+          <div className="space-y-1">
+            <h2 className="text-base font-bold text-dark-text light:text-light-text">אירעה שגיאה בטעינת עמוד התנועות</h2>
+            <p className="text-xs text-dark-text-muted light:text-light-text-muted">
+              {this.state.error?.message || 'שגיאה בטעינת הממשק. נסה לטעון מחדש את הדף.'}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              this.setState({ hasError: false, error: null });
+              if (typeof window !== 'undefined') window.location.reload();
+            }}
+            className="px-4 py-2 rounded-xl bg-brand-primary text-white text-xs font-semibold hover:bg-brand-primary-hover transition-colors inline-flex items-center gap-1.5 shadow-sm cursor-pointer"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>טען מחדש</span>
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function TransactionsPage() {
   return (
-    <Suspense fallback={<div className="p-8 text-center text-sm text-dark-text-muted">טוען תנועות...</div>}>
-      <TransactionsContent />
-    </Suspense>
+    <TransactionsErrorBoundary>
+      <Suspense fallback={<div className="p-8 text-center text-sm text-dark-text-muted">טוען תנועות...</div>}>
+        <TransactionsContent />
+      </Suspense>
+    </TransactionsErrorBoundary>
   );
 }
