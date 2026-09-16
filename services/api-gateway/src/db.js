@@ -393,6 +393,7 @@ async function ensureSchema() {
           ALTER TABLE transactions ADD COLUMN IF NOT EXISTS is_reviewed BOOLEAN NOT NULL DEFAULT false;
           ALTER TABLE transactions ADD COLUMN IF NOT EXISTS is_flagged BOOLEAN NOT NULL DEFAULT false;
           ALTER TABLE transactions ADD COLUMN IF NOT EXISTS is_cc_billing BOOLEAN NOT NULL DEFAULT false;
+          ALTER TABLE transactions ADD COLUMN IF NOT EXISTS original_currency VARCHAR(10);
           ALTER TABLE transaction_links ADD COLUMN IF NOT EXISTS fee_amount NUMERIC(12, 2) DEFAULT 0;
           ALTER TABLE transaction_links ADD COLUMN IF NOT EXISTS fee_category VARCHAR(100) DEFAULT 'עמלות';
           ALTER TABLE transaction_links ADD COLUMN IF NOT EXISTS is_fee_classified BOOLEAN DEFAULT false;

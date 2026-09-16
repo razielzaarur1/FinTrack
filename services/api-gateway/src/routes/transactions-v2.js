@@ -351,6 +351,7 @@ async function preflightTxV2Check() {
   try {
     await pool.query(`
       ALTER TABLE transactions ADD COLUMN IF NOT EXISTS is_cc_billing BOOLEAN NOT NULL DEFAULT false;
+      ALTER TABLE transactions ADD COLUMN IF NOT EXISTS original_currency VARCHAR(10);
       ALTER TABLE transaction_links ADD COLUMN IF NOT EXISTS fee_amount NUMERIC(12, 2) DEFAULT 0;
       ALTER TABLE transaction_links ADD COLUMN IF NOT EXISTS fee_category VARCHAR(100) DEFAULT 'עמלות';
       ALTER TABLE transaction_links ADD COLUMN IF NOT EXISTS is_fee_classified BOOLEAN DEFAULT false;
@@ -507,7 +508,6 @@ export default async function transactionsV2Routes(fastify, options) {
         } else if (sp === 'foreign') {
           conditions.push(`(
             (t.currency IS NOT NULL AND UPPER(TRIM(t.currency)) NOT IN ('ILS', 'NIS', 'ש"ח', 'שח', '₪'))
-            OR (t.original_currency IS NOT NULL AND UPPER(TRIM(t.original_currency)) NOT IN ('ILS', 'NIS', 'ש"ח', 'שח', '₪'))
             OR (t.raw_data->>'originalCurrency' IS NOT NULL AND UPPER(TRIM(t.raw_data->>'originalCurrency')) NOT IN ('ILS', 'NIS', 'ש"ח', 'שח', '₪'))
             OR (t.raw_data->>'original_currency' IS NOT NULL AND UPPER(TRIM(t.raw_data->>'original_currency')) NOT IN ('ILS', 'NIS', 'ש"ח', 'שח', '₪'))
             OR (t.raw_data->>'chargedCurrency' IS NOT NULL AND UPPER(TRIM(t.raw_data->>'chargedCurrency')) NOT IN ('ILS', 'NIS', 'ש"ח', 'שח', '₪'))
@@ -555,7 +555,6 @@ export default async function transactionsV2Routes(fastify, options) {
           values.push(currCode);
           conditions.push(`(
             UPPER(TRIM(t.currency)) = $${values.length}
-            OR UPPER(TRIM(COALESCE(t.original_currency, ''))) = $${values.length}
             OR UPPER(TRIM(COALESCE(t.raw_data->>'originalCurrency', ''))) = $${values.length}
             OR UPPER(TRIM(COALESCE(t.raw_data->>'original_currency', ''))) = $${values.length}
             OR UPPER(TRIM(COALESCE(t.raw_data->>'chargedCurrency', ''))) = $${values.length}
@@ -633,7 +632,7 @@ export default async function transactionsV2Routes(fastify, options) {
           CASE WHEN t.raw_data->>'chargedAmount' ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (t.raw_data->>'chargedAmount')::numeric ELSE NULL END,
           t.amount
         ) AS "chargedAmount",
-        COALESCE(t.original_currency, t.raw_data->>'originalCurrency', t.raw_data->>'original_currency', t.raw_data->>'chargedCurrency') AS "originalCurrency",
+        COALESCE(t.raw_data->>'originalCurrency', t.raw_data->>'original_currency', t.raw_data->>'chargedCurrency') AS "originalCurrency",
         t.currency,
         t.description,
         t.merchant_name AS "merchantName",
@@ -851,7 +850,6 @@ export default async function transactionsV2Routes(fastify, options) {
           )::int AS "installments",
           COUNT(*) FILTER (
             WHERE (currency IS NOT NULL AND UPPER(TRIM(currency)) NOT IN ('ILS', 'NIS', 'ש"ח', 'שח', '₪'))
-               OR (original_currency IS NOT NULL AND UPPER(TRIM(original_currency)) NOT IN ('ILS', 'NIS', 'ש"ח', 'שח', '₪'))
                OR (raw_data->>'originalCurrency' IS NOT NULL AND UPPER(TRIM(raw_data->>'originalCurrency')) NOT IN ('ILS', 'NIS', 'ש"ח', 'שח', '₪'))
                OR (raw_data->>'original_currency' IS NOT NULL AND UPPER(TRIM(raw_data->>'original_currency')) NOT IN ('ILS', 'NIS', 'ש"ח', 'שח', '₪'))
                OR (raw_data->>'chargedCurrency' IS NOT NULL AND UPPER(TRIM(raw_data->>'chargedCurrency')) NOT IN ('ILS', 'NIS', 'ש"ח', 'שח', '₪'))
@@ -910,7 +908,6 @@ export default async function transactionsV2Routes(fastify, options) {
         FROM (
           SELECT COALESCE(
             NULLIF(UPPER(TRIM(currency)), ''),
-            NULLIF(UPPER(TRIM(original_currency)), ''),
             NULLIF(UPPER(TRIM(raw_data->>'originalCurrency')), ''),
             NULLIF(UPPER(TRIM(raw_data->>'original_currency')), ''),
             NULLIF(UPPER(TRIM(raw_data->>'chargedCurrency')), '')
@@ -947,24 +944,32 @@ export default async function transactionsV2Routes(fastify, options) {
           b.bank_company AS "bankCompany",
           b.account_number AS "accountNumber",
           t.amount,
-          t.original_amount AS "originalAmount",
-          t.original_currency AS "originalCurrency",
-          t.charged_amount AS "chargedAmount",
+          COALESCE(
+            CASE WHEN t.raw_data->>'originalAmount' ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (t.raw_data->>'originalAmount')::numeric ELSE NULL END,
+            t.amount
+          ) AS "originalAmount",
+          COALESCE(t.raw_data->>'originalCurrency', t.raw_data->>'original_currency', t.raw_data->>'chargedCurrency') AS "originalCurrency",
+          COALESCE(
+            CASE WHEN t.raw_data->>'chargedAmount' ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (t.raw_data->>'chargedAmount')::numeric ELSE NULL END,
+            t.amount
+          ) AS "chargedAmount",
+          t.currency,
           t.description,
           t.merchant_name AS "merchantName",
           t.user_description AS "userDescription",
           t.category,
           t.date,
           t.processed_date AS "processedDate",
-          t.memo,
+          t.raw_data->>'memo' AS "memo",
           t.raw_data AS "rawData",
-          t.identifier,
-          t.type,
-          t.installments,
+          COALESCE(t.raw_data->>'identifier', t.external_id) AS "identifier",
+          t.raw_data->>'type' AS "type",
+          t.raw_data->'installments' AS "installments",
           t.is_ignored AS "isIgnored",
           t.is_reviewed AS "isReviewed",
           t.is_flagged AS "isFlagged",
           t.is_split AS "isSplit",
+          t.is_cc_billing AS "isCcBilling",
           CASE 
             WHEN t.category = 'משיכת מזומן' 
               OR LOWER(t.merchant_name) LIKE '%משיכת מזומן%' 
