@@ -69,7 +69,10 @@ export default async function categoriesRoutes(fastify, options) {
         id,
         parent_id AS "parentId",
         name,
-        name_en AS "nameEn",
+        CASE 
+          WHEN name_en = name OR (parent_id IS NOT NULL AND name_en ~ '[א-ת]') THEN NULL 
+          ELSE name_en 
+        END AS "nameEn",
         type,
         color,
         icon,
@@ -147,7 +150,10 @@ export default async function categoriesRoutes(fastify, options) {
           id,
           parent_id AS "parentId",
           name,
-          name_en AS "nameEn",
+          CASE 
+          WHEN name_en = name OR (parent_id IS NOT NULL AND name_en ~ '[א-ת]') THEN NULL 
+          ELSE name_en 
+        END AS "nameEn",
           type,
           color,
           icon,

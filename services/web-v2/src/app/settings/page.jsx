@@ -865,7 +865,7 @@ export default function SettingsPage() {
   const activeCategories = activeTab === 'expense' ? expenseCategories : incomeCategories;
 
   return (
-    <div className="space-y-8 max-w-5xl">
+    <div className="space-y-8 max-w-6xl">
       <div>
         <h1 className="text-2xl md:text-3xl font-bold tracking-tight mb-1">
           {t('settings')}
@@ -2007,7 +2007,7 @@ export default function SettingsPage() {
                     <div className="min-w-0 flex-1">
                       <div className="font-bold text-xs sm:text-sm text-dark-text light:text-light-text flex items-center gap-2 flex-wrap">
                         <span className={`truncate ${isInactive ? 'line-through text-dark-text-muted' : ''}`}>{cat.name}</span>
-                        {cat.nameEn && (
+                        {cat.nameEn && cat.nameEn.trim() !== cat.name.trim() && !/[א-ת]/.test(cat.nameEn) && (
                           <span className="text-[11px] font-normal text-dark-text-muted light:text-light-text-muted">
                             ({cat.nameEn})
                           </span>
@@ -2112,42 +2112,46 @@ export default function SettingsPage() {
                 {/* Subcategories Grid */}
                 {isExpanded && (
                   <div className="p-4 pt-2 border-t border-dark-border/40 light:border-light-border/40 bg-dark-surface/50 light:bg-light-surface/50">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5 mt-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-2">
                       {subs.map((sub, subIdx) => {
                         const isSubInactive = sub.isActive === false;
+                        const hasRealNameEn = sub.nameEn && sub.nameEn.trim() !== sub.name.trim() && !/[א-ת]/.test(sub.nameEn);
+
                         return (
                           <div
                             key={sub.id}
-                            className={`group p-2.5 rounded-xl border flex items-center justify-between gap-2 shadow-2xs transition-colors ${
+                            className={`group p-2.5 sm:p-3 rounded-xl border flex items-center justify-between gap-3 shadow-2xs transition-all min-h-[52px] ${
                               isSubInactive
                                 ? 'border-dark-border/40 light:border-light-border/40 bg-dark-surface/40 light:bg-light-surface/40 opacity-60 border-dashed'
-                                : 'border-dark-border/60 light:border-light-border/60 bg-dark-surface light:bg-light-surface hover:border-brand-primary/40'
+                                : 'border-dark-border/60 light:border-light-border/60 bg-dark-surface light:bg-light-surface hover:border-brand-primary/50'
                             }`}
                           >
-                            <div className="flex items-center gap-2.5 min-w-0">
-                              <CategoryBadge category={sub.name} customSvg={sub.customSvg} size={16} className="scale-90" />
-                              <div className="truncate">
-                                <div className={`text-xs font-semibold truncate ${
+                            {/* Subcategory Icon & Name */}
+                            <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                              <CategoryBadge category={sub.name} customSvg={sub.customSvg} size={18} className="shrink-0" />
+                              <div className="min-w-0 flex-1" title={sub.name}>
+                                <div className={`text-xs sm:text-sm font-semibold truncate ${
                                   isSubInactive ? 'line-through text-dark-text-muted' : 'text-dark-text light:text-light-text'
                                 }`}>
                                   {sub.name}
                                 </div>
-                                {sub.nameEn && (
-                                  <div className="text-[10px] text-dark-text-muted light:text-light-text-muted truncate">
+                                {hasRealNameEn && (
+                                  <div className="text-[10px] text-dark-text-muted light:text-light-text-muted truncate" title={sub.nameEn}>
                                     {sub.nameEn}
                                   </div>
                                 )}
                               </div>
                             </div>
 
+                            {/* Actions Bar */}
                             <div className="flex items-center gap-1 shrink-0 opacity-80 group-hover:opacity-100 transition-opacity">
                               {/* Subcategory Reorder Up / Down */}
-                              <div className="flex items-center gap-0.5">
+                              <div className="flex items-center bg-dark-surface-elevated/70 light:bg-light-surface-elevated/70 rounded-md p-0.5 border border-dark-border/50 light:border-light-border/50 shrink-0">
                                 <button
                                   type="button"
                                   disabled={subIdx === 0}
                                   onClick={(e) => handleReorderSubcategory(cat.id, sub.id, 'up', e)}
-                                  className="p-0.5 rounded text-dark-text-muted hover:text-dark-text disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
+                                  className="p-1 rounded hover:bg-dark-surface light:hover:bg-light-surface text-dark-text-muted hover:text-dark-text disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
                                   title="הזז תת-קטגוריה למעלה"
                                 >
                                   <ArrowUp className="w-3 h-3" />
@@ -2156,7 +2160,7 @@ export default function SettingsPage() {
                                   type="button"
                                   disabled={subIdx === subs.length - 1}
                                   onClick={(e) => handleReorderSubcategory(cat.id, sub.id, 'down', e)}
-                                  className="p-0.5 rounded text-dark-text-muted hover:text-dark-text disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
+                                  className="p-1 rounded hover:bg-dark-surface light:hover:bg-light-surface text-dark-text-muted hover:text-dark-text disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
                                   title="הזז תת-קטגוריה למטה"
                                 >
                                   <ArrowDown className="w-3 h-3" />
@@ -2164,7 +2168,7 @@ export default function SettingsPage() {
                               </div>
 
                               {/* Subcategory Active Toggle */}
-                              <div className="flex items-center gap-1 shrink-0 mr-1" dir="ltr" title={!isSubInactive ? 'תת-קטגוריה פעילה (לחץ להשבתה)' : 'תת-קטגוריה מושבתת (לחץ להפעלה)'}>
+                              <div className="flex items-center shrink-0 px-0.5" dir="ltr" title={!isSubInactive ? 'תת-קטגוריה פעילה (לחץ להשבתה)' : 'תת-קטגוריה מושבתת (לחץ להפעלה)'}>
                                 <button
                                   type="button"
                                   onClick={(e) => handleToggleActive(sub, e)}
@@ -2183,7 +2187,7 @@ export default function SettingsPage() {
                               <button
                                 type="button"
                                 onClick={() => handleOpenEdit(sub, cat.name)}
-                                className="p-1 rounded-md text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated transition-colors"
+                                className="p-1 rounded-md text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated transition-colors shrink-0"
                                 title="ערוך תת-קטגוריה"
                               >
                                 <Edit2 className="w-3 h-3" />
@@ -2191,7 +2195,7 @@ export default function SettingsPage() {
                               <button
                                 type="button"
                                 onClick={() => handleDeleteCategory(sub)}
-                                className="p-1 rounded-md text-dark-text-muted light:text-light-text-muted hover:text-rose-500 hover:bg-rose-500/10 transition-colors"
+                                className="p-1 rounded-md text-dark-text-muted light:text-light-text-muted hover:text-rose-500 hover:bg-rose-500/10 transition-colors shrink-0"
                                 title="מחק תת-קטגוריה"
                               >
                                 <Trash2 className="w-3 h-3" />
@@ -2205,7 +2209,7 @@ export default function SettingsPage() {
                       <button
                         type="button"
                         onClick={() => handleOpenAddSub(cat)}
-                        className="p-2.5 rounded-xl border border-dashed border-dark-border light:border-light-border hover:border-brand-primary text-dark-text-muted light:text-light-text-muted hover:text-brand-primary flex items-center justify-center gap-2 text-xs font-medium transition-colors bg-dark-surface/30 light:bg-light-surface/30"
+                        className="p-2.5 sm:p-3 rounded-xl border border-dashed border-dark-border light:border-light-border hover:border-brand-primary text-dark-text-muted light:text-light-text-muted hover:text-brand-primary flex items-center justify-center gap-2 text-xs font-medium transition-colors bg-dark-surface/30 light:bg-light-surface/30 min-h-[52px]"
                       >
                         <Plus className="w-4 h-4" />
                         <span>הוסף תת-קטגוריה</span>

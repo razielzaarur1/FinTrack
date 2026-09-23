@@ -212,13 +212,25 @@ export async function seedCategories(dbClient, userId = '00000000-0000-0000-0000
       for (const sub of mainCat.subs) {
         await dbClient.query(
           `INSERT INTO categories (user_id, name, name_en, type, color, icon, parent_id, is_system, sort_order, is_active)
-           VALUES ($1, $2, $2, $3, $4, $5, $6, true, 0, true)
+           VALUES ($1, $2, NULL, $3, $4, $5, $6, true, 0, true)
            ON CONFLICT (user_id, name) DO UPDATE
              SET parent_id = EXCLUDED.parent_id, icon = EXCLUDED.icon, color = EXCLUDED.color, is_active = EXCLUDED.is_active`,
           [userId, sub.name, mainCat.type, mainCat.color, sub.icon, parentId]
         );
       }
     }
+  }
+
+  // Clean up any subcategories where name_en was mistakenly populated with the Hebrew name
+  try {
+    await dbClient.query(`
+      UPDATE categories 
+      SET name_en = NULL 
+      WHERE parent_id IS NOT NULL 
+        AND (name_en = name OR name_en ~ '[א-ת]')
+    `);
+  } catch (err) {
+    console.warn('[Categories] Subcategory name_en cleanup warning:', err.message);
   }
 }
 
