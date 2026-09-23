@@ -292,7 +292,7 @@ export function generateTransactionExternalId(accountId, tx, occurrenceIndex = 0
 
   // Priority 2: Deterministic SHA-256 composite hash
   const occPart = occurrenceIndex > 0 ? `_#${occurrenceIndex}` : '';
-  const hashPayload = `${accountId}_${dateStr}_${Number(amount).toFixed(2)}_${merchantName}_${description}_${processedDateStr}${occPart}`;
+  const hashPayload = `${accountId}_${dateStr}_${Number(amount).toFixed(2)}_${merchantName}_${description}${occPart}`;
   const hash = crypto.createHash('sha256').update(hashPayload).digest('hex').slice(0, 24);
   return `tx_${dateStr}_${hash}`;
 }
@@ -363,6 +363,81 @@ async function saveTransactionsList(client, accountId, transactions, userId = '0
 
     const status = tx.status || 'completed';
     const rawData = JSON.stringify(tx);
+
+    // If incoming transaction is completed/settled, check if there is an existing pending transaction
+    // in this account that should be transitioned and merged rather than duplicated!
+    if (status !== 'pending') {
+      const pendingCheckQuery = `
+        SELECT id, category, is_manual_category, user_description, is_reviewed, is_ignored
+        FROM transactions
+        WHERE account_id = $1
+          AND status = 'pending'
+          AND ABS(amount - $2) < 0.01
+          AND date >= ($3::date - INTERVAL '5 days')
+          AND date <= ($3::date + INTERVAL '5 days')
+          AND (
+            (NULLIF($4, '') IS NOT NULL AND (
+              LOWER(merchant_name) = LOWER($4) OR
+              LOWER(description) = LOWER($4) OR
+              description ILIKE '%' || $4 || '%' OR
+              $4 ILIKE '%' || merchant_name || '%'
+            ))
+            OR external_id = $5
+          )
+        ORDER BY (date = $3::date) DESC, created_at ASC
+        LIMIT 1
+      `;
+      const pendingMatch = await client.query(pendingCheckQuery, [
+        accountId,
+        amount,
+        dateStr,
+        merchantName,
+        externalId,
+      ]);
+
+      if (pendingMatch.rows.length > 0) {
+        const matchedPendingId = pendingMatch.rows[0].id;
+        const updatePendingQuery = `
+          UPDATE transactions SET
+            status = $1,
+            external_id = $2,
+            date = $3,
+            processed_date = $4,
+            amount = $5,
+            currency = $6,
+            merchant_name = CASE 
+              WHEN transactions.is_manual_category = true THEN transactions.merchant_name 
+              ELSE $7 
+            END,
+            description = CASE 
+              WHEN transactions.user_description IS NOT NULL AND transactions.user_description != '' THEN transactions.description 
+              ELSE $8 
+            END,
+            category = COALESCE(transactions.category, $9),
+            raw_data = $10
+          WHERE id = $11
+          RETURNING id;
+        `;
+        const updateRes = await client.query(updatePendingQuery, [
+          status,
+          externalId,
+          txDate,
+          processedDate,
+          amount,
+          currency,
+          merchantName,
+          description,
+          category,
+          rawData,
+          matchedPendingId,
+        ]);
+
+        if (updateRes.rowCount > 0) {
+          insertedCount++;
+          continue; // Successfully merged into existing transaction preserving all user edits & child relations!
+        }
+      }
+    }
 
     const insertQuery = `
       INSERT INTO transactions (

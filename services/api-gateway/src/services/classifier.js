@@ -1,4 +1,5 @@
 import { pool } from '../db.js';
+import { classifyWithAi } from './ai-classifier.js';
 
 /**
  * 2. Credit Card / Scraper Hebrew Category Mapping
@@ -99,10 +100,14 @@ export function isCashWithdrawalTransaction(merchantName = '', description = '')
 }
 
 /**
- * Hierarchical Classifier Engine:
- * 1. Historical confidence check (if confidence < 85% across transactions -> ללא סיווג)
- * 2. User learned rules (highest priority when confident)
- * 3. Credit Card / Bank scraped category
+ * Hierarchical Smart Classifier Engine:
+ * 1. User manual classification & explicit rules (ABSOLUTE HIGHEST PRIORITY)
+ *    - Explicit rules from user_category_rules
+ *    - User's previous manual classifications on transactions (is_manual_category = true)
+ * 2. Smart AI Classifier (Gemini)
+ *    - Cleans and identifies the actual merchant / business name
+ *    - Selects the best category from user's tree, taking into account user's historical habits
+ * 3. Credit Card / Bank scraped category mapping
  * 4. Israeli Merchant Knowledge Base & Keyword matching
  * 5. Fallback default
  */
@@ -128,45 +133,13 @@ export async function classifyTransaction({
     };
   }
 
-  // --- CONFIDENCE-BASED HISTORICAL CHECK (85% THRESHOLD) ---
-  // If transactions under this merchant or description exist with conflicting categories,
-  // ensure that if dominant category / total < 0.85, it is routed to "ללא סיווג".
-  if (cleanMerchant && cleanMerchant !== 'בית עסק') {
-    try {
-      const distRes = await pool.query(
-        `SELECT category, COUNT(*)::INT as cnt
-         FROM transactions
-         WHERE (LOWER(merchant_name) = LOWER($1) OR LOWER(description) = LOWER($1))
-           AND category IS NOT NULL
-           AND category != 'ללא סיווג'
-         GROUP BY category
-         ORDER BY cnt DESC`,
-        [cleanMerchant]
-      );
+  // =========================================================================
+  // --- TIER 1: USER RULES & MANUAL CLASSIFICATION HISTORY (HIGHEST PRIORITY)
+  // =========================================================================
 
-      const totalCategorized = distRes.rows.reduce((sum, r) => sum + r.cnt, 0);
-      if (totalCategorized >= 2) {
-        const dominantCount = distRes.rows[0].cnt;
-        const confidence = dominantCount / totalCategorized;
-        if (confidence < 0.85) {
-          return {
-            category: 'שונות',
-            subCategory: 'ללא סיווג',
-            source: 'uncertain_historical_confidence',
-            confidence,
-            isCashWithdrawal: false,
-          };
-        }
-      }
-    } catch (err) {
-      console.warn('[Classifier] Error checking historical confidence:', err.message);
-    }
-  }
-
-  // --- 1. USER RULES (Highest Priority) ---
+  // 1A. Check user explicit rules table
   if (cleanMerchant) {
     try {
-      // Check exact match first
       const exactRuleRes = await pool.query(
         `SELECT category, sub_category AS "subCategory"
          FROM user_category_rules
@@ -185,7 +158,6 @@ export async function classifyTransaction({
         };
       }
 
-      // Check substring / contains match
       const containsRuleRes = await pool.query(
         `SELECT category, sub_category AS "subCategory", merchant_pattern
          FROM user_category_rules
@@ -209,7 +181,78 @@ export async function classifyTransaction({
     }
   }
 
-  // --- 2. CREDIT CARD / SCRAPER CATEGORY ---
+  // 1B. Check user's past manual classifications for this merchant or description
+  if (cleanMerchant || cleanDesc) {
+    try {
+      const manualHistoryRes = await pool.query(
+        `SELECT t.category, t.merchant_name
+         FROM transactions t
+         JOIN bank_accounts b ON t.account_id = b.id
+         WHERE b.user_id = $1
+           AND t.is_manual_category = true
+           AND t.category IS NOT NULL
+           AND t.category != 'ללא סיווג'
+           AND (
+             (NULLIF($2, '') IS NOT NULL AND (
+               LOWER(TRIM(t.merchant_name)) = LOWER(TRIM($2))
+               OR LOWER(TRIM(t.description)) = LOWER(TRIM($2))
+             ))
+             OR (NULLIF($3, '') IS NOT NULL AND (
+               LOWER(TRIM(t.merchant_name)) = LOWER(TRIM($3))
+               OR LOWER(TRIM(t.description)) = LOWER(TRIM($3))
+             ))
+           )
+         ORDER BY t.date DESC
+         LIMIT 1`,
+        [userId, cleanMerchant, cleanDesc]
+      );
+
+      if (manualHistoryRes.rows.length > 0) {
+        const foundCategory = manualHistoryRes.rows[0].category;
+        return {
+          category: foundCategory,
+          subCategory: foundCategory,
+          source: 'user_manual_history',
+          isCashWithdrawal: false,
+        };
+      }
+    } catch (err) {
+      console.warn('[Classifier] Error querying manual transaction history:', err.message);
+    }
+  }
+
+  // =========================================================================
+  // --- TIER 2: SMART AI CLASSIFIER (Gemini with user historical context)
+  // =========================================================================
+  try {
+    const aiResult = await classifyWithAi({
+      merchantName: cleanMerchant,
+      description: cleanDesc,
+      rawCategory,
+      amount,
+      userId,
+    });
+
+    if (aiResult && aiResult.success && aiResult.category) {
+      return {
+        category: aiResult.category,
+        subCategory: aiResult.category,
+        cleanMerchant: aiResult.cleanMerchant || cleanMerchant,
+        source: 'ai_gemini',
+        rationale: aiResult.rationale,
+        confidence: aiResult.confidence,
+        isCashWithdrawal: false,
+      };
+    }
+  } catch (aiErr) {
+    console.warn('[Classifier] AI classification attempt error:', aiErr.message);
+  }
+
+  // =========================================================================
+  // --- TIER 3: KNOWLEDGE BASE & CARD CATEGORY FALLBACK
+  // =========================================================================
+
+  // 3A. Credit Card / Scraper category mapping
   if (rawCategory && typeof rawCategory === 'string' && rawCategory.trim()) {
     const cleanRaw = rawCategory.trim();
     for (const mapping of CREDIT_CARD_CATEGORY_MAP) {
@@ -224,7 +267,7 @@ export async function classifyTransaction({
     }
   }
 
-  // --- 3. ISRAELI MERCHANT KNOWLEDGE BASE & KEYWORDS ---
+  // 3B. Israeli Merchant Knowledge Base
   for (const entry of ISRAELI_MERCHANTS_KB) {
     if (entry.regex.test(searchString)) {
       return {
@@ -236,7 +279,7 @@ export async function classifyTransaction({
     }
   }
 
-  // --- 4. FALLBACK DEFAULT ---
+  // 3C. Default fallback
   if (amount > 0) {
     return {
       category: 'משכורת',
@@ -365,10 +408,18 @@ export async function reclassifyAllTransactions(userId = '00000000-0000-0000-000
 
     if (classification.category) {
       const chosenCat = classification.subCategory || classification.category;
-      await pool.query(
-        `UPDATE transactions SET category = $1 WHERE id = $2`,
-        [chosenCat, tx.id]
-      );
+      const cleanMerchant = classification.cleanMerchant;
+      if (cleanMerchant && (!tx.merchant_name || tx.merchant_name === 'בית עסק')) {
+        await pool.query(
+          `UPDATE transactions SET category = $1, merchant_name = $2 WHERE id = $3`,
+          [chosenCat, cleanMerchant, tx.id]
+        );
+      } else {
+        await pool.query(
+          `UPDATE transactions SET category = $1 WHERE id = $2`,
+          [chosenCat, tx.id]
+        );
+      }
       updatedCount++;
     }
   }

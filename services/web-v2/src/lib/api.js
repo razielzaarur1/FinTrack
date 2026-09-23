@@ -141,8 +141,9 @@ export const api = {
   resetCategoriesToDefault: () => request('/api/categories/reset-default', { method: 'POST' }),
   classifyTransaction: (data) => request('/api/categories/classify', { method: 'POST', body: JSON.stringify(data) }),
   getCategoryRules: () => request('/api/categories/rules'),
-  saveCategoryRule: (data) => request('/api/categories/rules', { method: 'POST', body: JSON.stringify(data) }),
   reclassifyAllTransactions: () => request('/api/categories/reclassify-all', { method: 'POST' }),
+  aiSuggestCategory: (data) => request('/api/categories/ai-suggest', { method: 'POST', body: JSON.stringify(data) }),
+  aiClassifyTransaction: (id) => request(`/api/v2/transactions/${id}/ai-classify`, { method: 'POST' }),
 
   // Review Queue
   getReviewQueue: (options = {}) => {

@@ -1,5 +1,7 @@
 import { z } from 'zod';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { pool, seedCategories } from '../db.js';
+import { getAiSettings, getAvailableGeminiModels } from '../services/ai-analyzer.js';
 import {
   classifyTransaction,
   saveUserRule,
@@ -381,6 +383,103 @@ export default async function categoriesRoutes(fastify, options) {
     } catch (err) {
       fastify.log.error(err, 'Failed to reclassify transactions');
       return reply.code(500).send({ error: 'Database error' });
+    }
+  });
+
+  // POST /api/categories/ai-suggest - Complete English name, color & generate SVG icon with Gemini AI
+  fastify.post('/ai-suggest', async (request, reply) => {
+    const { nameHe, currentSvg, attemptIndex } = request.body || {};
+    if (!nameHe || typeof nameHe !== 'string' || !nameHe.trim()) {
+      return reply.code(400).send({ error: 'שם קטגוריה בעברית נדרש' });
+    }
+
+    const cleanName = nameHe.trim();
+    const { geminiApiKey, enableAiAnalysis } = await getAiSettings();
+
+    if (!enableAiAnalysis || !geminiApiKey) {
+      return reply.code(400).send({
+        error: 'ניתוח AI אינו מוגדר או שחסר מפתח API של Gemini בהגדרות.',
+      });
+    }
+
+    try {
+      const isVariation = Boolean(currentSvg || (attemptIndex && attemptIndex > 0));
+      const variationNote = isVariation
+        ? `\nחשוב מאוד: המשתמש לוחץ "נסה עיצוב אחר"! עליך ליצור קונספט ויזואלי ומטפורה עיצובית שונים לחלוטין מהעיצוב הקודם!
+העיצוב הקודם היה:
+${currentSvg || 'עיצוב קודם'}
+בחר אובייקט אחר לחלוטין המתאים לקטגוריה זו!`
+        : '';
+
+      const prompt = `אתה מומחה UX/UI ומעצב אייקונים מקצועי עבור אפליקציית FinTrack.
+המשתמש מגדיר קטגוריה פיננסית חדשה בעברית: "${cleanName}".${variationNote}
+
+עליך לספק:
+1. "nameEn": שם קצר, נקי ומדויק באנגלית (1-3 מילים, Capitalized).
+2. "color": קוד צבע HEX מודרני והרמוני המתאים לאופי הקטגוריה (למשל: ירוק #10b981 למזון/מכולת, כתום #f59e0b לאוכל/מסעדות, כחול #3b82f6 לדיור, סגול #8b5cf6 לרכב/תחבורה, אדום #ef4444 לבריאות, ורוד #ec4899 לקניות, ציאן #06b6d4 לחינוך, וכו').
+3. "customSvg": קוד SVG מלא, נקי ותקני בסגנון Lucide Icons:
+   - קוד יחיד בפורמט: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">...</svg>
+   - אל תוסיף width או height (המערכת שולטת בגודל).
+   - אל תוסיף inline styles או <style>.
+   - אל תוסיף מלבני רקע (<rect width="100%").
+   - צייר אייקון וקטורי ברור ומדויק על רשת של 24x24 תוך שימוש באלמנטים וקטוריים כמו <path>, <circle>, <line>, <polyline>, <polygon>, <rect>.
+4. "designConcept": תיאור קצר בעברית של מה האייקון מייצג (למשל: "משקולת כושר", "נעל ריצה", "ספל קפה", "שן").
+
+החזר אך ורק תשובת JSON תקנית במבנה:
+{
+  "nameEn": "...",
+  "color": "#...",
+  "customSvg": "<svg viewBox=\\"0 0 24 24\\" fill=\\"none\\" stroke=\\"currentColor\\" stroke-width=\\"2\\" stroke-linecap=\\"round\\" stroke-linejoin=\\"round\\">...</svg>",
+  "designConcept": "..."
+}`;
+
+      const dynamicModels = await getAvailableGeminiModels(geminiApiKey);
+      const modelsToTry = dynamicModels.length > 0
+        ? dynamicModels
+        : ['gemini-1.5-flash-002', 'gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-1.5-pro'];
+
+      const genAI = new GoogleGenerativeAI(geminiApiKey);
+      let lastError = null;
+
+      for (const modelName of modelsToTry) {
+        try {
+          const model = genAI.getGenerativeModel({
+            model: modelName,
+            generationConfig: {
+              responseMimeType: 'application/json',
+              temperature: isVariation ? 0.75 : 0.2,
+            },
+          });
+
+          const result = await model.generateContent(prompt);
+          const text = result.response.text();
+          const parsed = JSON.parse(text);
+
+          if (parsed && parsed.nameEn && parsed.customSvg) {
+            let svgCode = parsed.customSvg.trim();
+            const svgMatch = svgCode.match(/<svg[\s\S]*?<\/svg>/i);
+            if (svgMatch) {
+              svgCode = svgMatch[0];
+            }
+
+            return reply.code(200).send({
+              success: true,
+              nameEn: parsed.nameEn,
+              color: parsed.color || '#6366f1',
+              customSvg: svgCode,
+              designConcept: parsed.designConcept || '',
+              modelUsed: modelName,
+            });
+          }
+        } catch (genErr) {
+          lastError = genErr;
+        }
+      }
+
+      throw lastError || new Error('לא התקבלה תשובה תקינה מ-Gemini AI');
+    } catch (err) {
+      fastify.log.error(err, 'Failed to suggest category with AI');
+      return reply.code(500).send({ error: err.message || 'שגיאה ביצירת נתוני קטגוריה באמצעות AI' });
     }
   });
 }

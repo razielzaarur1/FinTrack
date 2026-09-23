@@ -26,7 +26,9 @@ import {
   Receipt,
   Globe,
   Eye,
-  ArrowRight
+  ArrowRight,
+  Sparkles,
+  Loader2
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useApp } from '@/lib/app-context';
@@ -51,6 +53,31 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
   const [copiedRaw, setCopiedRaw] = useState(false);
   const [fxDetails, setFxDetails] = useState(tx?.fxDetails || null);
   const [loadingFx, setLoadingFx] = useState(false);
+  const [aiClassifying, setAiClassifying] = useState(false);
+  const [aiFeedback, setAiFeedback] = useState(null);
+
+  const handleAiClassify = async () => {
+    if (!activeTx?.id) return;
+    setAiClassifying(true);
+    setAiFeedback(null);
+    try {
+      const res = await api.aiClassifyTransaction(activeTx.id);
+      if (res.data && res.data.success) {
+        setCategory(res.data.category);
+        if (res.data.cleanMerchant && (!activeTx.merchantName || activeTx.merchantName === 'בית עסק')) {
+          setActiveTx((prev) => ({ ...prev, merchantName: res.data.cleanMerchant, category: res.data.category }));
+        } else {
+          setActiveTx((prev) => ({ ...prev, category: res.data.category }));
+        }
+        setAiFeedback(`סווג כ-"${res.data.category}" ${res.data.confidence ? `(${Math.round(res.data.confidence * 100)}%)` : ''}`);
+        window.dispatchEvent(new CustomEvent('fintrack_tx_updated'));
+      }
+    } catch (err) {
+      console.error('Failed to AI classify:', err);
+    } finally {
+      setAiClassifying(false);
+    }
+  };
 
   const handleTabsWheel = (e) => {
     if (e.deltaY !== 0) {
@@ -860,14 +887,32 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
 
               {/* Category Picker with Badges & Subcategories */}
               <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">
-                  {t('category')}
-                </label>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">
+                    {t('category')}
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleAiClassify}
+                    disabled={aiClassifying}
+                    className="px-2 py-0.5 rounded-lg bg-gradient-to-r from-indigo-500/15 via-purple-500/15 to-pink-500/15 hover:from-indigo-500/25 hover:to-pink-500/25 border border-purple-500/30 text-purple-400 text-[11px] font-bold flex items-center gap-1 transition-all disabled:opacity-40 cursor-pointer shadow-xs"
+                    title="זהה את העסק וסווג אוטומטית באמצעות Gemini AI בהתחשב בסיווגי העבר שלך"
+                  >
+                    {aiClassifying ? <Loader2 className="w-3 h-3 animate-spin text-purple-400" /> : <Sparkles className="w-3 h-3 text-purple-400" />}
+                    <span>{aiClassifying ? 'מסווג עם AI...' : 'סווג עם AI ✨'}</span>
+                  </button>
+                </div>
                 <CategoryPicker
                   value={category}
                   onChange={setCategory}
                   placeholder={lang === 'he' ? 'בחר קטגוריה או תת-קטגוריה...' : 'Select category...'}
                 />
+                {aiFeedback && (
+                  <div className="text-[11px] text-purple-400 bg-purple-500/10 border border-purple-500/20 px-2 py-0.5 rounded-md flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3 h-3 text-purple-400 shrink-0" />
+                    <span>{aiFeedback}</span>
+                  </div>
+                )}
               </div>
 
               {/* Compact Checkboxes: Ignore & ApplyToSimilar */}

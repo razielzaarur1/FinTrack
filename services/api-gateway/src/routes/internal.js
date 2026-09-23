@@ -1,5 +1,6 @@
 import { pool, getAccountsForScraping } from '../db.js';
 import { processPendingNotifications } from '../services/notifications.js';
+import { consolidatePendingTransactions } from '../services/transactions-consolidator.js';
 
 const DEFAULT_USER_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -66,11 +67,17 @@ export default async function internalRoutes(fastify, options) {
   // POST /on-scrape-completed - Internal webhook called by scraper upon finishing a scrape job
   fastify.post('/on-scrape-completed', async (request, reply) => {
     try {
-      fastify.log.info('Scraper reported job completion; triggering real-time notification engine...');
+      fastify.log.info('Scraper reported job completion; consolidating pending transactions...');
+      const mergeStats = await consolidatePendingTransactions(pool);
+      if (mergeStats.mergedCount > 0) {
+        fastify.log.info(`[Consolidator] Auto-merged ${mergeStats.mergedCount} pending duplicates into completed transactions.`);
+      }
+
+      fastify.log.info('Triggering real-time notification engine...');
       const result = await processPendingNotifications(fastify.log);
-      return reply.code(200).send({ success: true, result });
+      return reply.code(200).send({ success: true, mergeStats, result });
     } catch (err) {
-      fastify.log.error(err, 'Failed to process notifications after scrape completion');
+      fastify.log.error(err, 'Failed to process post-scrape tasks');
       return reply.code(500).send({ error: 'Internal Server Error' });
     }
   });

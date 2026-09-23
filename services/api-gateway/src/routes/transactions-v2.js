@@ -3,7 +3,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { z } from 'zod';
 import { pool } from '../db.js';
-import { saveUserRule } from '../services/classifier.js';
+import { saveUserRule, classifyTransaction } from '../services/classifier.js';
+import { classifyWithAi } from '../services/ai-classifier.js';
 import { verifyTmaToken, verifyTelegramWebAppData } from '../crypto.js';
 import { analyzeReceiptFile, analyzeReceiptUrl } from '../services/ai-analyzer.js';
 import { calculateFxDetails } from '../services/exchange-rates.js';
@@ -15,6 +16,7 @@ import {
   KNOWN_CC_PATTERNS,
   isCcBillingPattern,
 } from '../services/cc-reconciliation.js';
+import { consolidatePendingTransactions } from '../services/transactions-consolidator.js';
 
 const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(process.cwd(), 'uploads');
 if (!fs.existsSync(UPLOADS_DIR)) {
@@ -375,6 +377,7 @@ export default async function transactionsV2Routes(fastify, options) {
   repair0AmountTransactions().catch(() => {});
   repairBitTransactions().catch(() => {});
   autoLinkInstallmentTransactions(pool).catch(() => {});
+  consolidatePendingTransactions(pool).catch(() => {});
 
   // GET /api/v2/transactions - Cursor-based Infinite Scroll Transactions with rich multi-filters
   fastify.get('/', async (request, reply) => {
@@ -2141,6 +2144,63 @@ async function ensureFeeColumnsExist(pool) {
       return reply.code(200).send({ success: true, id, action });
     } catch (err) {
       return reply.code(500).send({ error: 'Database error' });
+    }
+  });
+
+  // POST /api/v2/transactions/:id/ai-classify - Classify single transaction using Gemini AI & merchant recognition
+  fastify.post('/:id/ai-classify', async (request, reply) => {
+    const { id } = request.params;
+    try {
+      const txRes = await pool.query(
+        `SELECT t.id, t.merchant_name, t.description, t.amount, t.raw_data->>'category' AS raw_category, b.user_id
+         FROM transactions t
+         JOIN bank_accounts b ON t.account_id = b.id
+         WHERE t.id = $1`,
+        [id]
+      );
+      if (txRes.rows.length === 0) {
+        return reply.code(404).send({ error: 'Transaction not found' });
+      }
+
+      const tx = txRes.rows[0];
+      const classification = await classifyTransaction({
+        userId: tx.user_id,
+        merchantName: tx.merchant_name,
+        description: tx.description,
+        rawCategory: tx.raw_category,
+        amount: parseFloat(tx.amount || 0),
+      });
+
+      if (classification.category) {
+        const chosenCat = classification.subCategory || classification.category;
+        const cleanMerchant = classification.cleanMerchant;
+
+        if (cleanMerchant && (!tx.merchant_name || tx.merchant_name === 'בית עסק')) {
+          await pool.query(
+            `UPDATE transactions SET category = $1, merchant_name = $2, is_reviewed = true WHERE id = $3`,
+            [chosenCat, cleanMerchant, id]
+          );
+        } else {
+          await pool.query(
+            `UPDATE transactions SET category = $1, is_reviewed = true WHERE id = $2`,
+            [chosenCat, id]
+          );
+        }
+
+        return reply.code(200).send({
+          success: true,
+          category: chosenCat,
+          cleanMerchant: cleanMerchant || tx.merchant_name,
+          source: classification.source,
+          confidence: classification.confidence,
+          rationale: classification.rationale,
+        });
+      }
+
+      return reply.code(200).send({ success: false, message: 'Could not classify' });
+    } catch (err) {
+      fastify.log.error(err, 'Failed to AI classify transaction');
+      return reply.code(500).send({ error: 'Failed to classify transaction' });
     }
   });
 

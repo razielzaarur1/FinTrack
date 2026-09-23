@@ -286,11 +286,9 @@ async def notify_transaction(payload: TransactionNotifyPayload):
 
     raw_amount = float(tx.get("amount") or 0.0)
     abs_amount = abs(raw_amount)
-    is_income = raw_amount > 0 and str(tx.get("category", "")).strip() in (
-        'משכורת', 'הכנסה', 'הכנסות', 'זיכוי', 'העברה', 'השקעות', 'Salary', 'Income', 'Refund'
-    )
+    is_income = raw_amount > 0 or tx.get("isIncome") is True or tx.get("type") == "income"
     symbol = "+" if is_income else "-"
-    color_emoji = "🟢" if is_income else "🔻"
+    color_emoji = "🟢 ⬆️" if is_income else "🔻"
 
     merchant = html.escape(str(tx.get("merchantName") or tx.get("merchant_name") or tx.get("description") or "ללא שם"))
     category = html.escape(str(tx.get("category") or "ללא קטגוריה"))
@@ -313,6 +311,17 @@ async def notify_transaction(payload: TransactionNotifyPayload):
             f"{header}\n\n"
             f"⚠️ <b>סיבת הזיהוי:</b> {reason}\n\n"
             f"🏬 <b>בית עסק:</b> {merchant}\n"
+            f"💰 <b>סכום:</b> {color_emoji} ₪{abs_amount:,.2f} ({symbol})\n"
+            f"🏷️ <b>קטגוריה:</b> {category}\n"
+            f"📅 <b>תאריך:</b> {tx_date}\n"
+            f"🏦 <b>חשבון:</b> {acc_name}"
+            f"{installment_line}"
+        )
+    elif is_income:
+        header = "🟢 <b>תנועת הכנסה / זיכוי חדשה!</b>"
+        msg = (
+            f"{header}\n\n"
+            f"🏬 <b>בית עסק / מקור:</b> {merchant}\n"
             f"💰 <b>סכום:</b> {color_emoji} ₪{abs_amount:,.2f} ({symbol})\n"
             f"🏷️ <b>קטגוריה:</b> {category}\n"
             f"📅 <b>תאריך:</b> {tx_date}\n"

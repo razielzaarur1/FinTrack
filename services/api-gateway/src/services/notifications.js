@@ -352,6 +352,7 @@ function extractInstallmentDetails(tx) {
               description: tx.description,
               category: tx.category,
               currency: tx.currency || 'ILS',
+              isIncome: parseFloat(tx.amount) > 0,
               installments: installmentInfo,
             },
             account: {

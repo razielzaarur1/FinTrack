@@ -89,33 +89,7 @@ export async function classifyScrapedTx(client, {
     return 'משיכת מזומן';
   }
 
-  // Check historical confidence across transactions: if confidence < 85%, route to 'ללא סיווג'
-  if (cleanMerchant && cleanMerchant !== 'בית עסק' && client) {
-    try {
-      const distRes = await client.query(
-        `SELECT category, COUNT(*)::INT as cnt
-         FROM transactions
-         WHERE (LOWER(merchant_name) = LOWER($1) OR LOWER(description) = LOWER($1))
-           AND category IS NOT NULL
-           AND category != 'ללא סיווג'
-         GROUP BY category
-         ORDER BY cnt DESC`,
-        [cleanMerchant]
-      );
-      const totalCategorized = distRes.rows.reduce((sum, r) => sum + r.cnt, 0);
-      if (totalCategorized >= 2) {
-        const dominantCount = distRes.rows[0].cnt;
-        const confidence = dominantCount / totalCategorized;
-        if (confidence < 0.85) {
-          return 'ללא סיווג';
-        }
-      }
-    } catch {
-      // Ignore rule query errors during scrape
-    }
-  }
-
-  // 1. User rules
+  // 1. User rules (explicit rules from user_category_rules)
   if (cleanMerchant && client) {
     try {
       const exactRule = await client.query(
@@ -137,6 +111,39 @@ export async function classifyScrapedTx(client, {
       }
     } catch {
       // Ignore rule query errors during scrape
+    }
+  }
+
+  // 1B. Check user's past manual classifications (is_manual_category = true)
+  if ((cleanMerchant || cleanDesc) && client) {
+    try {
+      const manualHist = await client.query(
+        `SELECT t.category
+         FROM transactions t
+         JOIN bank_accounts b ON t.account_id = b.id
+         WHERE b.user_id = $1
+           AND t.is_manual_category = true
+           AND t.category IS NOT NULL
+           AND t.category != 'ללא סיווג'
+           AND (
+             (NULLIF($2, '') IS NOT NULL AND (
+               LOWER(TRIM(t.merchant_name)) = LOWER(TRIM($2))
+               OR LOWER(TRIM(t.description)) = LOWER(TRIM($2))
+             ))
+             OR (NULLIF($3, '') IS NOT NULL AND (
+               LOWER(TRIM(t.merchant_name)) = LOWER(TRIM($3))
+               OR LOWER(TRIM(t.description)) = LOWER(TRIM($3))
+             ))
+           )
+         ORDER BY t.date DESC
+         LIMIT 1`,
+        [userId, cleanMerchant, cleanDesc]
+      );
+      if (manualHist.rows.length > 0 && manualHist.rows[0].category) {
+        return manualHist.rows[0].category;
+      }
+    } catch {
+      // Ignore history query errors during scrape
     }
   }
 

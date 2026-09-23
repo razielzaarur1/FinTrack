@@ -31,7 +31,8 @@ import {
   HelpCircle,
   ExternalLink,
   RotateCcw,
-  Calendar
+  Calendar,
+  Loader2
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useApp } from '@/lib/app-context';
@@ -139,6 +140,11 @@ export default function SettingsPage() {
   const [formIcon, setFormIcon] = useState('tag');
   const [formSvg, setFormSvg] = useState('');
   const [submittingCat, setSubmittingCat] = useState(false);
+  const [aiSuggesting, setAiSuggesting] = useState(false);
+  const [aiSuggestingAlternative, setAiSuggestingAlternative] = useState(false);
+  const [aiDesignConcept, setAiDesignConcept] = useState('');
+  const [aiAttemptIndex, setAiAttemptIndex] = useState(0);
+  const [aiError, setAiError] = useState('');
   const [reclassifying, setReclassifying] = useState(false);
   const [reclassifyResult, setReclassifyResult] = useState(null);
 
@@ -583,6 +589,9 @@ export default function SettingsPage() {
     setFormNameEn('');
     setFormIcon(parent.icon || 'tag');
     setFormSvg('');
+    setAiDesignConcept('');
+    setAiAttemptIndex(0);
+    setAiError('');
     setIsModalOpen(true);
   };
 
@@ -599,6 +608,9 @@ export default function SettingsPage() {
     // Pre-populate with existing customSvg or generated normalized SVG for the icon
     const existingSvg = cat.customSvg || (cat.icon ? getIconSvgMarkup(cat.icon) : '');
     setFormSvg(existingSvg);
+    setAiDesignConcept('');
+    setAiAttemptIndex(0);
+    setAiError('');
     setIsModalOpen(true);
   };
 
@@ -613,6 +625,9 @@ export default function SettingsPage() {
     setFormNameEn('');
     setFormIcon('tag');
     setFormSvg('');
+    setAiDesignConcept('');
+    setAiAttemptIndex(0);
+    setAiError('');
     setIsModalOpen(true);
   };
 
@@ -680,6 +695,56 @@ export default function SettingsPage() {
       }
     };
     reader.readAsText(file);
+  };
+
+  // AI Complete Category (English name, Color & SVG Icon)
+  const handleAiCompleteCategory = async () => {
+    if (!formName.trim()) return;
+    setAiSuggesting(true);
+    setAiError('');
+    try {
+      const res = await api.aiSuggestCategory({
+        nameHe: formName.trim(),
+        attemptIndex: 0,
+      });
+      if (res.data) {
+        if (res.data.nameEn) setFormNameEn(res.data.nameEn);
+        if (res.data.color) setFormColor(res.data.color);
+        if (res.data.customSvg) setFormSvg(res.data.customSvg);
+        if (res.data.designConcept) setAiDesignConcept(res.data.designConcept);
+        setAiAttemptIndex(1);
+      }
+    } catch (err) {
+      console.error('AI Suggest category error:', err);
+      setAiError(err.message || 'שגיאה בהשלמת נתוני הקטגוריה עם AI');
+    } finally {
+      setAiSuggesting(false);
+    }
+  };
+
+  // AI Generate Alternative SVG Icon Design
+  const handleAiAlternativeSvg = async () => {
+    if (!formName.trim()) return;
+    setAiSuggestingAlternative(true);
+    setAiError('');
+    const nextAttempt = aiAttemptIndex + 1;
+    try {
+      const res = await api.aiSuggestCategory({
+        nameHe: formName.trim(),
+        currentSvg: formSvg,
+        attemptIndex: nextAttempt,
+      });
+      if (res.data) {
+        if (res.data.customSvg) setFormSvg(res.data.customSvg);
+        if (res.data.designConcept) setAiDesignConcept(res.data.designConcept);
+        setAiAttemptIndex(nextAttempt);
+      }
+    } catch (err) {
+      console.error('AI Alternative SVG error:', err);
+      setAiError(err.message || 'שגיאה ביצירת עיצוב חלופי לאייקון עם AI');
+    } finally {
+      setAiSuggestingAlternative(false);
+    }
   };
 
   // Submit Category / Subcategory
@@ -2250,7 +2315,19 @@ export default function SettingsPage() {
             <form onSubmit={handleSubmitCategory} className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">שם הקטגוריה (בעברית) *</label>
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">שם הקטגוריה (בעברית) *</label>
+                    <button
+                      type="button"
+                      onClick={handleAiCompleteCategory}
+                      disabled={aiSuggesting || !formName.trim()}
+                      className="px-2.5 py-0.5 rounded-lg bg-gradient-to-r from-indigo-500/15 via-purple-500/15 to-pink-500/15 hover:from-indigo-500/25 hover:to-pink-500/25 border border-purple-500/30 text-purple-400 text-[11px] font-bold flex items-center gap-1 transition-all disabled:opacity-40 cursor-pointer shadow-xs"
+                      title="השלם אוטומטית שם באנגלית, צבע מתאים ואייקון SVG עם AI"
+                    >
+                      {aiSuggesting ? <Loader2 className="w-3 h-3 animate-spin text-purple-400" /> : <Sparkles className="w-3 h-3 text-purple-400" />}
+                      <span>{aiSuggesting ? 'משלים עם AI...' : 'השלם עם AI ✨'}</span>
+                    </button>
+                  </div>
                   <input
                     type="text"
                     required
@@ -2314,20 +2391,39 @@ export default function SettingsPage() {
                     <span>עיצוב SVG מותאם אישית (אופציונלי)</span>
                   </div>
 
-                  <label className="cursor-pointer px-2.5 py-1 rounded-lg bg-brand-cyan/10 hover:bg-brand-cyan/20 text-brand-cyan text-[11px] font-semibold flex items-center gap-1 transition-colors">
-                    <Upload className="w-3.5 h-3.5" />
-                    <span>העלה קובץ .svg</span>
-                    <input
-                      type="file"
-                      accept=".svg"
-                      onChange={handleSvgFileUpload}
-                      className="hidden"
-                    />
-                  </label>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleAiAlternativeSvg}
+                      disabled={aiSuggestingAlternative || !formName.trim()}
+                      className="px-2.5 py-1 rounded-lg bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/30 text-purple-400 text-[11px] font-semibold flex items-center gap-1 transition-colors disabled:opacity-40 cursor-pointer shadow-xs"
+                      title="בקש מ-AI רעיון ומטפורה אחרת לאייקון עבור קטגוריה זו"
+                    >
+                      {aiSuggestingAlternative ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                      <span>{aiSuggestingAlternative ? 'מעצב מחדש...' : 'נסה עיצוב אחר ✨'}</span>
+                    </button>
+
+                    <label className="cursor-pointer px-2.5 py-1 rounded-lg bg-brand-cyan/10 hover:bg-brand-cyan/20 text-brand-cyan text-[11px] font-semibold flex items-center gap-1 transition-colors">
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>העלה .svg</span>
+                      <input
+                        type="file"
+                        accept=".svg"
+                        onChange={handleSvgFileUpload}
+                        className="hidden"
+                      />
+                    </label>
+                  </div>
                 </div>
 
+                {aiError && (
+                  <div className="p-2 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-[11px]">
+                    {aiError}
+                  </div>
+                )}
+
                 <p className="text-[11px] text-dark-text-muted light:text-light-text-muted">
-                  הדבק קוד SVG (תקני עם viewBox 0 0 24 24) או העלה קובץ. לחץ על "הורד מפרט ופרומפט SVG" לקבלת הנחיות מדויקות ליצירה עם AI.
+                  הדבק קוד SVG (תקני עם viewBox 0 0 24 24), העלה קובץ, או לחץ על "השלם עם AI" / "נסה עיצוב אחר" ליצירה אוטומטית.
                 </p>
 
                 <textarea
@@ -2344,13 +2440,20 @@ export default function SettingsPage() {
 
                 {/* Live Preview */}
                 {formSvg && (
-                  <div className="flex items-center gap-3 pt-1">
-                    <span className="text-[11px] text-dark-text-muted light:text-light-text-muted">תצוגה מקדימה:</span>
-                    <div
-                      className="w-10 h-10 rounded-xl flex items-center justify-center p-2 border border-black/5 dark:border-white/10 [&>svg]:w-full [&>svg]:h-full [&>svg]:stroke-current [&>svg_*]:stroke-current transition-colors"
-                      style={{ color: formColor, backgroundColor: `${formColor}20` }}
-                      dangerouslySetInnerHTML={{ __html: normalizeCategorySvg(formSvg) }}
-                    />
+                  <div className="flex items-center justify-between pt-1">
+                    <div className="flex items-center gap-3">
+                      <span className="text-[11px] text-dark-text-muted light:text-light-text-muted">תצוגה מקדימה:</span>
+                      <div
+                        className="w-10 h-10 rounded-xl flex items-center justify-center p-2 border border-black/5 dark:border-white/10 [&>svg]:w-full [&>svg]:h-full [&>svg]:stroke-current [&>svg_*]:stroke-current transition-colors shadow-xs"
+                        style={{ color: formColor, backgroundColor: `${formColor}20` }}
+                        dangerouslySetInnerHTML={{ __html: normalizeCategorySvg(formSvg) }}
+                      />
+                    </div>
+                    {aiDesignConcept && (
+                      <span className="text-[11px] font-medium text-purple-400 bg-purple-500/10 border border-purple-500/20 px-2.5 py-1 rounded-lg">
+                        קונספט: {aiDesignConcept}
+                      </span>
+                    )}
                   </div>
                 )}
               </div>
