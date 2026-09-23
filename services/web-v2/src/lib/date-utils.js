@@ -89,7 +89,7 @@ export function getFinancialMonthRange(year, month, startDay = 1) {
     monthKey,
     startDate,
     endDate,
-    label: `${monthName} ${y} (${displayRange})`,
+    label: `${monthName} ${y}`,
     shortLabel: `${monthNameShort} ${String(y).slice(2)}`,
     displayRange,
     fullDisplayRange,

@@ -117,6 +117,8 @@ export async function classifyTransaction({
   description = '',
   rawCategory = '',
   amount = 0,
+  receiptVendor = '',
+  receiptItems = [],
 }) {
   const cleanMerchant = (merchantName || '').trim();
   const cleanDesc = (description || '').trim();
@@ -230,6 +232,8 @@ export async function classifyTransaction({
       description: cleanDesc,
       rawCategory,
       amount,
+      receiptVendor,
+      receiptItems,
       userId,
     });
 

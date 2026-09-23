@@ -478,19 +478,23 @@ async function ensureSchema() {
           -- 13. Transaction Receipts
           CREATE TABLE IF NOT EXISTS transaction_receipts (
               id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-              transaction_id UUID NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+              transaction_id UUID REFERENCES transactions(id) ON DELETE SET NULL,
               file_name TEXT,
               file_type VARCHAR(50),
               file_size INT DEFAULT 0,
               file_path TEXT,
               source_url TEXT,
+              receipt_source VARCHAR(50) DEFAULT 'web',
               ai_analyzed BOOLEAN NOT NULL DEFAULT false,
               ai_provider VARCHAR(50) DEFAULT 'gemini',
               extracted_data JSONB DEFAULT '{}'::jsonb,
               created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
           );
 
+          ALTER TABLE transaction_receipts ALTER COLUMN transaction_id DROP NOT NULL;
+          ALTER TABLE transaction_receipts ADD COLUMN IF NOT EXISTS receipt_source VARCHAR(50) DEFAULT 'web';
           CREATE INDEX IF NOT EXISTS idx_receipts_transaction ON transaction_receipts(transaction_id);
+          CREATE INDEX IF NOT EXISTS idx_receipts_unlinked ON transaction_receipts(created_at) WHERE transaction_id IS NULL;
         `);
         // ── Seed MoneyApp Categories Hierarchy (if 0 categories exist) ──
         await seedCategories(client, '00000000-0000-0000-0000-000000000001', false);

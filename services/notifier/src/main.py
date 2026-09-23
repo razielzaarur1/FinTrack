@@ -45,6 +45,7 @@ class TransactionNotifyPayload(BaseModel):
     tmaUrl: Optional[str] = None
     isAnomaly: Optional[bool] = False
     anomalyReason: Optional[str] = None
+    hasLinkedReceipt: Optional[bool] = False
 
 
 class BudgetNotifyPayload(BaseModel):
@@ -304,6 +305,8 @@ async def notify_transaction(payload: TransactionNotifyPayload):
         total_clause = f" (מתוך סך כולל של ₪{total_deal_amount:,.2f})" if total_deal_amount > abs_amount else ""
         installment_line = f"\n💳 <b>תשלומים:</b> {inst_text}{total_clause}"
 
+    receipt_line = "\n🧾 <b>החשבונית קושרה לתנועה זו!</b>" if payload.hasLinkedReceipt else ""
+
     if payload.isAnomaly:
         header = "🚨 <b>התראה על תנועה חריגה!</b>"
         reason = html.escape(payload.anomalyReason or "תנועה גדולה שאינה תואמת את דפוסי העבר ההיסטוריים")
@@ -316,6 +319,7 @@ async def notify_transaction(payload: TransactionNotifyPayload):
             f"📅 <b>תאריך:</b> {tx_date}\n"
             f"🏦 <b>חשבון:</b> {acc_name}"
             f"{installment_line}"
+            f"{receipt_line}"
         )
     elif is_income:
         header = "🟢 <b>תנועת הכנסה / זיכוי חדשה!</b>"
@@ -327,6 +331,7 @@ async def notify_transaction(payload: TransactionNotifyPayload):
             f"📅 <b>תאריך:</b> {tx_date}\n"
             f"🏦 <b>חשבון:</b> {acc_name}"
             f"{installment_line}"
+            f"{receipt_line}"
         )
     else:
         header = "💳 <b>תנועה חדשה זוהתה!</b>"
@@ -338,6 +343,7 @@ async def notify_transaction(payload: TransactionNotifyPayload):
             f"📅 <b>תאריך:</b> {tx_date}\n"
             f"🏦 <b>חשבון:</b> {acc_name}"
             f"{installment_line}"
+            f"{receipt_line}"
         )
 
     reply_markup = None

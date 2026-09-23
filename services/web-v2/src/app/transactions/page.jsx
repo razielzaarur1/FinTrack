@@ -944,12 +944,19 @@ function TransactionsContent() {
                 </label>
                 <select
                   value={datePreset}
-                  onChange={(e) => setDatePreset(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setDatePreset(val);
+                    if (val !== 'custom') {
+                      setStartDate('');
+                      setEndDate('');
+                    }
+                  }}
                   className="w-full p-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs font-medium focus:outline-none focus:border-brand-primary cursor-pointer"
                 >
                   <option value="all">כל הזמנים</option>
-                  <option value="current_month">חודש נוכחי</option>
-                  <option value="last_month">חודש שעבר</option>
+                  <option value="current_month">{`חודש נוכחי (${currentFinancialMonth?.label || ''})`}</option>
+                  <option value="last_month">{`חודש שעבר (${previousFinancialMonth?.label || ''})`}</option>
                   <option value="last_90">90 ימים אחרונים</option>
                   <option value="custom">טווח תאריכים מותאם אישית...</option>
                 </select>
@@ -1082,10 +1089,28 @@ function TransactionsContent() {
               </span>
             )}
 
-            {datePreset !== 'all' && (
+            {(datePreset !== 'all' || startDate || endDate) && (
               <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-sky-500/15 text-sky-500 dark:text-sky-400 font-medium text-[11px]">
-                <span>תקופה: {datePreset}</span>
-                <button onClick={() => setDatePreset('all')}>
+                <span>
+                  {datePreset === 'current_month'
+                    ? `חודש נוכחי (${currentFinancialMonth?.label || ''})`
+                    : datePreset === 'last_month'
+                    ? `חודש שעבר (${previousFinancialMonth?.label || ''})`
+                    : datePreset === 'last_90'
+                    ? '90 ימים אחרונים'
+                    : datePreset === 'custom'
+                    ? (monthOptions.find((o) => o.start === startDate && o.end === endDate)?.label ||
+                       `תאריכים: ${startDate || ''} עד ${endDate || ''}`)
+                    : `תקופה: ${datePreset}`}
+                </span>
+                <button
+                  onClick={() => {
+                    setDatePreset('all');
+                    setStartDate('');
+                    setEndDate('');
+                  }}
+                  title="נקה סינון תקופה"
+                >
                   <X className="w-3 h-3" />
                 </button>
               </span>

@@ -251,7 +251,7 @@ export default function AnalyticsPage() {
           <div className="flex items-center gap-2 text-dark-text light:text-light-text">
             <Calendar className="w-4 h-4 text-brand-primary" />
             <span className="font-semibold text-brand-primary">{lang === 'he' ? 'טווח חישוב נבחר:' : 'Selected Range:'}</span>
-            <span className="font-bold">{activePeriodRange.displayRange}</span>
+            <span className="font-bold">{activePeriodRange.label || activePeriodRange.displayRange}</span>
             <span className="text-dark-text-muted light:text-light-text-muted text-[11px]">
               ({activePeriodRange.startDate} עד {activePeriodRange.endDate})
             </span>

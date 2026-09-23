@@ -166,6 +166,7 @@ await fastify.register(accountsRoutes, { prefix: '/api/accounts' });
 await fastify.register(transactionsRoutes, { prefix: '/api/transactions' });
 await fastify.register(transactionsV2Routes, { prefix: '/api/v2/transactions' });
 await fastify.register(receiptsRoutes, { prefix: '/api/v2/transactions' });
+await fastify.register(receiptsRoutes, { prefix: '/api/receipts' });
 await fastify.register(categoriesRoutes, { prefix: '/api/categories' });
 await fastify.register(analyticsRoutes, { prefix: '/api/analytics' });
 await fastify.register(budgetsRoutes, { prefix: '/api/budgets' });

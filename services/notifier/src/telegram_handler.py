@@ -138,6 +138,104 @@ async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await update.message.reply_text(help_text, parse_mode="HTML")
 
 
+async def process_ingest_response(status_msg, resp_data: dict) -> None:
+    if not resp_data.get("success"):
+        err = resp_data.get("error") or resp_data.get("message") or "שגיאה בעיבוד הקבלה"
+        await status_msg.edit_text(f"❌ שגיאה בקליטת הקבלה: {html.escape(str(err))}")
+        return
+
+    matched = bool(resp_data.get("matched"))
+    tma_receipt_url = resp_data.get("tmaReceiptUrl")
+
+    if matched:
+        msg = (
+            "🧾 <b>קבלה נקלטה ונמצאה תנועה תואמת במערכת!</b>\n"
+            "הקבלה קושרה בהצלחה לתנועה הקיימת."
+        )
+        reply_markup = None
+        if tma_receipt_url and tma_receipt_url.startswith("https://"):
+            reply_markup = InlineKeyboardMarkup([[
+                InlineKeyboardButton(
+                    text="🖼️ פתח מגירת קבלה",
+                    web_app=WebAppInfo(url=tma_receipt_url)
+                )
+            ]])
+        await status_msg.edit_text(msg, parse_mode="HTML", reply_markup=reply_markup)
+    else:
+        msg = (
+            "🧾 <b>הקבלה נקלטה ונשמרה בהצלחה!</b>\n\n"
+            "טרם נמצאה תנועה תואמת במערכת. ברגע שתיקלט תנועה בנקאית תואמת, היא תשויך אליה אוטומטית."
+        )
+        await status_msg.edit_text(msg, parse_mode="HTML")
+
+
+async def handle_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.effective_chat or not update.message or not update.message.photo:
+        return
+
+    allowed_chat_id: Optional[int] = context.bot_data.get("allowed_chat_id")
+    if allowed_chat_id is not None and update.effective_chat.id != allowed_chat_id:
+        logger.warning(f"Ignored photo from unauthorized chat_id={update.effective_chat.id}")
+        await update.message.reply_text("⛔ גישה אינה מורשית.")
+        return
+
+    status_msg = await update.message.reply_text("⏳ קולט ומנתח את הקבלה...")
+    api_url = os.getenv("INTERNAL_API_URL", "http://api-gateway:3000").rstrip("/")
+
+    try:
+        photo = update.message.photo[-1]
+        file_obj = await photo.get_file()
+        file_bytes = await file_obj.download_as_bytearray()
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            files = {"file": ("telegram_receipt.jpg", bytes(file_bytes), "image/jpeg")}
+            resp = await client.post(f"{api_url}/api/receipts/ingest-telegram", files=files)
+            if resp.status_code in (200, 201):
+                await process_ingest_response(status_msg, resp.json())
+            else:
+                await status_msg.edit_text(f"❌ שגיאה בקליטת הקבלה ({resp.status_code}): {html.escape(resp.text[:300])}")
+    except Exception as e:
+        logger.error(f"Error ingesting photo receipt: {e}", exc_info=True)
+        await status_msg.edit_text(f"❌ שגיאה בקליטת הקבלה: {html.escape(str(e))}")
+
+
+async def handle_receipt_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.effective_chat or not update.message or not update.message.document:
+        return
+
+    allowed_chat_id: Optional[int] = context.bot_data.get("allowed_chat_id")
+    if allowed_chat_id is not None and update.effective_chat.id != allowed_chat_id:
+        logger.warning(f"Ignored document from unauthorized chat_id={update.effective_chat.id}")
+        await update.message.reply_text("⛔ גישה אינה מורשית.")
+        return
+
+    doc = update.message.document
+    mime = (doc.mime_type or "").lower()
+    if not (mime.startswith("image/") or mime == "application/pdf" or (doc.file_name and doc.file_name.lower().endswith(('.pdf', '.png', '.jpg', '.jpeg')))):
+        await update.message.reply_text("⚠️ ניתן לשלוח קבצים מסוג תמונה (JPG, PNG) או מסמך PDF בלבד.")
+        return
+
+    status_msg = await update.message.reply_text("⏳ קולט ומנתח את המסמך...")
+    api_url = os.getenv("INTERNAL_API_URL", "http://api-gateway:3000").rstrip("/")
+
+    try:
+        file_obj = await doc.get_file()
+        file_bytes = await file_obj.download_as_bytearray()
+        fname = doc.file_name or "telegram_receipt.pdf"
+        file_mime = doc.mime_type or "application/octet-stream"
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            files = {"file": (fname, bytes(file_bytes), file_mime)}
+            resp = await client.post(f"{api_url}/api/receipts/ingest-telegram", files=files)
+            if resp.status_code in (200, 201):
+                await process_ingest_response(status_msg, resp.json())
+            else:
+                await status_msg.edit_text(f"❌ שגיאה בקליטת המסמך ({resp.status_code}): {html.escape(resp.text[:300])}")
+    except Exception as e:
+        logger.error(f"Error ingesting document receipt: {e}", exc_info=True)
+        await status_msg.edit_text(f"❌ שגיאה בקליטת המסמך: {html.escape(str(e))}")
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_chat or not update.message or not update.message.text:
         return
@@ -156,9 +254,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(f"✅ קוד האימות (OTP) התקבל ונשלח לסורק: <code>{html.escape(text)}</code>", parse_mode="HTML")
         return
 
+    # 2. Check if user sent a digital receipt URL
+    if text.startswith("http://") or text.startswith("https://"):
+        status_msg = await update.message.reply_text("⏳ קולט ומנתח את החשבונית הדיגיטלית...")
+        api_url = os.getenv("INTERNAL_API_URL", "http://api-gateway:3000").rstrip("/")
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                resp = await client.post(f"{api_url}/api/receipts/ingest-telegram", json={"url": text})
+                if resp.status_code in (200, 201):
+                    await process_ingest_response(status_msg, resp.json())
+                else:
+                    await status_msg.edit_text(f"❌ שגיאה בניתוח הקישור ({resp.status_code}): {html.escape(resp.text[:300])}")
+        except Exception as e:
+            logger.error(f"Error ingesting URL receipt: {e}", exc_info=True)
+            await status_msg.edit_text(f"❌ שגיאה בקליטת הקישור: {html.escape(str(e))}")
+        return
+
     # Informative response if user typed regular text
     await update.message.reply_text(
-        "💬 ההודעה התקבלה. אם נדרש קוד אימות (OTP) לסריקה פעילה, הוא ייקלט אוטומטית.\nלרשימת פקודות: /help",
+        "💬 ההודעה התקבלה. ניתן לשלוח קבלות (תמונה/PDF), קישורים לחשבוניות דיגיטליות, או קודי OTP לסריקה.\nלרשימת פקודות: /help",
         parse_mode="HTML"
     )
 
@@ -170,5 +284,8 @@ def setup_handlers(bot_app: Application, allowed_chat_id: Optional[int], tma_bas
     bot_app.add_handler(CommandHandler("status", handle_status))
     bot_app.add_handler(CommandHandler("sync", handle_sync))
     bot_app.add_handler(CommandHandler("help", handle_help))
+    bot_app.add_handler(MessageHandler(filters.PHOTO, handle_receipt_photo))
+    bot_app.add_handler(MessageHandler(filters.Document.ALL, handle_receipt_document))
     bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     logger.info(f"Telegram handlers configured with allowed_chat_id={allowed_chat_id}, tma_base_url={tma_base_url}")
+

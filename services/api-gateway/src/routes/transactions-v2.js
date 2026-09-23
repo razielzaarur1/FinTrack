@@ -583,13 +583,32 @@ export default async function transactionsV2Routes(fastify, options) {
       conditions.push(`ABS(t.amount) <= $${values.length}`);
     }
 
-    // Search query in description, user_description or merchant_name
+    // Search query in description, user_description, merchant_name, notes, splits, or receipt items/vendor/extracted_data
     if (search && search.trim()) {
       values.push(`%${search.trim()}%`);
       conditions.push(`(
         t.description ILIKE $${values.length} OR 
         t.merchant_name ILIKE $${values.length} OR 
-        COALESCE(t.user_description, '') ILIKE $${values.length}
+        COALESCE(t.user_description, '') ILIKE $${values.length} OR
+        EXISTS (
+          SELECT 1 FROM transaction_receipts tr 
+          WHERE tr.transaction_id = t.id 
+            AND (
+              tr.extracted_data::text ILIKE $${values.length} OR 
+              tr.file_name ILIKE $${values.length} OR 
+              COALESCE(tr.source_url, '') ILIKE $${values.length}
+            )
+        ) OR
+        EXISTS (
+          SELECT 1 FROM transaction_notes tn 
+          WHERE tn.transaction_id = t.id 
+            AND tn.content ILIKE $${values.length}
+        ) OR
+        EXISTS (
+          SELECT 1 FROM transaction_splits ts 
+          WHERE ts.transaction_id = t.id 
+            AND (ts.description ILIKE $${values.length} OR ts.category ILIKE $${values.length})
+        )
       )`);
     }
 

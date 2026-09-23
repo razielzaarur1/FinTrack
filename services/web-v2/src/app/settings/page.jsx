@@ -125,7 +125,28 @@ export default function SettingsPage() {
   const [geminiTestResult, setGeminiTestResult] = useState(null);
 
   // Category Tree UI State
-  const [activeTab, setActiveTab] = useState('expense'); // 'expense' | 'income'
+  const [categoryTab, setCategoryTab] = useState('expense'); // 'expense' | 'income'
+  const [activeSettingsTab, setActiveSettingsTab] = useState('general');
+  const [skipDeepAiAnalysis, setSkipDeepAiAnalysis] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const tabParam = new URLSearchParams(window.location.search).get('tab');
+      if (tabParam && ['general', 'categories', 'reconciliation', 'telegram', 'ai', 'danger'].includes(tabParam)) {
+        setActiveSettingsTab(tabParam);
+      }
+    }
+  }, []);
+
+  const handleTabChange = (tabId) => {
+    setActiveSettingsTab(tabId);
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location);
+      url.searchParams.set('tab', tabId);
+      window.history.replaceState({}, '', url);
+    }
+  };
+
   const [expandedCats, setExpandedCats] = useState(new Set(['exp_household', 'exp_shopping']));
 
   // Add/Edit Category Modal State
@@ -188,6 +209,7 @@ export default function SettingsPage() {
         }
         if (s.geminiApiKey) setGeminiApiKey(s.geminiApiKey);
         if (s.enableAiAnalysis !== undefined) setEnableAiAnalysis(s.enableAiAnalysis);
+        if (s.skipDeepAiAnalysis !== undefined) setSkipDeepAiAnalysis(Boolean(s.skipDeepAiAnalysis));
       }
       await checkBotStatus();
       await fetchDetectedCcMerchants();
@@ -242,7 +264,7 @@ export default function SettingsPage() {
         reconciliationMinScore: overrides.ccManualScoreThreshold !== undefined ? overrides.ccManualScoreThreshold : ccManualScoreThreshold,
         ccCustomPatterns: overrides.ccCustomPatterns !== undefined ? overrides.ccCustomPatterns : ccCustomPatterns,
       };
-      await api.saveSystemSettings(updated);
+      await api.updateSystemSettings(updated);
       setCcSettingsSaved(true);
       setTimeout(() => setCcSettingsSaved(false), 3000);
     } catch (err) {
@@ -315,8 +337,8 @@ export default function SettingsPage() {
     list[targetIndex] = temp;
 
     // Build full ordered list preserving other category type
-    const otherTypeCats = categories.filter((c) => activeTab === 'expense' ? c.type === 'income' : (c.type === 'expense' || c.type === 'both' || !c.type));
-    const newCategories = activeTab === 'expense' ? [...list, ...otherTypeCats] : [...otherTypeCats, ...list];
+    const otherTypeCats = categories.filter((c) => categoryTab === 'expense' ? c.type === 'income' : (c.type === 'expense' || c.type === 'both' || !c.type));
+    const newCategories = categoryTab === 'expense' ? [...list, ...otherTypeCats] : [...otherTypeCats, ...list];
     
     // Assign updated sortOrder
     const updatedWithOrder = newCategories.map((c, i) => ({ ...c, sortOrder: i }));
@@ -368,7 +390,7 @@ export default function SettingsPage() {
     }
   };
 
-  const handleSaveTelegramSettings = async () => {
+  const handleSaveTelegramSettings = async (overrides = {}) => {
     setSavingTelegram(true);
     setTelegramSaved(false);
     try {
@@ -384,6 +406,7 @@ export default function SettingsPage() {
         notifyOnBudgetExceeded: notifyOnBudget,
         anomalyMinAmount: Math.max(50, parseInt(anomalyMinAmount, 10) || 300),
         notifyMaxAgeDays: Math.max(1, parseInt(notifyMaxAgeDays, 10) || 7),
+        skipDeepAiAnalysis: overrides.skipDeepAiAnalysis !== undefined ? overrides.skipDeepAiAnalysis : skipDeepAiAnalysis,
         flagLowCcBillings,
         ccBillingMinThreshold: Math.max(0, parseInt(ccBillingMinThreshold, 10) || 500),
         ccBillingLookbackDays: Math.max(1, parseInt(ccBillingLookbackDays, 10) || 60),
@@ -619,8 +642,8 @@ export default function SettingsPage() {
     setEditingCat(null);
     setModalParentId(null);
     setModalParentName('');
-    setFormType(activeTab);
-    setFormColor(activeTab === 'expense' ? '#ec4899' : '#10b981');
+    setFormType(categoryTab);
+    setFormColor(categoryTab === 'expense' ? '#ec4899' : '#10b981');
     setFormName('');
     setFormNameEn('');
     setFormIcon('tag');
@@ -703,13 +726,21 @@ export default function SettingsPage() {
     setAiSuggesting(true);
     setAiError('');
     try {
+      const parentCat = modalParentId ? categories.find((c) => c.id === modalParentId) : null;
+      const parentColor = parentCat?.color || null;
+
       const res = await api.aiSuggestCategory({
         nameHe: formName.trim(),
         attemptIndex: 0,
+        parentColor,
       });
       if (res.data) {
         if (res.data.nameEn) setFormNameEn(res.data.nameEn);
-        if (res.data.color) setFormColor(res.data.color);
+        if (parentColor) {
+          setFormColor(parentColor);
+        } else if (res.data.color) {
+          setFormColor(res.data.color);
+        }
         if (res.data.customSvg) setFormSvg(res.data.customSvg);
         if (res.data.designConcept) setAiDesignConcept(res.data.designConcept);
         setAiAttemptIndex(1);
@@ -729,10 +760,14 @@ export default function SettingsPage() {
     setAiError('');
     const nextAttempt = aiAttemptIndex + 1;
     try {
+      const parentCat = modalParentId ? categories.find((c) => c.id === modalParentId) : null;
+      const parentColor = parentCat?.color || null;
+
       const res = await api.aiSuggestCategory({
         nameHe: formName.trim(),
         currentSvg: formSvg,
         attemptIndex: nextAttempt,
+        parentColor,
       });
       if (res.data) {
         if (res.data.customSvg) setFormSvg(res.data.customSvg);
@@ -862,7 +897,7 @@ export default function SettingsPage() {
   }, [categories]);
 
   // Active Category List based on tab
-  const activeCategories = activeTab === 'expense' ? expenseCategories : incomeCategories;
+  const activeCategories = categoryTab === 'expense' ? expenseCategories : incomeCategories;
 
   return (
     <div className="space-y-8 max-w-6xl">
@@ -875,7 +910,42 @@ export default function SettingsPage() {
         </p>
       </div>
 
-      {/* General Display Settings */}
+
+      {/* Settings Navigation Tabs */}
+      <div className="flex items-center gap-1.5 p-1.5 rounded-2xl bg-dark-surface-elevated/80 light:bg-light-surface-elevated/80 border border-dark-border light:border-light-border overflow-x-auto no-scrollbar shadow-2xs">
+        {[
+          { id: 'general', label: lang === 'he' ? 'כללי ומערכת' : 'General', icon: SettingsIcon },
+          { id: 'categories', label: lang === 'he' ? 'ניהול קטגוריות' : 'Categories', icon: Tag },
+          { id: 'reconciliation', label: lang === 'he' ? 'התאמת אשראי' : 'Credit Card Match', icon: CreditCard },
+          { id: 'telegram', label: lang === 'he' ? 'בוט טלגרם והתראות' : 'Telegram & Alerts', icon: Send },
+          { id: 'ai', label: lang === 'he' ? 'בינה מלאכותית (AI)' : 'Gemini AI', icon: Sparkles },
+          { id: 'danger', label: lang === 'he' ? 'אזור רגיש' : 'Danger Zone', icon: AlertTriangle },
+        ].map((tab) => {
+          const Icon = tab.icon;
+          const isActive = activeSettingsTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => handleTabChange(tab.id)}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs whitespace-nowrap transition-all cursor-pointer ${
+                isActive
+                  ? 'bg-brand-primary text-white shadow-sm ring-2 ring-brand-primary/25'
+                  : 'text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text hover:bg-dark-surface light:hover:bg-light-surface'
+              }`}
+            >
+              <Icon className="w-4 h-4 shrink-0" />
+              <span>{tab.label}</span>
+            </button>
+          );
+        })}
+      </div>
+
+
+      {/* Tab 1: General */}
+      {activeSettingsTab === 'general' && (
+        <div className="space-y-6 animate-in fade-in duration-150">
+          {/* General Display Settings */}
       <div className="p-5 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface space-y-4">
         <h3 className="font-semibold text-base flex items-center gap-2">
           <SettingsIcon className="w-5 h-5 text-brand-primary" />
@@ -910,8 +980,7 @@ export default function SettingsPage() {
           </div>
         </div>
       </div>
-
-      {/* Scraping & Sync Range Preferences */}
+          {/* Scraping & Sync Range Preferences */}
       <div className="p-5 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface space-y-4">
         <div>
           <h3 className="font-semibold text-base flex items-center gap-2">
@@ -1051,218 +1120,512 @@ export default function SettingsPage() {
           </div>
         </div>
       </div>
-
-      {/* Telegram Bot & Real-time Notifications */}
-      <div className="p-5 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface space-y-5">
+          {/* Automated Scraping Schedule with 3h safety limit */}
+      <div className="p-5 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h3 className="font-semibold text-base flex items-center gap-2">
-              <Send className="w-5 h-5 text-sky-400" />
-              <span>{lang === 'he' ? 'אינטגרציית טלגרם והתראות חכמות' : 'Telegram Integration & Alerts'}</span>
+              <Clock className="w-5 h-5 text-indigo-400" />
+              <span>{lang === 'he' ? 'תזמון סריקות אוטומטי (בשעות)' : 'Automated Scrape Schedule (Hours)'}</span>
             </h3>
             <p className="text-xs text-dark-text-muted light:text-light-text-muted mt-0.5">
               {lang === 'he'
-                ? 'הגדר בוט טלגרם אישי להתראות מיידיות על תנועות חדשות עם עריכה ב-TMA, זיהוי חריגות וקודי אימות (OTP)'
-                : 'Configure personal Telegram Bot for instant alerts with TMA editor, anomaly detection and 2FA OTP'}
+                ? 'קביעת תדירות רענון אוטומטית ברקע לכרטיסי אשראי ולחשבונות בנק'
+                : 'Configure background periodic scrape frequency in hours'}
             </p>
           </div>
 
-          {/* Bot Live Status Badge */}
-          <div className="flex items-center gap-2">
-            {botStatus?.configured ? (
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                <span>{botStatus.botUsername ? `@${botStatus.botUsername}` : 'מחובר ופעיל'}</span>
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-slate-800 text-slate-400 border border-slate-700">
-                <span className="w-2 h-2 rounded-full bg-slate-500" />
-                <span>טרם הוגדר בוט</span>
-              </span>
-            )}
+          {/* Master Auto-Scrape Toggle */}
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={autoScrapeEnabled}
+              onChange={(e) => setAutoScrapeEnabled(e.target.checked)}
+              className="rounded border-dark-border text-indigo-600 focus:ring-indigo-500"
+            />
+            <span className="text-xs font-semibold text-dark-text light:text-light-text">
+              {autoScrapeEnabled ? 'סריקה אוטומטית מופעלת' : 'סריקה אוטומטית כבויה'}
+            </span>
+          </label>
+        </div>
+
+        {/* Anti-bot Safety Alert Banner */}
+        <div className="p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-xs flex items-start gap-2.5">
+          <ShieldCheck className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
+          <div>
+            <span className="font-semibold block">מגבלת בטיחות מובנית להגנה מחסימות:</span>
+            <span className="text-[11px] text-indigo-200/80 block">
+              המערכת אוכפת מינימום של 3 שעות בין סריקות אוטומטיות כדי להגן על חשבונותיך מפני זיהוי כבוט או חסימות גישה מצד הבנקים וחברות האשראי. הסריקות מבוצעות בין השעות 08:00 ל-22:00 בלבד.
+            </span>
           </div>
         </div>
 
-        {/* Credentials Form */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Bot Token Input */}
-          <div className="p-4 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated space-y-2">
+          {/* Credit Cards Interval */}
+          <div className="p-4 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated space-y-2.5">
             <div className="flex items-center justify-between">
               <label className="text-xs font-semibold text-dark-text light:text-light-text">
-                {lang === 'he' ? 'טוקן בוט (Bot Token)' : 'Telegram Bot Token'}
+                {lang === 'he' ? 'תדירות רענון לכרטיסי אשראי' : 'Credit Cards Interval'}
               </label>
-              <button
-                type="button"
-                onClick={() => setShowToken(!showToken)}
-                className="text-xs text-dark-text-muted hover:text-dark-text flex items-center gap-1 transition-colors"
+              <span className="text-xs font-bold text-indigo-400">
+                כל {scrapeIntervalCardsHours} שעות
+              </span>
+            </div>
+
+            <input
+              type="number"
+              min="3"
+              max="72"
+              step="1"
+              value={scrapeIntervalCardsHours}
+              onChange={(e) => setScrapeIntervalCardsHours(Math.max(3, parseInt(e.target.value, 10) || 3))}
+              className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text text-xs focus:ring-2 focus:ring-indigo-500/50"
+            />
+
+            {/* Quick Preset Buttons */}
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {[3, 4, 6, 12, 24].map((h) => (
+                <button
+                  key={h}
+                  type="button"
+                  onClick={() => setScrapeIntervalCardsHours(h)}
+                  className={`text-[11px] px-2.5 py-1 rounded-lg border transition-all ${
+                    scrapeIntervalCardsHours === h
+                      ? 'bg-indigo-600 border-indigo-500 text-white font-semibold shadow-sm'
+                      : 'border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text-muted hover:text-dark-text'
+                  }`}
+                >
+                  {h === 24 ? 'פעם ביום (24 שעות)' : `${h} שעות`}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Bank Accounts Interval */}
+          <div className="p-4 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated space-y-2.5">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold text-dark-text light:text-light-text">
+                {lang === 'he' ? 'תדירות רענון לחשבונות בנק' : 'Bank Accounts Interval'}
+              </label>
+              <span className="text-xs font-bold text-indigo-400">
+                כל {scrapeIntervalBanksHours} שעות
+              </span>
+            </div>
+
+            <input
+              type="number"
+              min="3"
+              max="72"
+              step="1"
+              value={scrapeIntervalBanksHours}
+              onChange={(e) => setScrapeIntervalBanksHours(Math.max(3, parseInt(e.target.value, 10) || 3))}
+              className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text text-xs focus:ring-2 focus:ring-indigo-500/50"
+            />
+
+            {/* Quick Preset Buttons */}
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {[4, 6, 8, 12, 24].map((h) => (
+                <button
+                  key={h}
+                  type="button"
+                  onClick={() => setScrapeIntervalBanksHours(h)}
+                  className={`text-[11px] px-2.5 py-1 rounded-lg border transition-all ${
+                    scrapeIntervalBanksHours === h
+                      ? 'bg-indigo-600 border-indigo-500 text-white font-semibold shadow-sm'
+                      : 'border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text-muted hover:text-dark-text'
+                  }`}
+                >
+                  {h === 24 ? 'פעם ביום (24 שעות)' : `${h} שעות`}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Save Schedule Button */}
+        <div className="flex items-center justify-end gap-3 pt-1">
+          {scheduleSaved && (
+            <span className="flex items-center gap-1 text-emerald-400 font-semibold text-xs">
+              <Check className="w-4 h-4" />
+              <span>תזמון הסריקות נשמר בהצלחה!</span>
+            </span>
+          )}
+
+          <button
+            type="button"
+            onClick={handleSaveScheduleSettings}
+            disabled={savingSchedule}
+            className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-md shadow-indigo-600/20 transition-all flex items-center gap-1.5 disabled:opacity-50"
+          >
+            <Check className="w-3.5 h-3.5" />
+            <span>{savingSchedule ? 'שומר...' : 'שמור תזמון סריקות'}</span>
+          </button>
+        </div>
+      </div>
+        </div>
+      )}
+
+      {/* Tab 2: Categories */}
+      {activeSettingsTab === 'categories' && (
+        <div className="space-y-6 animate-in fade-in duration-150">
+          {/* Modern Categories & Custom SVG Design Hub */}
+      <div className="p-6 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface space-y-6 shadow-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h3 className="font-bold text-lg flex items-center gap-2">
+              <Tag className="w-5 h-5 text-brand-primary" />
+              <span>{lang === 'he' ? 'ניהול קטגוריות, תתי-קטגוריות ועיצובי SVG' : 'Categories, Subcategories & SVG Design Hub'}</span>
+            </h3>
+            <p className="text-xs text-dark-text-muted mt-0.5">
+              {lang === 'he'
+                ? 'עץ קטגוריות מלא עם עיצובי סקווירקל צבעוניים. ניתן להוריד מפרט פרומפט ל-AI ולהעלות קובצי SVG מותאמים אישית.'
+                : 'Complete category tree with colored squircle badges. Download AI prompt specs and upload custom SVGs.'}
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setShowResetModal(true);
+                setResetConfirmText('');
+                setResetError('');
+              }}
+              className="px-3.5 py-2 rounded-xl border border-rose-500/40 bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 transition-colors text-xs font-semibold flex items-center gap-1.5 shadow-xs"
+              title="שחזור כל הקטגוריות למבנה ברירת המחדל"
+            >
+              <RotateCcw className="w-4 h-4" />
+              <span>שחזור לברירת מחדל</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleDownloadDesignPrompt}
+              className="px-3.5 py-2 rounded-xl border border-brand-primary/40 bg-brand-primary/10 text-brand-primary hover:bg-brand-primary/20 transition-colors text-xs font-semibold flex items-center gap-1.5 shadow-xs"
+              title="הורד קובץ מפרט עיצוב להעתקה ל-AI ליצירת SVG תואם"
+            >
+              <Download className="w-4 h-4" />
+              <span>הורד מפרט ופרומפט SVG</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleOpenAddMain}
+              className="px-3.5 py-2 rounded-xl bg-brand-primary text-white hover:bg-brand-primary-hover transition-colors text-xs font-bold flex items-center gap-1.5 shadow-sm"
+            >
+              <Plus className="w-4 h-4" />
+              <span>הוסף קטגוריה ראשית</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Tabs: Expenses vs Incomes */}
+        <div className="flex items-center justify-between border-b border-dark-border light:border-light-border pb-3">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setCategoryTab('expense')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+                categoryTab === 'expense'
+                  ? 'bg-rose-500 text-white shadow-sm'
+                  : 'bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text border border-dark-border/40 light:border-light-border/40'
+              }`}
+            >
+              הוצאות ({expenseCategories.length})
+            </button>
+            <button
+              onClick={() => setCategoryTab('income')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+                categoryTab === 'income'
+                  ? 'bg-emerald-600 text-white shadow-sm'
+                  : 'bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text border border-dark-border/40 light:border-light-border/40'
+              }`}
+            >
+              הכנסות ({incomeCategories.length})
+            </button>
+          </div>
+
+          <button
+            onClick={handleReclassifyAll}
+            disabled={reclassifying}
+            className="text-[11px] text-brand-cyan hover:underline flex items-center gap-1 font-medium disabled:opacity-50"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>{reclassifying ? 'מסווג מחדש...' : 'סווג מחדש את כל התנועות'}</span>
+          </button>
+        </div>
+
+        {reclassifyResult && (
+          <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-500 font-medium">
+            סווגו מחדש בהצלחה {reclassifyResult.updated} מתוך {reclassifyResult.total} תנועות לפי עץ הקטגוריות ומאגר העסקים!
+          </div>
+        )}
+
+        {/* Categories Tree Cards */}
+        <div className="space-y-3">
+          {activeCategories.map((cat, catIdx) => {
+            const isExpanded = expandedCats.has(cat.id);
+            const subs = cat.subs || [];
+            const isInactive = cat.isActive === false;
+
+            return (
+              <div
+                key={cat.id}
+                className={`rounded-2xl border transition-all shadow-xs overflow-hidden ${
+                  isInactive
+                    ? 'border-dark-border/50 light:border-light-border/50 bg-dark-surface-elevated/20 light:bg-light-surface-elevated/20 opacity-70'
+                    : 'border-dark-border light:border-light-border bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40'
+                }`}
               >
-                {showToken ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                <span>{showToken ? 'הסתר' : 'הצג'}</span>
-              </button>
-            </div>
-            <input
-              type={showToken ? 'text' : 'password'}
-              value={telegramBotToken}
-              onChange={(e) => setTelegramBotToken(e.target.value)}
-              placeholder="1234567890:ABCdefGHIjklMNOpqrSTUvwxYZ..."
-              className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text text-xs focus:ring-2 focus:ring-sky-500/50"
-            />
-            <p className="text-[11px] text-dark-text-muted light:text-light-text-muted">
-              ניתן להפיק טוקן חינמי ומהיר בטלגרם דרך הבוט הרשמי <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer" className="text-sky-400 hover:underline">@BotFather</a>
-            </p>
-          </div>
+                {/* Main Category Header Row */}
+                <div 
+                  className="p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer hover:bg-dark-surface-elevated/70 light:hover:bg-light-surface-elevated/70 transition-colors"
+                  onClick={() => toggleExpand(cat.id)}
+                >
+                  {/* Category Info */}
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <CategoryBadge category={cat.name} customSvg={cat.customSvg} size={22} className="shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <div className="font-bold text-xs sm:text-sm text-dark-text light:text-light-text flex items-center gap-2 flex-wrap">
+                        <span className={`truncate ${isInactive ? 'line-through text-dark-text-muted' : ''}`}>{cat.name}</span>
+                        {cat.nameEn && cat.nameEn.trim() !== cat.name.trim() && !/[א-ת]/.test(cat.nameEn) && (
+                          <span className="text-[11px] font-normal text-dark-text-muted light:text-light-text-muted">
+                            ({cat.nameEn})
+                          </span>
+                        )}
+                        <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-dark-surface light:bg-light-surface border border-dark-border/60 light:border-light-border/60 text-dark-text-muted light:text-light-text-muted shrink-0">
+                          {subs.length} תתי-קטגוריות
+                        </span>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 ${
+                          cat.type === 'income' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-rose-500/10 text-rose-500'
+                        }`}>
+                          {cat.type === 'income' ? 'הכנסה' : 'הוצאה'}
+                        </span>
+                        {isInactive && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/30 shrink-0">
+                            מושבת
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
 
-          {/* Chat ID Input */}
-          <div className="p-4 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated space-y-2">
-            <label className="text-xs font-semibold text-dark-text light:text-light-text block">
-              {lang === 'he' ? 'מזהה צ׳אט אישי (Chat ID)' : 'Personal Chat ID'}
-            </label>
-            <input
-              type="text"
-              value={telegramChatId}
-              onChange={(e) => setTelegramChatId(e.target.value)}
-              placeholder="לדוגמה: 123456789"
-              className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text text-xs focus:ring-2 focus:ring-sky-500/50"
-            />
-            <p className="text-[11px] text-dark-text-muted light:text-light-text-muted">
-              את ה-Chat ID שלך ניתן לקבל בלחיצת כפתור בבוט <a href="https://t.me/userinfobot" target="_blank" rel="noopener noreferrer" className="text-sky-400 hover:underline">@userinfobot</a>
-            </p>
-          </div>
-        </div>
+                  {/* Actions Bar */}
+                  <div className="flex items-center justify-between sm:justify-end gap-2 pt-2 sm:pt-0 border-t sm:border-t-0 border-dark-border/40 light:border-light-border/40" onClick={(e) => e.stopPropagation()}>
+                    {/* Category Reorder Up / Down */}
+                    <div className="flex items-center gap-0.5 bg-dark-surface light:bg-light-surface rounded-lg p-0.5 border border-dark-border/60 light:border-light-border/60 shrink-0">
+                      <button
+                        type="button"
+                        disabled={catIdx === 0}
+                        onClick={(e) => handleReorderCategory(cat.id, 'up', e)}
+                        className="p-1 rounded hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-dark-text-muted hover:text-dark-text disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
+                        title="הזז קטגוריה למעלה"
+                      >
+                        <ChevronUp className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={catIdx === activeCategories.length - 1}
+                        onClick={(e) => handleReorderCategory(cat.id, 'down', e)}
+                        className="p-1 rounded hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-dark-text-muted hover:text-dark-text disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
+                        title="הזז קטגוריה למטה"
+                      >
+                        <ChevronDown className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
 
-        {/* TMA Base URL Input */}
-        <div className="p-4 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated space-y-2">
-          <label className="text-xs font-semibold text-dark-text light:text-light-text flex items-center gap-1.5">
-            <ExternalLink className="w-3.5 h-3.5 text-sky-400" />
-            <span>{lang === 'he' ? 'כתובת HTTPS עבור Telegram Mini App (TMA)' : 'Public HTTPS URL for TMA'}</span>
-          </label>
-          <input
-            type="url"
-            value={tmaBaseUrl}
-            onChange={(e) => setTmaBaseUrl(e.target.value)}
-            placeholder="https://fintrack.example.com או כתובת Tailscale HTTPS"
-            className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text text-xs focus:ring-2 focus:ring-sky-500/50"
-          />
-          <p className="text-[11px] text-dark-text-muted light:text-light-text-muted">
-            טלגרם דורשת כתובת HTTPS לצורך פתיחת חלון עריכת התנועה (TMA) ישירות בתוך האפליקציה. אם תשאיר ריק, ההודעה תישלח ללא כפתור TMA פנימי.
-          </p>
-        </div>
+                    {/* Active / Inactive Toggle */}
+                    <div className="flex items-center gap-1.5 shrink-0" dir="ltr" title={!isInactive ? 'קטגוריה פעילה (לחץ להשבתה)' : 'קטגוריה מושבתת (לחץ להפעלה)'}>
+                      <button
+                        type="button"
+                        onClick={(e) => handleToggleActive(cat, e)}
+                        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                          !isInactive ? 'bg-emerald-500' : 'bg-slate-600'
+                        }`}
+                      >
+                        <span
+                          className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-xs ring-0 transition duration-200 ease-in-out ${
+                            !isInactive ? 'translate-x-4' : 'translate-x-0'
+                          }`}
+                        />
+                      </button>
+                    </div>
 
-        {/* Notification Rules & Anomaly Preferences */}
-        <div className="p-4 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated space-y-3.5">
-          <div className="font-semibold text-xs text-dark-text light:text-light-text flex items-center gap-1.5">
-            <Bell className="w-4 h-4 text-brand-primary" />
-            <span>{lang === 'he' ? 'סוגי התראות והגדרות זיהוי חריגות' : 'Alert Types & Anomaly Detection'}</span>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-            {/* New Transactions */}
-            <label className="flex items-start gap-2.5 p-2.5 rounded-lg border border-dark-border/60 light:border-light-border/60 bg-dark-surface light:bg-light-surface cursor-pointer">
-              <input
-                type="checkbox"
-                checked={notifyOnNew}
-                onChange={(e) => setNotifyOnNew(e.target.checked)}
-                className="mt-0.5 rounded border-dark-border text-brand-primary focus:ring-brand-primary/50"
-              />
-              <div>
-                <span className="font-medium text-dark-text light:text-light-text block">התראות על כל תנועה חדשה</span>
-                <span className="text-[11px] text-dark-text-muted light:text-light-text-muted block">
-                  שליחת הודעה מיידית עם כפתור TMA לעריכה בכל קליטת עסקה
-                </span>
-              </div>
-            </label>
-
-            {/* Budget Exceeded */}
-            <label className="flex items-start gap-2.5 p-2.5 rounded-lg border border-dark-border/60 light:border-light-border/60 bg-dark-surface light:bg-light-surface cursor-pointer">
-              <input
-                type="checkbox"
-                checked={notifyOnBudget}
-                onChange={(e) => setNotifyOnBudget(e.target.checked)}
-                className="mt-0.5 rounded border-dark-border text-brand-primary focus:ring-brand-primary/50"
-              />
-              <div>
-                <span className="font-medium text-dark-text light:text-light-text block">התראות על חריגה מתקציב</span>
-                <span className="text-[11px] text-dark-text-muted light:text-light-text-muted block">
-                  התראה מיידית כאשר סך ההוצאות החודשי בקטגוריה חוצה את הגבול
-                </span>
-              </div>
-            </label>
-
-            {/* Full History Anomaly Detection */}
-            <label className="flex items-start gap-2.5 p-2.5 rounded-lg border border-dark-border/60 light:border-light-border/60 bg-dark-surface light:bg-light-surface cursor-pointer">
-              <input
-                type="checkbox"
-                checked={notifyOnAnomaly}
-                onChange={(e) => setNotifyOnAnomaly(e.target.checked)}
-                className="mt-0.5 rounded border-dark-border text-brand-primary focus:ring-brand-primary/50"
-              />
-              <div>
-                <span className="font-medium text-amber-400 block flex items-center gap-1">
-                  <Sparkles className="w-3 h-3 text-amber-400" />
-                  זיהוי והתראות על תנועות חריגות (מנוע היסטורי מלא)
-                </span>
-                <span className="text-[11px] text-dark-text-muted light:text-light-text-muted block">
-                  לומד מכל היסטוריית העבר: מתריע על בתי עסק חדשים או קפיצות חריגות בסכום
-                </span>
-              </div>
-            </label>
-
-            {/* Anomaly Min Amount */}
-            <div className="p-2.5 rounded-lg border border-dark-border/60 light:border-light-border/60 bg-dark-surface light:bg-light-surface space-y-1">
-              <label className="font-medium text-dark-text light:text-light-text text-[11px] block">
-                סף מינימום לסכום חריג (₪)
-              </label>
-              <input
-                type="number"
-                min="50"
-                step="50"
-                value={anomalyMinAmount}
-                onChange={(e) => setAnomalyMinAmount(e.target.value)}
-                className="w-full p-1.5 rounded-lg border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs focus:ring-1 focus:ring-brand-primary"
-              />
-              <span className="text-[10px] text-dark-text-muted light:text-light-text-muted block">
-                תנועות מתחת לסכום זה לא ייחשבו כחריגות (ברירת מחדל: 300 ₪)
-              </span>
-            </div>
-
-            {/* Max Notification Age Limit (Days) */}
-            <div className="p-2.5 rounded-lg border border-dark-border/60 light:border-light-border/60 bg-dark-surface light:bg-light-surface space-y-1.5">
-              <label className="font-medium text-dark-text light:text-light-text text-[11px] block flex items-center justify-between">
-                <span>טווח ימים מקסימלי לשליחת התראה</span>
-                <span className="font-bold text-brand-primary">{notifyMaxAgeDays} ימים</span>
-              </label>
-              <div className="flex gap-1.5 items-center">
-                <input
-                  type="number"
-                  min="1"
-                  max="365"
-                  value={notifyMaxAgeDays}
-                  onChange={(e) => setNotifyMaxAgeDays(Math.max(1, parseInt(e.target.value, 10) || 1))}
-                  className="w-16 p-1.5 rounded-lg border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs focus:ring-1 focus:ring-brand-primary font-mono"
-                />
-                <div className="flex gap-1 flex-1 overflow-x-auto no-scrollbar">
-                  {[1, 3, 7, 14, 30].map((days) => (
                     <button
-                      key={days}
                       type="button"
-                      onClick={() => setNotifyMaxAgeDays(days)}
-                      className={`px-2 py-1 rounded text-[10px] font-medium border transition-colors ${
-                        notifyMaxAgeDays === days
-                          ? 'bg-brand-primary/20 border-brand-primary text-brand-primary font-bold'
-                          : 'border-dark-border/60 light:border-light-border/60 text-dark-text-muted hover:text-dark-text'
-                      }`}
+                      onClick={() => handleOpenAddSub(cat)}
+                      className="px-2.5 py-1.5 rounded-lg border border-dark-border light:border-light-border hover:border-brand-primary text-[11px] font-semibold flex items-center gap-1 transition-colors bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text shrink-0"
+                      title="הוסף תת-קטגוריה"
                     >
-                      {days === 7 ? '7 ימים (מומלץ)' : `${days} ימים`}
+                      <Plus className="w-3.5 h-3.5 text-brand-primary" />
+                      <span>תת-קטגוריה</span>
                     </button>
-                  ))}
-                </div>
-              </div>
-              <span className="text-[10px] text-dark-text-muted light:text-light-text-muted block">
-                עסקאות ישנות יותר מטווח זה יסומנו אוטומטית כנקראו ולא יישלחו לטלגרם (ברירת מחדל: 7 ימים).
-              </span>
-            </div>
 
-            {/* Smart Credit Card Billing Anomaly Detection in Bank Accounts */}
+                    <button
+                      type="button"
+                      onClick={() => handleOpenEdit(cat)}
+                      className="p-1.5 rounded-lg border border-dark-border/60 light:border-light-border/60 hover:bg-dark-surface light:hover:bg-light-surface text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text transition-colors shrink-0"
+                      title="ערוך קטגוריה ראשית"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteCategory(cat)}
+                      className="p-1.5 rounded-lg border border-dark-border/60 light:border-light-border/60 hover:bg-rose-500/10 text-dark-text-muted light:text-light-text-muted hover:text-rose-500 transition-colors shrink-0"
+                      title="מחק קטגוריה ראשית"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => toggleExpand(cat.id)}
+                      className="p-1.5 rounded-lg hover:bg-dark-surface light:hover:bg-light-surface text-dark-text-muted light:text-light-text-muted transition-transform shrink-0"
+                      title={isExpanded ? 'סגור תתי-קטגוריות' : 'הצג תתי-קטגוריות'}
+                    >
+                      <ChevronDown className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Subcategories Grid */}
+                {isExpanded && (
+                  <div className="p-4 pt-2 border-t border-dark-border/40 light:border-light-border/40 bg-dark-surface/50 light:bg-light-surface/50">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-2">
+                      {subs.map((sub, subIdx) => {
+                        const isSubInactive = sub.isActive === false;
+                        const hasRealNameEn = sub.nameEn && sub.nameEn.trim() !== sub.name.trim() && !/[א-ת]/.test(sub.nameEn);
+
+                        return (
+                          <div
+                            key={sub.id}
+                            className={`group p-2.5 sm:p-3 rounded-xl border flex items-center justify-between gap-3 shadow-2xs transition-all min-h-[52px] ${
+                              isSubInactive
+                                ? 'border-dark-border/40 light:border-light-border/40 bg-dark-surface/40 light:bg-light-surface/40 opacity-60 border-dashed'
+                                : 'border-dark-border/60 light:border-light-border/60 bg-dark-surface light:bg-light-surface hover:border-brand-primary/50'
+                            }`}
+                          >
+                            {/* Subcategory Icon & Name */}
+                            <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                              <CategoryBadge category={sub.name} customSvg={sub.customSvg} size={18} className="shrink-0" />
+                              <div className="min-w-0 flex-1" title={sub.name}>
+                                <div className={`text-xs sm:text-sm font-semibold truncate ${
+                                  isSubInactive ? 'line-through text-dark-text-muted' : 'text-dark-text light:text-light-text'
+                                }`}>
+                                  {sub.name}
+                                </div>
+                                {hasRealNameEn && (
+                                  <div className="text-[10px] text-dark-text-muted light:text-light-text-muted truncate" title={sub.nameEn}>
+                                    {sub.nameEn}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Actions Bar */}
+                            <div className="flex items-center gap-1 shrink-0 opacity-80 group-hover:opacity-100 transition-opacity">
+                              {/* Subcategory Reorder Up / Down */}
+                              <div className="flex items-center bg-dark-surface-elevated/70 light:bg-light-surface-elevated/70 rounded-md p-0.5 border border-dark-border/50 light:border-light-border/50 shrink-0">
+                                <button
+                                  type="button"
+                                  disabled={subIdx === 0}
+                                  onClick={(e) => handleReorderSubcategory(cat.id, sub.id, 'up', e)}
+                                  className="p-1 rounded hover:bg-dark-surface light:hover:bg-light-surface text-dark-text-muted hover:text-dark-text disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
+                                  title="הזז תת-קטגוריה למעלה"
+                                >
+                                  <ArrowUp className="w-3 h-3" />
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={subIdx === subs.length - 1}
+                                  onClick={(e) => handleReorderSubcategory(cat.id, sub.id, 'down', e)}
+                                  className="p-1 rounded hover:bg-dark-surface light:hover:bg-light-surface text-dark-text-muted hover:text-dark-text disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
+                                  title="הזז תת-קטגוריה למטה"
+                                >
+                                  <ArrowDown className="w-3 h-3" />
+                                </button>
+                              </div>
+
+                              {/* Subcategory Active Toggle */}
+                              <div className="flex items-center shrink-0 px-0.5" dir="ltr" title={!isSubInactive ? 'תת-קטגוריה פעילה (לחץ להשבתה)' : 'תת-קטגוריה מושבתת (לחץ להפעלה)'}>
+                                <button
+                                  type="button"
+                                  onClick={(e) => handleToggleActive(sub, e)}
+                                  className={`relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                                    !isSubInactive ? 'bg-emerald-500' : 'bg-slate-600'
+                                  }`}
+                                >
+                                  <span
+                                    className={`pointer-events-none inline-block h-3 w-3 transform rounded-full bg-white shadow-xs ring-0 transition duration-200 ease-in-out ${
+                                      !isSubInactive ? 'translate-x-3' : 'translate-x-0'
+                                    }`}
+                                  />
+                                </button>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEdit(sub, cat.name)}
+                                className="p-1 rounded-md text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated transition-colors shrink-0"
+                                title="ערוך תת-קטגוריה"
+                              >
+                                <Edit2 className="w-3 h-3" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteCategory(sub)}
+                                className="p-1 rounded-md text-dark-text-muted light:text-light-text-muted hover:text-rose-500 hover:bg-rose-500/10 transition-colors shrink-0"
+                                title="מחק תת-קטגוריה"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {/* Quick Add Subcategory Card inside grid */}
+                      <button
+                        type="button"
+                        onClick={() => handleOpenAddSub(cat)}
+                        className="p-2.5 sm:p-3 rounded-xl border border-dashed border-dark-border light:border-light-border hover:border-brand-primary text-dark-text-muted light:text-light-text-muted hover:text-brand-primary flex items-center justify-center gap-2 text-xs font-medium transition-colors bg-dark-surface/30 light:bg-light-surface/30 min-h-[52px]"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span>הוסף תת-קטגוריה</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+        </div>
+      )}
+
+      {/* Tab 3: Credit Card Reconciliation */}
+      {activeSettingsTab === 'reconciliation' && (
+        <div className="space-y-6 animate-in fade-in duration-150">
+          {/* Credit Card Billing Reconciliation & Linking */}
+      <div className="p-5 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface space-y-5 shadow-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h3 className="font-semibold text-base flex items-center gap-2">
+              <CreditCard className="w-5 h-5 text-indigo-400" />
+              <span>{lang === 'he' ? 'התאמה וקישור חיובי חברות אשראי' : 'Credit Card Reconciliation'}</span>
+            </h3>
+            <p className="text-xs text-dark-text-muted light:text-light-text-muted mt-0.5">
+              {lang === 'he'
+                ? 'אלגוריתם מתקדם לאיתור חיובי אשראי בחשבון הבנק, קישורם לתנועות האשראי או המט״ח המקוריות, ומניעת ספירה כפולה של הוצאות'
+                : 'Advanced algorithm to detect bank CC billings and link them to card transactions'}
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Smart Credit Card Billing Anomaly Detection in Bank Accounts */}
             <div className="col-span-full p-3.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface space-y-3">
               <label className="flex items-start gap-2.5 cursor-pointer">
                 <input
@@ -1579,6 +1942,258 @@ export default function SettingsPage() {
                 )}
               </div>
             </div>
+        </div>
+      </div>
+        </div>
+      )}
+
+      {/* Tab 4: Telegram & Alerts */}
+      {activeSettingsTab === 'telegram' && (
+        <div className="space-y-6 animate-in fade-in duration-150">
+          {/* Telegram Bot & Real-time Notifications */}
+      <div className="p-5 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h3 className="font-semibold text-base flex items-center gap-2">
+              <Send className="w-5 h-5 text-sky-400" />
+              <span>{lang === 'he' ? 'אינטגרציית טלגרם והתראות חכמות' : 'Telegram Integration & Alerts'}</span>
+            </h3>
+            <p className="text-xs text-dark-text-muted light:text-light-text-muted mt-0.5">
+              {lang === 'he'
+                ? 'הגדר בוט טלגרם אישי להתראות מיידיות על תנועות חדשות עם עריכה ב-TMA, זיהוי חריגות וקודי אימות (OTP)'
+                : 'Configure personal Telegram Bot for instant alerts with TMA editor, anomaly detection and 2FA OTP'}
+            </p>
+          </div>
+
+          {/* Bot Live Status Badge */}
+          <div className="flex items-center gap-2">
+            {botStatus?.configured ? (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span>{botStatus.botUsername ? `@${botStatus.botUsername}` : 'מחובר ופעיל'}</span>
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-slate-800 text-slate-400 border border-slate-700">
+                <span className="w-2 h-2 rounded-full bg-slate-500" />
+                <span>טרם הוגדר בוט</span>
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Credentials Form */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Bot Token Input */}
+          <div className="p-4 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold text-dark-text light:text-light-text">
+                {lang === 'he' ? 'טוקן בוט (Bot Token)' : 'Telegram Bot Token'}
+              </label>
+              <button
+                type="button"
+                onClick={() => setShowToken(!showToken)}
+                className="text-xs text-dark-text-muted hover:text-dark-text flex items-center gap-1 transition-colors"
+              >
+                {showToken ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                <span>{showToken ? 'הסתר' : 'הצג'}</span>
+              </button>
+            </div>
+            <input
+              type={showToken ? 'text' : 'password'}
+              value={telegramBotToken}
+              onChange={(e) => setTelegramBotToken(e.target.value)}
+              placeholder="1234567890:ABCdefGHIjklMNOpqrSTUvwxYZ..."
+              className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text text-xs focus:ring-2 focus:ring-sky-500/50"
+            />
+            <p className="text-[11px] text-dark-text-muted light:text-light-text-muted">
+              ניתן להפיק טוקן חינמי ומהיר בטלגרם דרך הבוט הרשמי <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer" className="text-sky-400 hover:underline">@BotFather</a>
+            </p>
+          </div>
+
+          {/* Chat ID Input */}
+          <div className="p-4 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated space-y-2">
+            <label className="text-xs font-semibold text-dark-text light:text-light-text block">
+              {lang === 'he' ? 'מזהה צ׳אט אישי (Chat ID)' : 'Personal Chat ID'}
+            </label>
+            <input
+              type="text"
+              value={telegramChatId}
+              onChange={(e) => setTelegramChatId(e.target.value)}
+              placeholder="לדוגמה: 123456789"
+              className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text text-xs focus:ring-2 focus:ring-sky-500/50"
+            />
+            <p className="text-[11px] text-dark-text-muted light:text-light-text-muted">
+              את ה-Chat ID שלך ניתן לקבל בלחיצת כפתור בבוט <a href="https://t.me/userinfobot" target="_blank" rel="noopener noreferrer" className="text-sky-400 hover:underline">@userinfobot</a>
+            </p>
+          </div>
+        </div>
+
+        {/* TMA Base URL Input */}
+        <div className="p-4 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated space-y-2">
+          <label className="text-xs font-semibold text-dark-text light:text-light-text flex items-center gap-1.5">
+            <ExternalLink className="w-3.5 h-3.5 text-sky-400" />
+            <span>{lang === 'he' ? 'כתובת HTTPS עבור Telegram Mini App (TMA)' : 'Public HTTPS URL for TMA'}</span>
+          </label>
+          <input
+            type="url"
+            value={tmaBaseUrl}
+            onChange={(e) => setTmaBaseUrl(e.target.value)}
+            placeholder="https://fintrack.example.com או כתובת Tailscale HTTPS"
+            className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text text-xs focus:ring-2 focus:ring-sky-500/50"
+          />
+          <p className="text-[11px] text-dark-text-muted light:text-light-text-muted">
+            טלגרם דורשת כתובת HTTPS לצורך פתיחת חלון עריכת התנועה (TMA) ישירות בתוך האפליקציה. אם תשאיר ריק, ההודעה תישלח ללא כפתור TMA פנימי.
+          </p>
+        </div>
+
+        {/* Notification Rules & Anomaly Preferences */}
+        <div className="p-4 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated space-y-3.5">
+          <div className="font-semibold text-xs text-dark-text light:text-light-text flex items-center gap-1.5">
+            <Bell className="w-4 h-4 text-brand-primary" />
+            <span>{lang === 'he' ? 'סוגי התראות והגדרות זיהוי חריגות' : 'Alert Types & Anomaly Detection'}</span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+            {/* New Transactions */}
+            <label className="flex items-start gap-2.5 p-2.5 rounded-lg border border-dark-border/60 light:border-light-border/60 bg-dark-surface light:bg-light-surface cursor-pointer">
+              <input
+                type="checkbox"
+                checked={notifyOnNew}
+                onChange={(e) => setNotifyOnNew(e.target.checked)}
+                className="mt-0.5 rounded border-dark-border text-brand-primary focus:ring-brand-primary/50"
+              />
+              <div>
+                <span className="font-medium text-dark-text light:text-light-text block">התראות על כל תנועה חדשה</span>
+                <span className="text-[11px] text-dark-text-muted light:text-light-text-muted block">
+                  שליחת הודעה מיידית עם כפתור TMA לעריכה בכל קליטת עסקה
+                </span>
+              </div>
+            </label>
+
+            {/* Budget Exceeded */}
+            <label className="flex items-start gap-2.5 p-2.5 rounded-lg border border-dark-border/60 light:border-light-border/60 bg-dark-surface light:bg-light-surface cursor-pointer">
+              <input
+                type="checkbox"
+                checked={notifyOnBudget}
+                onChange={(e) => setNotifyOnBudget(e.target.checked)}
+                className="mt-0.5 rounded border-dark-border text-brand-primary focus:ring-brand-primary/50"
+              />
+              <div>
+                <span className="font-medium text-dark-text light:text-light-text block">התראות על חריגה מתקציב</span>
+                <span className="text-[11px] text-dark-text-muted light:text-light-text-muted block">
+                  התראה מיידית כאשר סך ההוצאות החודשי בקטגוריה חוצה את הגבול
+                </span>
+              </div>
+            </label>
+
+            {/* Full History Anomaly Detection */}
+            <label className="flex items-start gap-2.5 p-2.5 rounded-lg border border-dark-border/60 light:border-light-border/60 bg-dark-surface light:bg-light-surface cursor-pointer">
+              <input
+                type="checkbox"
+                checked={notifyOnAnomaly}
+                onChange={(e) => setNotifyOnAnomaly(e.target.checked)}
+                className="mt-0.5 rounded border-dark-border text-brand-primary focus:ring-brand-primary/50"
+              />
+              <div>
+                <span className="font-medium text-amber-400 block flex items-center gap-1">
+                  <Sparkles className="w-3 h-3 text-amber-400" />
+                  זיהוי והתראות על תנועות חריגות (מנוע היסטורי מלא)
+                </span>
+                <span className="text-[11px] text-dark-text-muted light:text-light-text-muted block">
+                  לומד מכל היסטוריית העבר: מתריע על בתי עסק חדשים או קפיצות חריגות בסכום
+                </span>
+              </div>
+            </label>
+
+            {/* Anomaly Min Amount */}
+            <div className="p-2.5 rounded-lg border border-dark-border/60 light:border-light-border/60 bg-dark-surface light:bg-light-surface space-y-1">
+              <label className="font-medium text-dark-text light:text-light-text text-[11px] block">
+                סף מינימום לסכום חריג (₪)
+              </label>
+              <input
+                type="number"
+                min="50"
+                step="50"
+                value={anomalyMinAmount}
+                onChange={(e) => setAnomalyMinAmount(e.target.value)}
+                className="w-full p-1.5 rounded-lg border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs focus:ring-1 focus:ring-brand-primary"
+              />
+              <span className="text-[10px] text-dark-text-muted light:text-light-text-muted block">
+                תנועות מתחת לסכום זה לא ייחשבו כחריגות (ברירת מחדל: 300 ₪)
+              </span>
+            </div>
+
+            {/* Max Notification Age Limit (Days) */}
+            <div className="p-2.5 rounded-lg border border-dark-border/60 light:border-light-border/60 bg-dark-surface light:bg-light-surface space-y-1.5">
+              <label className="font-medium text-dark-text light:text-light-text text-[11px] block flex items-center justify-between">
+                <span>טווח ימים מקסימלי לשליחת התראה</span>
+                <span className="font-bold text-brand-primary">{notifyMaxAgeDays} ימים</span>
+              </label>
+              <div className="flex gap-1.5 items-center">
+                <input
+                  type="number"
+                  min="1"
+                  max="365"
+                  value={notifyMaxAgeDays}
+                  onChange={(e) => setNotifyMaxAgeDays(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                  className="w-16 p-1.5 rounded-lg border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs focus:ring-1 focus:ring-brand-primary font-mono"
+                />
+                <div className="flex gap-1 flex-1 overflow-x-auto no-scrollbar">
+                  {[1, 3, 7, 14, 30].map((days) => (
+                    <button
+                      key={days}
+                      type="button"
+                      onClick={() => setNotifyMaxAgeDays(days)}
+                      className={`px-2 py-1 rounded text-[10px] font-medium border transition-colors ${
+                        notifyMaxAgeDays === days
+                          ? 'bg-brand-primary/20 border-brand-primary text-brand-primary font-bold'
+                          : 'border-dark-border/60 light:border-light-border/60 text-dark-text-muted hover:text-dark-text'
+                      }`}
+                    >
+                      {days === 7 ? '7 ימים (מומלץ)' : `${days} ימים`}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <span className="text-[10px] text-dark-text-muted light:text-light-text-muted block">
+                עסקאות ישנות יותר מטווח זה יסומנו אוטומטית כנקראו ולא יישלחו לטלגרם (ברירת מחדל: 7 ימים).
+              </span>
+            </div>
+
+          {/* Skip Deep AI Line Item Extraction Toggle */}
+          <div className="col-span-full p-4 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface flex items-center justify-between gap-4">
+            <div className="space-y-0.5">
+              <div className="text-xs font-semibold text-dark-text light:text-light-text flex items-center gap-1.5">
+                <span>{lang === 'he' ? 'שמירת קבלה ללא ניתוח עמוק ב-AI' : 'Skip Deep AI Line Item Extraction'}</span>
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                  {lang === 'he' ? 'מהיר וחסכוני' : 'Fast & Light'}
+                </span>
+              </div>
+              <div className="text-[11px] text-dark-text-muted light:text-light-text-muted">
+                {lang === 'he'
+                  ? 'שמירת קובץ הקבלה או הקישור ישירות במערכת וקישורו לתנועה ללא קריאה ל-Gemini לפירוק פריטים (Line Items).'
+                  : 'Saves the receipt file or URL directly and links to transaction without querying Gemini for itemized breakdown.'}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                const next = !skipDeepAiAnalysis;
+                setSkipDeepAiAnalysis(next);
+                handleSaveTelegramSettings({ skipDeepAiAnalysis: next });
+              }}
+              className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                skipDeepAiAnalysis ? 'bg-brand-primary' : 'bg-slate-600'
+              }`}
+            >
+              <span
+                className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-xs ring-0 transition duration-200 ease-in-out ${
+                  skipDeepAiAnalysis ? 'translate-x-4' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
+
           </div>
         </div>
 
@@ -1627,151 +2242,13 @@ export default function SettingsPage() {
           </div>
         </div>
       </div>
-
-      {/* Automated Scraping Schedule with 3h safety limit */}
-      <div className="p-5 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
-            <h3 className="font-semibold text-base flex items-center gap-2">
-              <Clock className="w-5 h-5 text-indigo-400" />
-              <span>{lang === 'he' ? 'תזמון סריקות אוטומטי (בשעות)' : 'Automated Scrape Schedule (Hours)'}</span>
-            </h3>
-            <p className="text-xs text-dark-text-muted light:text-light-text-muted mt-0.5">
-              {lang === 'he'
-                ? 'קביעת תדירות רענון אוטומטית ברקע לכרטיסי אשראי ולחשבונות בנק'
-                : 'Configure background periodic scrape frequency in hours'}
-            </p>
-          </div>
-
-          {/* Master Auto-Scrape Toggle */}
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={autoScrapeEnabled}
-              onChange={(e) => setAutoScrapeEnabled(e.target.checked)}
-              className="rounded border-dark-border text-indigo-600 focus:ring-indigo-500"
-            />
-            <span className="text-xs font-semibold text-dark-text light:text-light-text">
-              {autoScrapeEnabled ? 'סריקה אוטומטית מופעלת' : 'סריקה אוטומטית כבויה'}
-            </span>
-          </label>
         </div>
+      )}
 
-        {/* Anti-bot Safety Alert Banner */}
-        <div className="p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-xs flex items-start gap-2.5">
-          <ShieldCheck className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
-          <div>
-            <span className="font-semibold block">מגבלת בטיחות מובנית להגנה מחסימות:</span>
-            <span className="text-[11px] text-indigo-200/80 block">
-              המערכת אוכפת מינימום של 3 שעות בין סריקות אוטומטיות כדי להגן על חשבונותיך מפני זיהוי כבוט או חסימות גישה מצד הבנקים וחברות האשראי. הסריקות מבוצעות בין השעות 08:00 ל-22:00 בלבד.
-            </span>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Credit Cards Interval */}
-          <div className="p-4 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated space-y-2.5">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-semibold text-dark-text light:text-light-text">
-                {lang === 'he' ? 'תדירות רענון לכרטיסי אשראי' : 'Credit Cards Interval'}
-              </label>
-              <span className="text-xs font-bold text-indigo-400">
-                כל {scrapeIntervalCardsHours} שעות
-              </span>
-            </div>
-
-            <input
-              type="number"
-              min="3"
-              max="72"
-              step="1"
-              value={scrapeIntervalCardsHours}
-              onChange={(e) => setScrapeIntervalCardsHours(Math.max(3, parseInt(e.target.value, 10) || 3))}
-              className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text text-xs focus:ring-2 focus:ring-indigo-500/50"
-            />
-
-            {/* Quick Preset Buttons */}
-            <div className="flex flex-wrap gap-1.5 pt-1">
-              {[3, 4, 6, 12, 24].map((h) => (
-                <button
-                  key={h}
-                  type="button"
-                  onClick={() => setScrapeIntervalCardsHours(h)}
-                  className={`text-[11px] px-2.5 py-1 rounded-lg border transition-all ${
-                    scrapeIntervalCardsHours === h
-                      ? 'bg-indigo-600 border-indigo-500 text-white font-semibold shadow-sm'
-                      : 'border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text-muted hover:text-dark-text'
-                  }`}
-                >
-                  {h === 24 ? 'פעם ביום (24 שעות)' : `${h} שעות`}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Bank Accounts Interval */}
-          <div className="p-4 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated space-y-2.5">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-semibold text-dark-text light:text-light-text">
-                {lang === 'he' ? 'תדירות רענון לחשבונות בנק' : 'Bank Accounts Interval'}
-              </label>
-              <span className="text-xs font-bold text-indigo-400">
-                כל {scrapeIntervalBanksHours} שעות
-              </span>
-            </div>
-
-            <input
-              type="number"
-              min="3"
-              max="72"
-              step="1"
-              value={scrapeIntervalBanksHours}
-              onChange={(e) => setScrapeIntervalBanksHours(Math.max(3, parseInt(e.target.value, 10) || 3))}
-              className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text text-xs focus:ring-2 focus:ring-indigo-500/50"
-            />
-
-            {/* Quick Preset Buttons */}
-            <div className="flex flex-wrap gap-1.5 pt-1">
-              {[4, 6, 8, 12, 24].map((h) => (
-                <button
-                  key={h}
-                  type="button"
-                  onClick={() => setScrapeIntervalBanksHours(h)}
-                  className={`text-[11px] px-2.5 py-1 rounded-lg border transition-all ${
-                    scrapeIntervalBanksHours === h
-                      ? 'bg-indigo-600 border-indigo-500 text-white font-semibold shadow-sm'
-                      : 'border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text-muted hover:text-dark-text'
-                  }`}
-                >
-                  {h === 24 ? 'פעם ביום (24 שעות)' : `${h} שעות`}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Save Schedule Button */}
-        <div className="flex items-center justify-end gap-3 pt-1">
-          {scheduleSaved && (
-            <span className="flex items-center gap-1 text-emerald-400 font-semibold text-xs">
-              <Check className="w-4 h-4" />
-              <span>תזמון הסריקות נשמר בהצלחה!</span>
-            </span>
-          )}
-
-          <button
-            type="button"
-            onClick={handleSaveScheduleSettings}
-            disabled={savingSchedule}
-            className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-md shadow-indigo-600/20 transition-all flex items-center gap-1.5 disabled:opacity-50"
-          >
-            <Check className="w-3.5 h-3.5" />
-            <span>{savingSchedule ? 'שומר...' : 'שמור תזמון סריקות'}</span>
-          </button>
-        </div>
-      </div>
-
-      {/* 🧾 ניתוח חשבוניות חכם ב-AI (Google Gemini) */}
+      {/* Tab 5: AI & Gemini */}
+      {activeSettingsTab === 'ai' && (
+        <div className="space-y-6 animate-in fade-in duration-150">
+          {/* 🧾 ניתוח חשבוניות חכם ב-AI (Google Gemini) */}
       <div className="p-6 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface space-y-6 shadow-sm">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
@@ -1887,343 +2364,13 @@ export default function SettingsPage() {
           </div>
         </div>
       </div>
-
-      {/* Modern Categories & Custom SVG Design Hub */}
-      <div className="p-6 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface space-y-6 shadow-sm">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <h3 className="font-bold text-lg flex items-center gap-2">
-              <Tag className="w-5 h-5 text-brand-primary" />
-              <span>{lang === 'he' ? 'ניהול קטגוריות, תתי-קטגוריות ועיצובי SVG' : 'Categories, Subcategories & SVG Design Hub'}</span>
-            </h3>
-            <p className="text-xs text-dark-text-muted mt-0.5">
-              {lang === 'he'
-                ? 'עץ קטגוריות מלא עם עיצובי סקווירקל צבעוניים. ניתן להוריד מפרט פרומפט ל-AI ולהעלות קובצי SVG מותאמים אישית.'
-                : 'Complete category tree with colored squircle badges. Download AI prompt specs and upload custom SVGs.'}
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                setShowResetModal(true);
-                setResetConfirmText('');
-                setResetError('');
-              }}
-              className="px-3.5 py-2 rounded-xl border border-rose-500/40 bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 transition-colors text-xs font-semibold flex items-center gap-1.5 shadow-xs"
-              title="שחזור כל הקטגוריות למבנה ברירת המחדל"
-            >
-              <RotateCcw className="w-4 h-4" />
-              <span>שחזור לברירת מחדל</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={handleDownloadDesignPrompt}
-              className="px-3.5 py-2 rounded-xl border border-brand-primary/40 bg-brand-primary/10 text-brand-primary hover:bg-brand-primary/20 transition-colors text-xs font-semibold flex items-center gap-1.5 shadow-xs"
-              title="הורד קובץ מפרט עיצוב להעתקה ל-AI ליצירת SVG תואם"
-            >
-              <Download className="w-4 h-4" />
-              <span>הורד מפרט ופרומפט SVG</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={handleOpenAddMain}
-              className="px-3.5 py-2 rounded-xl bg-brand-primary text-white hover:bg-brand-primary-hover transition-colors text-xs font-bold flex items-center gap-1.5 shadow-sm"
-            >
-              <Plus className="w-4 h-4" />
-              <span>הוסף קטגוריה ראשית</span>
-            </button>
-          </div>
         </div>
+      )}
 
-        {/* Tabs: Expenses vs Incomes */}
-        <div className="flex items-center justify-between border-b border-dark-border light:border-light-border pb-3">
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setActiveTab('expense')}
-              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-                activeTab === 'expense'
-                  ? 'bg-rose-500 text-white shadow-sm'
-                  : 'bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text border border-dark-border/40 light:border-light-border/40'
-              }`}
-            >
-              הוצאות ({expenseCategories.length})
-            </button>
-            <button
-              onClick={() => setActiveTab('income')}
-              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-                activeTab === 'income'
-                  ? 'bg-emerald-600 text-white shadow-sm'
-                  : 'bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text border border-dark-border/40 light:border-light-border/40'
-              }`}
-            >
-              הכנסות ({incomeCategories.length})
-            </button>
-          </div>
-
-          <button
-            onClick={handleReclassifyAll}
-            disabled={reclassifying}
-            className="text-[11px] text-brand-cyan hover:underline flex items-center gap-1 font-medium disabled:opacity-50"
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>{reclassifying ? 'מסווג מחדש...' : 'סווג מחדש את כל התנועות'}</span>
-          </button>
-        </div>
-
-        {reclassifyResult && (
-          <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-500 font-medium">
-            סווגו מחדש בהצלחה {reclassifyResult.updated} מתוך {reclassifyResult.total} תנועות לפי עץ הקטגוריות ומאגר העסקים!
-          </div>
-        )}
-
-        {/* Categories Tree Cards */}
-        <div className="space-y-3">
-          {activeCategories.map((cat, catIdx) => {
-            const isExpanded = expandedCats.has(cat.id);
-            const subs = cat.subs || [];
-            const isInactive = cat.isActive === false;
-
-            return (
-              <div
-                key={cat.id}
-                className={`rounded-2xl border transition-all shadow-xs overflow-hidden ${
-                  isInactive
-                    ? 'border-dark-border/50 light:border-light-border/50 bg-dark-surface-elevated/20 light:bg-light-surface-elevated/20 opacity-70'
-                    : 'border-dark-border light:border-light-border bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40'
-                }`}
-              >
-                {/* Main Category Header Row */}
-                <div 
-                  className="p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer hover:bg-dark-surface-elevated/70 light:hover:bg-light-surface-elevated/70 transition-colors"
-                  onClick={() => toggleExpand(cat.id)}
-                >
-                  {/* Category Info */}
-                  <div className="flex items-center gap-3 min-w-0 flex-1">
-                    <CategoryBadge category={cat.name} customSvg={cat.customSvg} size={22} className="shrink-0" />
-                    <div className="min-w-0 flex-1">
-                      <div className="font-bold text-xs sm:text-sm text-dark-text light:text-light-text flex items-center gap-2 flex-wrap">
-                        <span className={`truncate ${isInactive ? 'line-through text-dark-text-muted' : ''}`}>{cat.name}</span>
-                        {cat.nameEn && cat.nameEn.trim() !== cat.name.trim() && !/[א-ת]/.test(cat.nameEn) && (
-                          <span className="text-[11px] font-normal text-dark-text-muted light:text-light-text-muted">
-                            ({cat.nameEn})
-                          </span>
-                        )}
-                        <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-dark-surface light:bg-light-surface border border-dark-border/60 light:border-light-border/60 text-dark-text-muted light:text-light-text-muted shrink-0">
-                          {subs.length} תתי-קטגוריות
-                        </span>
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 ${
-                          cat.type === 'income' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-rose-500/10 text-rose-500'
-                        }`}>
-                          {cat.type === 'income' ? 'הכנסה' : 'הוצאה'}
-                        </span>
-                        {isInactive && (
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/30 shrink-0">
-                            מושבת
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Actions Bar */}
-                  <div className="flex items-center justify-between sm:justify-end gap-2 pt-2 sm:pt-0 border-t sm:border-t-0 border-dark-border/40 light:border-light-border/40" onClick={(e) => e.stopPropagation()}>
-                    {/* Category Reorder Up / Down */}
-                    <div className="flex items-center gap-0.5 bg-dark-surface light:bg-light-surface rounded-lg p-0.5 border border-dark-border/60 light:border-light-border/60 shrink-0">
-                      <button
-                        type="button"
-                        disabled={catIdx === 0}
-                        onClick={(e) => handleReorderCategory(cat.id, 'up', e)}
-                        className="p-1 rounded hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-dark-text-muted hover:text-dark-text disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
-                        title="הזז קטגוריה למעלה"
-                      >
-                        <ChevronUp className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        disabled={catIdx === activeCategories.length - 1}
-                        onClick={(e) => handleReorderCategory(cat.id, 'down', e)}
-                        className="p-1 rounded hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-dark-text-muted hover:text-dark-text disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
-                        title="הזז קטגוריה למטה"
-                      >
-                        <ChevronDown className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-
-                    {/* Active / Inactive Toggle */}
-                    <div className="flex items-center gap-1.5 shrink-0" dir="ltr" title={!isInactive ? 'קטגוריה פעילה (לחץ להשבתה)' : 'קטגוריה מושבתת (לחץ להפעלה)'}>
-                      <button
-                        type="button"
-                        onClick={(e) => handleToggleActive(cat, e)}
-                        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                          !isInactive ? 'bg-emerald-500' : 'bg-slate-600'
-                        }`}
-                      >
-                        <span
-                          className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-xs ring-0 transition duration-200 ease-in-out ${
-                            !isInactive ? 'translate-x-4' : 'translate-x-0'
-                          }`}
-                        />
-                      </button>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => handleOpenAddSub(cat)}
-                      className="px-2.5 py-1.5 rounded-lg border border-dark-border light:border-light-border hover:border-brand-primary text-[11px] font-semibold flex items-center gap-1 transition-colors bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text shrink-0"
-                      title="הוסף תת-קטגוריה"
-                    >
-                      <Plus className="w-3.5 h-3.5 text-brand-primary" />
-                      <span>תת-קטגוריה</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => handleOpenEdit(cat)}
-                      className="p-1.5 rounded-lg border border-dark-border/60 light:border-light-border/60 hover:bg-dark-surface light:hover:bg-light-surface text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text transition-colors shrink-0"
-                      title="ערוך קטגוריה ראשית"
-                    >
-                      <Edit2 className="w-3.5 h-3.5" />
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteCategory(cat)}
-                      className="p-1.5 rounded-lg border border-dark-border/60 light:border-light-border/60 hover:bg-rose-500/10 text-dark-text-muted light:text-light-text-muted hover:text-rose-500 transition-colors shrink-0"
-                      title="מחק קטגוריה ראשית"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => toggleExpand(cat.id)}
-                      className="p-1.5 rounded-lg hover:bg-dark-surface light:hover:bg-light-surface text-dark-text-muted light:text-light-text-muted transition-transform shrink-0"
-                      title={isExpanded ? 'סגור תתי-קטגוריות' : 'הצג תתי-קטגוריות'}
-                    >
-                      <ChevronDown className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
-                    </button>
-                  </div>
-                </div>
-
-                {/* Subcategories Grid */}
-                {isExpanded && (
-                  <div className="p-4 pt-2 border-t border-dark-border/40 light:border-light-border/40 bg-dark-surface/50 light:bg-light-surface/50">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-2">
-                      {subs.map((sub, subIdx) => {
-                        const isSubInactive = sub.isActive === false;
-                        const hasRealNameEn = sub.nameEn && sub.nameEn.trim() !== sub.name.trim() && !/[א-ת]/.test(sub.nameEn);
-
-                        return (
-                          <div
-                            key={sub.id}
-                            className={`group p-2.5 sm:p-3 rounded-xl border flex items-center justify-between gap-3 shadow-2xs transition-all min-h-[52px] ${
-                              isSubInactive
-                                ? 'border-dark-border/40 light:border-light-border/40 bg-dark-surface/40 light:bg-light-surface/40 opacity-60 border-dashed'
-                                : 'border-dark-border/60 light:border-light-border/60 bg-dark-surface light:bg-light-surface hover:border-brand-primary/50'
-                            }`}
-                          >
-                            {/* Subcategory Icon & Name */}
-                            <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                              <CategoryBadge category={sub.name} customSvg={sub.customSvg} size={18} className="shrink-0" />
-                              <div className="min-w-0 flex-1" title={sub.name}>
-                                <div className={`text-xs sm:text-sm font-semibold truncate ${
-                                  isSubInactive ? 'line-through text-dark-text-muted' : 'text-dark-text light:text-light-text'
-                                }`}>
-                                  {sub.name}
-                                </div>
-                                {hasRealNameEn && (
-                                  <div className="text-[10px] text-dark-text-muted light:text-light-text-muted truncate" title={sub.nameEn}>
-                                    {sub.nameEn}
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-
-                            {/* Actions Bar */}
-                            <div className="flex items-center gap-1 shrink-0 opacity-80 group-hover:opacity-100 transition-opacity">
-                              {/* Subcategory Reorder Up / Down */}
-                              <div className="flex items-center bg-dark-surface-elevated/70 light:bg-light-surface-elevated/70 rounded-md p-0.5 border border-dark-border/50 light:border-light-border/50 shrink-0">
-                                <button
-                                  type="button"
-                                  disabled={subIdx === 0}
-                                  onClick={(e) => handleReorderSubcategory(cat.id, sub.id, 'up', e)}
-                                  className="p-1 rounded hover:bg-dark-surface light:hover:bg-light-surface text-dark-text-muted hover:text-dark-text disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
-                                  title="הזז תת-קטגוריה למעלה"
-                                >
-                                  <ArrowUp className="w-3 h-3" />
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={subIdx === subs.length - 1}
-                                  onClick={(e) => handleReorderSubcategory(cat.id, sub.id, 'down', e)}
-                                  className="p-1 rounded hover:bg-dark-surface light:hover:bg-light-surface text-dark-text-muted hover:text-dark-text disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
-                                  title="הזז תת-קטגוריה למטה"
-                                >
-                                  <ArrowDown className="w-3 h-3" />
-                                </button>
-                              </div>
-
-                              {/* Subcategory Active Toggle */}
-                              <div className="flex items-center shrink-0 px-0.5" dir="ltr" title={!isSubInactive ? 'תת-קטגוריה פעילה (לחץ להשבתה)' : 'תת-קטגוריה מושבתת (לחץ להפעלה)'}>
-                                <button
-                                  type="button"
-                                  onClick={(e) => handleToggleActive(sub, e)}
-                                  className={`relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                                    !isSubInactive ? 'bg-emerald-500' : 'bg-slate-600'
-                                  }`}
-                                >
-                                  <span
-                                    className={`pointer-events-none inline-block h-3 w-3 transform rounded-full bg-white shadow-xs ring-0 transition duration-200 ease-in-out ${
-                                      !isSubInactive ? 'translate-x-3' : 'translate-x-0'
-                                    }`}
-                                  />
-                                </button>
-                              </div>
-
-                              <button
-                                type="button"
-                                onClick={() => handleOpenEdit(sub, cat.name)}
-                                className="p-1 rounded-md text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated transition-colors shrink-0"
-                                title="ערוך תת-קטגוריה"
-                              >
-                                <Edit2 className="w-3 h-3" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteCategory(sub)}
-                                className="p-1 rounded-md text-dark-text-muted light:text-light-text-muted hover:text-rose-500 hover:bg-rose-500/10 transition-colors shrink-0"
-                                title="מחק תת-קטגוריה"
-                              >
-                                <Trash2 className="w-3 h-3" />
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-
-                      {/* Quick Add Subcategory Card inside grid */}
-                      <button
-                        type="button"
-                        onClick={() => handleOpenAddSub(cat)}
-                        className="p-2.5 sm:p-3 rounded-xl border border-dashed border-dark-border light:border-light-border hover:border-brand-primary text-dark-text-muted light:text-light-text-muted hover:text-brand-primary flex items-center justify-center gap-2 text-xs font-medium transition-colors bg-dark-surface/30 light:bg-light-surface/30 min-h-[52px]"
-                      >
-                        <Plus className="w-4 h-4" />
-                        <span>הוסף תת-קטגוריה</span>
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Danger Zone: Data Management & Reset */}
+      {/* Tab 6: Danger Zone */}
+      {activeSettingsTab === 'danger' && (
+        <div className="space-y-6 animate-in fade-in duration-150">
+          {/* Danger Zone: Data Management & Reset */}
       <div className="p-6 rounded-2xl border border-red-500/30 bg-red-500/5 light:bg-red-50/50 space-y-5">
         <div>
           <h3 className="font-bold text-lg flex items-center gap-2 text-red-500">
@@ -2295,6 +2442,8 @@ export default function SettingsPage() {
           </div>
         </div>
       </div>
+        </div>
+      )}
 
       {/* Add / Edit Category & SVG Modal */}
       {isModalOpen && (

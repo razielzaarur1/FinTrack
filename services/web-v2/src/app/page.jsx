@@ -135,7 +135,7 @@ export default function DashboardPage() {
             <span>{lang === 'he' ? 'החודש הנוכחי' : 'Current month'}</span>
             {currentFinancialMonth && (
               <span className="font-semibold text-brand-income bg-brand-income/10 px-1.5 py-0.5 rounded text-[11px]">
-                {currentFinancialMonth.displayRange}
+                {currentFinancialMonth.label}
               </span>
             )}
           </div>
@@ -154,7 +154,7 @@ export default function DashboardPage() {
             <span>{lang === 'he' ? 'החודש הנוכחי' : 'Current month'}</span>
             {currentFinancialMonth && (
               <span className="font-semibold text-brand-expense bg-brand-expense/10 px-1.5 py-0.5 rounded text-[11px]">
-                {currentFinancialMonth.displayRange}
+                {currentFinancialMonth.label}
               </span>
             )}
           </div>

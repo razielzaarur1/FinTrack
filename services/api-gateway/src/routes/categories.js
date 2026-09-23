@@ -394,7 +394,7 @@ export default async function categoriesRoutes(fastify, options) {
 
   // POST /api/categories/ai-suggest - Complete English name, color & generate SVG icon with Gemini AI
   fastify.post('/ai-suggest', async (request, reply) => {
-    const { nameHe, currentSvg, attemptIndex } = request.body || {};
+    const { nameHe, currentSvg, attemptIndex, parentColor } = request.body || {};
     if (!nameHe || typeof nameHe !== 'string' || !nameHe.trim()) {
       return reply.code(400).send({ error: 'שם קטגוריה בעברית נדרש' });
     }
@@ -417,19 +417,26 @@ ${currentSvg || 'עיצוב קודם'}
 בחר אובייקט אחר לחלוטין המתאים לקטגוריה זו!`
         : '';
 
+      const hasValidParentColor = parentColor && /^#[0-9a-fA-F]{6}$/i.test(parentColor);
+      const colorRequirement = hasValidParentColor
+        ? `2. "color": חובה להשתמש בדיוק בצבע של קטגוריית האב: "${parentColor}".`
+        : `2. "color": קוד צבע HEX מודרני והרמוני המתאים לאופי הקטגוריה (למשל: ירוק #10b981 למזון/מכולת, כתום #f59e0b לאוכל/מסעדות, כחול #3b82f6 לדיור, סגול #8b5cf6 לרכב/תחבורה, אדום #ef4444 לבריאות, ורוד #ec4899 לקניות, ציאן #06b6d4 לחינוך, וכו').`;
+
       const prompt = `אתה מומחה UX/UI ומעצב אייקונים מקצועי עבור אפליקציית FinTrack.
 המשתמש מגדיר קטגוריה פיננסית חדשה בעברית: "${cleanName}".${variationNote}
 
 עליך לספק:
 1. "nameEn": שם קצר, נקי ומדויק באנגלית (1-3 מילים, Capitalized).
-2. "color": קוד צבע HEX מודרני והרמוני המתאים לאופי הקטגוריה (למשל: ירוק #10b981 למזון/מכולת, כתום #f59e0b לאוכל/מסעדות, כחול #3b82f6 לדיור, סגול #8b5cf6 לרכב/תחבורה, אדום #ef4444 לבריאות, ורוד #ec4899 לקניות, ציאן #06b6d4 לחינוך, וכו').
+${colorRequirement}
 3. "customSvg": קוד SVG מלא, נקי ותקני בסגנון Lucide Icons:
    - קוד יחיד בפורמט: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">...</svg>
    - אל תוסיף width או height (המערכת שולטת בגודל).
    - אל תוסיף inline styles או <style>.
    - אל תוסיף מלבני רקע (<rect width="100%").
-   - צייר אייקון וקטורי ברור ומדויק על רשת של 24x24 תוך שימוש באלמנטים וקטוריים כמו <path>, <circle>, <line>, <polyline>, <polygon>, <rect>.
-4. "designConcept": תיאור קצר בעברית של מה האייקון מייצג (למשל: "משקולת כושר", "נעל ריצה", "ספל קפה", "שן").
+   - צייר אייקון וקטורי מינימליסטי, גיאומטרי, נקי ואלגנטי בסגנון Lucide Icons מדויק על רשת של 24x24 תוך שימוש באלמנטים וקטוריים פשוטים (<path>, <circle>, <line>, <polyline>, <polygon>, <rect>).
+   - חשוב ביותר: הימנע לחלוטין מציור איברי גוף מורכבים כמו ידיים, אצבעות, כפות רגליים או פנים שעלולים להיראות מעוותים או לא מקצועיים! במקום זאת, השתמש תמיד בצורות גיאומטריות אלגנטיות, סמלים מטאפוריים מוכרים (כגון: לב, קופסת מתנה, מטבע, כוכב, מגן, מאזניים, גביע, עץ, בית וכו'). למשל עבור 'תרומה' השתמש בלב או מתנה ולא בציור יד.
+   - וודא שכל הקווים מחוברים כראוי, ללא עיוותים או קווים שבורים.
+4. "designConcept": תיאור קצר בעברית של מה האייקון מייצג (למשל: "משקולת כושר", "נעל ריצה", "ספל קפה", "מתנה עם לב").
 
 החזר אך ורק תשובת JSON תקנית במבנה:
 {
@@ -468,10 +475,14 @@ ${currentSvg || 'עיצוב קודם'}
               svgCode = svgMatch[0];
             }
 
+            const effectiveColor = hasValidParentColor
+              ? parentColor
+              : (parsed.color || '#6366f1');
+
             return reply.code(200).send({
               success: true,
               nameEn: parsed.nameEn,
-              color: parsed.color || '#6366f1',
+              color: effectiveColor,
               customSvg: svgCode,
               designConcept: parsed.designConcept || '',
               modelUsed: modelName,

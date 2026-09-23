@@ -9,6 +9,10 @@ import {
   analyzeReceiptUrl, 
   testGeminiApiKey 
 } from '../services/ai-analyzer.js';
+import { matchAndLinkReceipt } from '../services/receipt-matcher.js';
+import { signTmaToken } from '../crypto.js';
+
+const DEFAULT_USER_ID = '00000000-0000-0000-0000-000000000001';
 
 /**
  * Determine a writable directory for storing uploads with seamless fallbacks
@@ -235,6 +239,149 @@ const applySplitsSchema = z.object({
 });
 
 export default async function receiptsRoutes(fastify, options) {
+  // POST /api/v2/transactions/receipts/ingest-telegram - Ingest receipt from Telegram (Photo, Document, or URL)
+  fastify.post('/receipts/ingest-telegram', async (request, reply) => {
+    try {
+      // Check system settings for skipDeepAiAnalysis
+      const settingsRes = await pool.query(
+        'SELECT settings FROM system_settings WHERE user_id = $1',
+        [DEFAULT_USER_ID]
+      );
+      const settings = settingsRes.rows[0]?.settings || {};
+      const skipDeepAi = settings.skipDeepAiAnalysis === true;
+
+      const isMultipart = typeof request.isMultipart === 'function' && request.isMultipart();
+
+      if (isMultipart) {
+        const data = await request.file();
+        if (!data) {
+          return reply.code(400).send({ error: 'No file uploaded' });
+        }
+
+        const fileBuffer = await data.toBuffer();
+        const originalName = data.filename || 'telegram_receipt.jpg';
+        const mimeType = data.mimetype || 'image/jpeg';
+        const fileSize = fileBuffer.length;
+
+        if (fileSize > 20 * 1024 * 1024) {
+          return reply.code(400).send({ error: 'קובץ גדול מדי (עד 20MB)' });
+        }
+
+        const targetDir = getWritableUploadsDir();
+        const ext = path.extname(originalName) || (mimeType === 'application/pdf' ? '.pdf' : '.jpg');
+        const storageFileName = `tg_${Date.now()}_${crypto.randomBytes(4).toString('hex')}${ext}`;
+        const storagePath = path.join(targetDir, storageFileName);
+
+        fs.writeFileSync(storagePath, fileBuffer);
+
+        let aiResult = { ai_analyzed: false, extracted_data: {} };
+        if (!skipDeepAi) {
+          try {
+            aiResult = await analyzeReceiptFile(fileBuffer, mimeType, originalName);
+          } catch (err) {
+            fastify.log.warn(`AI Analysis error on telegram receipt: ${err.message}`);
+          }
+        }
+
+        const insertRes = await pool.query(
+          `INSERT INTO transaction_receipts 
+           (file_name, file_type, file_size, file_path, receipt_source, ai_analyzed, ai_provider, extracted_data)
+           VALUES ($1, $2, $3, $4, 'telegram', $5, $6, $7)
+           RETURNING id, transaction_id, file_name, file_type, file_size, file_path, source_url, 
+                     ai_analyzed, ai_provider, extracted_data, created_at`,
+          [
+            originalName,
+            mimeType,
+            fileSize,
+            storageFileName,
+            aiResult.ai_analyzed || false,
+            aiResult.ai_provider || 'gemini',
+            JSON.stringify(aiResult.extracted_data || {}),
+          ]
+        );
+
+        const savedReceipt = insertRes.rows[0];
+
+        // Run matcher to find an existing transaction
+        const matchResult = await matchAndLinkReceipt(savedReceipt.id, pool);
+
+        let tmaReceiptUrl = null;
+        const tmaBaseUrl = (settings.telegram?.tmaBaseUrl || process.env.TMA_BASE_URL || '').trim();
+        if (tmaBaseUrl && tmaBaseUrl.startsWith('https://') && matchResult.transaction?.id) {
+          const token = signTmaToken(matchResult.transaction.id);
+          tmaReceiptUrl = `${tmaBaseUrl.replace(/\/$/, '')}/tma/transaction/${matchResult.transaction.id}?token=${encodeURIComponent(token)}&tab=receipts`;
+        }
+
+        return reply.code(201).send({
+          success: true,
+          receipt: savedReceipt,
+          matched: matchResult.matched || false,
+          transaction: matchResult.transaction || null,
+          tmaReceiptUrl,
+          extractedData: aiResult.extracted_data || {},
+        });
+      } else {
+        // JSON payload with URL
+        const { url } = request.body || {};
+        if (!url || typeof url !== 'string') {
+          return reply.code(400).send({ error: 'URL is required' });
+        }
+
+        const urlCheck = validateReceiptUrl(url);
+        if (!urlCheck.safe) {
+          return reply.code(400).send({ error: 'כתובת URL אינה מורשית', reason: urlCheck.reason });
+        }
+
+        let aiResult = { ai_analyzed: false, extracted_data: {} };
+        if (!skipDeepAi) {
+          try {
+            aiResult = await analyzeReceiptUrl(url);
+          } catch (err) {
+            fastify.log.warn(`AI URL Analysis error on telegram receipt: ${err.message}`);
+          }
+        }
+
+        const parsedVendor = aiResult.extracted_data?.vendor || 'חשבונית דיגיטלית';
+        const insertRes = await pool.query(
+          `INSERT INTO transaction_receipts 
+           (file_name, file_type, file_size, source_url, receipt_source, ai_analyzed, ai_provider, extracted_data)
+           VALUES ($1, 'url', 0, $2, 'telegram', $3, $4, $5)
+           RETURNING id, transaction_id, file_name, file_type, file_size, file_path, source_url, 
+                     ai_analyzed, ai_provider, extracted_data, created_at`,
+          [
+            `${parsedVendor} (קישור דיגיטלי)`,
+            url,
+            aiResult.ai_analyzed || false,
+            aiResult.ai_provider || 'gemini',
+            JSON.stringify(aiResult.extracted_data || {}),
+          ]
+        );
+
+        const savedReceipt = insertRes.rows[0];
+        const matchResult = await matchAndLinkReceipt(savedReceipt.id, pool);
+
+        let tmaReceiptUrl = null;
+        const tmaBaseUrl = (settings.telegram?.tmaBaseUrl || process.env.TMA_BASE_URL || '').trim();
+        if (tmaBaseUrl && tmaBaseUrl.startsWith('https://') && matchResult.transaction?.id) {
+          const token = signTmaToken(matchResult.transaction.id);
+          tmaReceiptUrl = `${tmaBaseUrl.replace(/\/$/, '')}/tma/transaction/${matchResult.transaction.id}?token=${encodeURIComponent(token)}&tab=receipts`;
+        }
+
+        return reply.code(201).send({
+          success: true,
+          receipt: savedReceipt,
+          matched: matchResult.matched || false,
+          transaction: matchResult.transaction || null,
+          tmaReceiptUrl,
+          extractedData: aiResult.extracted_data || {},
+        });
+      }
+    } catch (err) {
+      fastify.log.error(err, 'Failed to ingest receipt from Telegram');
+      return reply.code(500).send({ error: 'Failed to process receipt', message: err.message });
+    }
+  });
+
   // GET /api/v2/transactions/:id/receipts - List all receipts for a transaction with verification
   fastify.get('/:id/receipts', async (request, reply) => {
     const { id } = request.params;

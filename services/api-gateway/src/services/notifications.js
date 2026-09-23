@@ -1,6 +1,7 @@
 import { pool } from '../db.js';
 import { signTmaToken } from '../crypto.js';
 import { getSystemMonthStartDay, getCurrentFinancialMonthBounds } from './settings-helper.js';
+import { matchPendingReceiptsForTransaction } from './receipt-matcher.js';
 
 const DEFAULT_USER_ID = '00000000-0000-0000-0000-000000000001';
 const NOTIFIER_URL = (process.env.NOTIFIER_URL || 'http://notifier:3001').replace(/\/$/, '');
@@ -333,14 +334,33 @@ function extractInstallmentDetails(tx) {
       const anomalyReason = anomalyResult.anomalyReason || null;
       const installmentInfo = extractInstallmentDetails(tx);
 
-      // 2. Build secure scoped TMA link (Least-Privilege Token)
+      // 2. Check for any pending unlinked receipts matching this transaction
+      let hasLinkedReceipt = false;
+      try {
+        const linkResult = await matchPendingReceiptsForTransaction(tx, client);
+        if (linkResult?.linked) {
+          hasLinkedReceipt = true;
+        } else {
+          const existingReceipt = await client.query(
+            `SELECT id FROM transaction_receipts WHERE transaction_id = $1 LIMIT 1`,
+            [tx.id]
+          );
+          if (existingReceipt.rows.length > 0) {
+            hasLinkedReceipt = true;
+          }
+        }
+      } catch (receiptErr) {
+        // Non-blocking error handling
+      }
+
+      // 3. Build secure scoped TMA link (Least-Privilege Token)
       let tmaUrl = null;
       if (tmaBaseUrl && tmaBaseUrl.startsWith('https://')) {
         const token = signTmaToken(tx.id);
         tmaUrl = `${tmaBaseUrl.replace(/\/$/, '')}/tma/transaction/${tx.id}?token=${encodeURIComponent(token)}`;
       }
 
-      // 3. Send Telegram notification if enabled
+      // 4. Send Telegram notification if enabled
       if (notifyOnNew || (isAnomaly && notifyOnAnomaly)) {
         try {
           const payload = {
@@ -362,6 +382,7 @@ function extractInstallmentDetails(tx) {
             tmaUrl,
             isAnomaly,
             anomalyReason,
+            hasLinkedReceipt,
           };
 
           const notifyRes = await fetch(`${NOTIFIER_URL}/api/notify/transaction`, {

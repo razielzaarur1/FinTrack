@@ -19,6 +19,8 @@ export async function classifyWithAi({
   rawCategory = '',
   amount = 0,
   currency = 'ILS',
+  receiptVendor = '',
+  receiptItems = [],
   userId = DEFAULT_USER_ID,
 }) {
   const { geminiApiKey, enableAiAnalysis } = await getAiSettings();
@@ -67,6 +69,11 @@ export async function classifyWithAi({
     const isExpense = amount < 0;
     const directionStr = isExpense ? 'הוצאה' : 'הכנסה';
 
+    const itemsText = Array.isArray(receiptItems) && receiptItems.length > 0
+      ? `\nפירוט פריטים שנרכשו מתוך הקבלה/חשבונית (התחשב בפריטים אלו כדי להבין בדיוק מה נרכש ולסווג לקטגוריה הנכונה ביותר!):\n` +
+        receiptItems.slice(0, 25).map((it) => `- ${typeof it === 'string' ? it : ((it.name || it.description || 'פריט') + (it.price ? ` (₪${it.price})` : ''))}`).join('\n')
+      : '';
+
     // 3. Build structured prompt
     const prompt = `אתה מנוע AI מומחה לזיהוי עסקים וסיווג תנועות פיננסיות בישראל עבור אפליקציית FinTrack.
 עליך לנתח את התנועה הפיננסית הבאה, לזקק את שם בית העסק האמיתי, ולסווג אותה לקטגוריה המתאימה ביותר.
@@ -74,8 +81,8 @@ export async function classifyWithAi({
 פרטי התנועה לסיווג:
 - שם עסק גולמי: "${merchantName || 'לא צוין'}"
 - תיאור / הערה: "${description || 'לא צוין'}"
-- סכום וכיוון: ₪${Math.abs(amount).toFixed(2)} (${directionStr})
-- קטגוריית מקור מבנק/אשראי: "${rawCategory || 'ללא'}"
+${receiptVendor ? `- בית עסק שזוהה בקבלה: "${receiptVendor}"\n` : ''}- סכום וכיוון: ₪${Math.abs(amount).toFixed(2)} (${directionStr})
+- קטגוריית מקור מבנק/אשראי: "${rawCategory || 'ללא'}"${itemsText}
 
 רשימת הקטגוריות המותרות לבחירה (בחר אך ורק מתוכן!):
 ${JSON.stringify(availableCategories, null, 2)}
