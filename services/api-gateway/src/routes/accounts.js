@@ -50,8 +50,23 @@ async function cleanDuplicateAccountsAndNames() {
     for (const row of dupesRes.rows) {
       const [primaryId, ...duplicateIds] = row.ids;
       for (const dupId of duplicateIds) {
-        await pool.query(`UPDATE transactions SET account_id = $1 WHERE account_id = $2`, [primaryId, dupId]);
-        await pool.query(`UPDATE bank_accounts SET is_active = false WHERE id = $1`, [dupId]);
+        try {
+          // Delete any transactions in dupId that already exist in primaryId with the same external_id
+          await pool.query(`
+            DELETE FROM transactions d
+            WHERE d.account_id = $1
+              AND EXISTS (
+                SELECT 1 FROM transactions p
+                WHERE p.account_id = $2 AND p.external_id = d.external_id
+              )
+          `, [dupId, primaryId]);
+
+          // Also transfer receipts, notes, splits, links before moving remaining transactions
+          await pool.query(`UPDATE transactions SET account_id = $1 WHERE account_id = $2`, [primaryId, dupId]);
+          await pool.query(`UPDATE bank_accounts SET is_active = false WHERE id = $1`, [dupId]);
+        } catch (mergeErr) {
+          console.warn(`[Accounts] Warning during merge of dup account ${dupId} into ${primaryId}:`, mergeErr.message);
+        }
       }
     }
 

@@ -285,9 +285,10 @@ export function generateTransactionExternalId(accountId, tx, occurrenceIndex = 0
   const description = cleanSpacedHebrew((tx.memo && tx.memo !== tx.description ? tx.memo : tx.description || '').trim());
 
   // Priority 1: Bank/Credit-Card unique external identifier (deal/voucher reference)
+  const occPart = occurrenceIndex > 0 ? `_#${occurrenceIndex}` : '';
   const rawId = tx.identifier != null ? String(tx.identifier).trim() : (tx.id != null ? String(tx.id).trim() : '');
   if (rawId && rawId !== '0' && rawId !== 'undefined' && rawId !== 'null') {
-    return `${dateStr}_${rawId}`;
+    return `${dateStr}_${rawId}${occPart}`;
   }
 
   // Priority 2: Deterministic SHA-256 composite hash
@@ -855,14 +856,54 @@ export async function scrapeAccount({ accountId, bank, encryptedCreds, daysBack 
       );
     }
 
+    let externalBrowser = null;
+    try {
+      let puppeteer = null;
+      try {
+        const mod = await import('puppeteer');
+        puppeteer = mod.default || mod;
+      } catch (_) {
+        try {
+          const modCore = await import('puppeteer-core');
+          puppeteer = modCore.default || modCore;
+        } catch (_) {}
+      }
+
+      if (puppeteer && typeof puppeteer.launch === 'function') {
+        logger.info({ chromiumPath }, 'Launching Puppeteer browser with extended 90s navigation timeout...');
+        externalBrowser = await puppeteer.launch({
+          executablePath: chromiumPath,
+          args: puppeteerArgs,
+          headless: true,
+        });
+
+        externalBrowser.on('targetcreated', async (target) => {
+          if (target.type() === 'page') {
+            try {
+              const page = await target.page();
+              if (page) {
+                page.setDefaultNavigationTimeout(90000);
+                page.setDefaultTimeout(90000);
+                logger.debug('Set 90000ms navigation timeout on page target');
+              }
+            } catch (pErr) {
+              logger.debug({ err: pErr.message }, 'Failed to set page timeout on target');
+            }
+          }
+        });
+      }
+    } catch (launchErr) {
+      logger.warn({ err: launchErr.message }, 'Could not pre-launch external browser, falling back to default createScraper');
+      externalBrowser = null;
+    }
+
     const scraper = createScraper({
       companyId: targetBank,
       startDate: effectiveStartDate,
       combineInstallments: false,
       showBrowser: false,
       verbose: true,
-      executablePath: chromiumPath,
-      args: puppeteerArgs,
+      ...(externalBrowser ? { browser: externalBrowser } : { executablePath: chromiumPath, args: puppeteerArgs }),
     });
 
     // Handle progress reporting
@@ -909,6 +950,9 @@ export async function scrapeAccount({ accountId, bank, encryptedCreds, daysBack 
     try {
       scrapeResult = await scraper.scrape(credentials);
     } catch (scrapeErr) {
+      if (externalBrowser && typeof externalBrowser.close === 'function') {
+        try { await externalBrowser.close(); } catch (_) {}
+      }
       logger.error(
         { accountId, targetBank, err: scrapeErr.message, stack: scrapeErr.stack },
         'scraper.scrape() threw an unexpected exception'
