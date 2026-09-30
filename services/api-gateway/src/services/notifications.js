@@ -2,6 +2,7 @@ import { pool } from '../db.js';
 import { signTmaToken } from '../crypto.js';
 import { getSystemMonthStartDay, getCurrentFinancialMonthBounds } from './settings-helper.js';
 import { matchPendingReceiptsForTransaction } from './receipt-matcher.js';
+import { findMatchesForTransaction } from './cc-reconciliation.js';
 
 const DEFAULT_USER_ID = '00000000-0000-0000-0000-000000000001';
 const NOTIFIER_URL = (process.env.NOTIFIER_URL || 'http://notifier:3001').replace(/\/$/, '');
@@ -353,6 +354,103 @@ function extractInstallmentDetails(tx) {
         // Non-blocking error handling
       }
 
+      // 2B. Check reconciliation matching & existing transaction links
+      let linkedTransaction = null;
+      let linkedTmaUrl = null;
+
+      try {
+        // First check if already linked in transaction_links
+        const linkRes = await client.query(`
+          SELECT 
+            tl.id AS "linkId",
+            tl.link_type AS "linkType",
+            tl.note,
+            t2.id AS "linkedId",
+            t2.merchant_name AS "linkedMerchant",
+            t2.description AS "linkedDescription",
+            t2.amount AS "linkedAmount",
+            t2.date AS "linkedDate",
+            t2.currency AS "linkedCurrency",
+            b2.display_name AS "linkedAccountName",
+            b2.bank_company AS "linkedBankCompany"
+          FROM transaction_links tl
+          JOIN transactions t2 ON (CASE WHEN tl.transaction_id_a = $1 THEN tl.transaction_id_b ELSE tl.transaction_id_a END) = t2.id
+          JOIN bank_accounts b2 ON t2.account_id = b2.id
+          WHERE tl.transaction_id_a = $1 OR tl.transaction_id_b = $1
+          LIMIT 1
+        `, [tx.id]);
+
+        if (linkRes.rows.length > 0) {
+          const l = linkRes.rows[0];
+          linkedTransaction = {
+            id: l.linkedId,
+            merchantName: l.linkedMerchant || l.linkedDescription || 'עסקה מקושרת',
+            description: l.linkedDescription,
+            amount: parseFloat(l.linkedAmount),
+            currency: l.linkedCurrency || 'ILS',
+            date: l.linkedDate instanceof Date ? l.linkedDate.toISOString().split('T')[0] : String(l.linkedDate).slice(0, 10),
+            accountDisplayName: l.linkedAccountName || l.linkedBankCompany || 'חשבון מקושר',
+            bankCompany: l.linkedBankCompany,
+            linkType: l.linkType,
+            note: l.note,
+          };
+        } else {
+          // If not linked yet, run reconciliation check right now!
+          const candidates = await findMatchesForTransaction(client, tx.id, { minScore: 85, daysWindow: 45 });
+          const eligibleMatches = candidates.filter((c) => c.eligibleForAutoLink && !c.isAlreadyLinked);
+          if (eligibleMatches.length > 0) {
+            const best = eligibleMatches[0];
+            let isAmbiguous = false;
+            if (eligibleMatches.length > 1) {
+              const secondBest = eligibleMatches[1];
+              if (
+                Math.abs(best.score - secondBest.score) < 5 &&
+                Math.abs(parseFloat(best.amount) - parseFloat(secondBest.amount)) < 0.01
+              ) {
+                isAmbiguous = true;
+              }
+            }
+
+            if (!isAmbiguous) {
+              // Immediately link them in database!
+              await client.query(`
+                INSERT INTO transaction_links (transaction_id_a, transaction_id_b, link_type, note, created_at)
+                VALUES ($1, $2, 'cc_billing_match', $3, NOW())
+                ON CONFLICT (transaction_id_a, transaction_id_b) DO NOTHING
+              `, [tx.id, best.candidate.id, `התאמה אוטומטית בעת קליטת תנועה (${best.score}%)`]);
+
+              // If checking account side, mark is_cc_billing and is_ignored
+              if (!['max', 'cal', 'isracard', 'amex'].includes(tx.bank_company?.toLowerCase())) {
+                await client.query(`UPDATE transactions SET is_cc_billing = true, is_ignored = true WHERE id = $1`, [tx.id]);
+              } else if (!['max', 'cal', 'isracard', 'amex'].includes(best.bankCompany?.toLowerCase())) {
+                await client.query(`UPDATE transactions SET is_cc_billing = true, is_ignored = true WHERE id = $1`, [best.candidate.id]);
+              }
+
+              linkedTransaction = {
+                id: best.candidate.id,
+                merchantName: best.candidate.merchantName || best.candidate.description || 'עסקה מקושרת',
+                description: best.candidate.description,
+                amount: parseFloat(best.candidate.amount),
+                currency: best.candidate.currency || 'ILS',
+                date: best.candidate.date instanceof Date ? best.candidate.date.toISOString().split('T')[0] : String(best.candidate.date).slice(0, 10),
+                accountDisplayName: best.candidate.accountDisplayName || best.candidate.bankCompany || 'חשבון מקושר',
+                bankCompany: best.candidate.bankCompany,
+                linkType: 'cc_billing_match',
+                score: best.score,
+                note: `התאמה אוטומטית (${best.score}%)`,
+              };
+            }
+          }
+        }
+
+        if (linkedTransaction && tmaBaseUrl && tmaBaseUrl.startsWith('https://')) {
+          const linkedToken = signTmaToken(linkedTransaction.id);
+          linkedTmaUrl = `${tmaBaseUrl.replace(/\/$/, '')}/tma/transaction/${linkedTransaction.id}?token=${encodeURIComponent(linkedToken)}`;
+        }
+      } catch (linkErr) {
+        logger.warn?.(`[NotifierEngine] Failed to inspect/link transaction ${tx.id}: ${linkErr.message}`);
+      }
+
       // 3. Build secure scoped TMA link (Least-Privilege Token)
       let tmaUrl = null;
       if (tmaBaseUrl && tmaBaseUrl.startsWith('https://')) {
@@ -383,6 +481,8 @@ function extractInstallmentDetails(tx) {
             isAnomaly,
             anomalyReason,
             hasLinkedReceipt,
+            linkedTransaction,
+            linkedTmaUrl,
           };
 
           const notifyRes = await fetch(`${NOTIFIER_URL}/api/notify/transaction`, {

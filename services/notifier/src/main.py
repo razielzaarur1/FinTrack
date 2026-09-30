@@ -48,6 +48,8 @@ class TransactionNotifyPayload(BaseModel):
     isAnomaly: Optional[bool] = False
     anomalyReason: Optional[str] = None
     hasLinkedReceipt: Optional[bool] = False
+    linkedTransaction: Optional[Dict[str, Any]] = None
+    linkedTmaUrl: Optional[str] = None
 
 
 class BudgetNotifyPayload(BaseModel):
@@ -317,6 +319,25 @@ async def notify_transaction(payload: TransactionNotifyPayload):
 
     receipt_line = "\n🧾 <b>החשבונית קושרה לתנועה זו!</b>" if payload.hasLinkedReceipt else ""
 
+    linked_line = ""
+    if payload.linkedTransaction:
+        ltx = payload.linkedTransaction
+        l_merchant = html.escape(str(ltx.get("merchantName") or ltx.get("merchant_name") or ltx.get("description") or "עסקה מקושרת"))
+        l_acc = html.escape(str(ltx.get("accountDisplayName") or ltx.get("account_display_name") or ltx.get("bankCompany") or "חשבון מקושר"))
+        l_amt = abs(float(ltx.get("amount") or 0.0))
+        l_score = ltx.get("score")
+        score_badge = f" ({l_score}% התאמה)" if l_score else ""
+        l_type = ltx.get("linkType") or "cc_billing_match"
+
+        if l_type == "cc_billing_match":
+            type_title = f"🔗 <b>התאמת אשראי אוטומטית{score_badge}:</b>"
+        elif l_type == "installment":
+            type_title = "💳 <b>תשלום מקושר לעסקה:</b>"
+        else:
+            type_title = f"🔗 <b>תנועה מקושרת{score_badge}:</b>"
+
+        linked_line = f"\n\n{type_title}\nקושר ל: <b>{l_merchant}</b> ב-{l_acc} (₪{l_amt:,.2f})"
+
     if payload.isAnomaly:
         header = "🚨 <b>התראה על תנועה חריגה!</b>"
         reason = html.escape(payload.anomalyReason or "תנועה גדולה שאינה תואמת את דפוסי העבר ההיסטוריים")
@@ -330,6 +351,7 @@ async def notify_transaction(payload: TransactionNotifyPayload):
             f"🏦 <b>חשבון:</b> {acc_name}"
             f"{installment_line}"
             f"{receipt_line}"
+            f"{linked_line}"
         )
     elif is_income:
         header = "🟢 <b>תנועת הכנסה / זיכוי חדשה!</b>"
@@ -342,6 +364,7 @@ async def notify_transaction(payload: TransactionNotifyPayload):
             f"🏦 <b>חשבון:</b> {acc_name}"
             f"{installment_line}"
             f"{receipt_line}"
+            f"{linked_line}"
         )
     else:
         header = "💳 <b>תנועה חדשה זוהתה!</b>"
@@ -354,17 +377,29 @@ async def notify_transaction(payload: TransactionNotifyPayload):
             f"🏦 <b>חשבון:</b> {acc_name}"
             f"{installment_line}"
             f"{receipt_line}"
+            f"{linked_line}"
         )
 
     reply_markup = None
+    keyboard = []
     if payload.tmaUrl and payload.tmaUrl.startswith("https://"):
+        keyboard.append([
+            InlineKeyboardButton(
+                text="✏️ צפה וערוך תנועה (TMA)",
+                web_app=WebAppInfo(url=payload.tmaUrl)
+            )
+        ])
+    if payload.linkedTmaUrl and payload.linkedTmaUrl.startswith("https://") and payload.linkedTransaction:
+        l_name = str(payload.linkedTransaction.get("merchantName") or payload.linkedTransaction.get("description") or "עסקה מקושרת")
+        l_name_short = html.escape(l_name[:18])
+        keyboard.append([
+            InlineKeyboardButton(
+                text=f"🔗 צפה בתנועה המקושרת ({l_name_short})",
+                web_app=WebAppInfo(url=payload.linkedTmaUrl)
+            )
+        ])
+    if keyboard:
         try:
-            keyboard = [[
-                InlineKeyboardButton(
-                    text="✏️ צפה וערוך תנועה (TMA)",
-                    web_app=WebAppInfo(url=payload.tmaUrl)
-                )
-            ]]
             reply_markup = InlineKeyboardMarkup(keyboard)
         except Exception as e:
             logger.warning(f"Could not build TMA button: {e}")
