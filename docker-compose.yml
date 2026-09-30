@@ -33,10 +33,9 @@ services:
     image: ghcr.io/razielzaarur1/fintrack-web-v2:latest
     container_name: finapp-web-v2
     networks:
-      fintrack-net:
-        aliases:
-          - web
-          - web-v2
+      - fintrack-net
+    ports:
+      - "${HOST_WEB_PORT:-4747}:3000"
     expose:
       - "3000"
     environment:
