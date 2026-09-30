@@ -22,14 +22,13 @@ export async function scanAndSuggestCategories(userId = DEFAULT_USER_ID) {
 
   // 1. Fetch unclassified transactions or transactions under generic catch-alls
   const txRes = await pool.query(
-    `SELECT t.id, t.merchant_name, t.description, t.amount, t.category, t.sub_category,
+    `SELECT t.id, t.merchant_name, t.description, t.amount, t.category,
             t.raw_data->>'category' AS raw_category
      FROM transactions t
      JOIN bank_accounts a ON t.account_id = a.id
      WHERE a.user_id = $1
        AND (
          t.category IN ('ללא סיווג', 'שונות', 'כללי', 'אחר')
-         OR t.sub_category IN ('ללא סיווג', 'שונות', 'אחר')
          OR t.category IS NULL
        )
        AND t.is_cc_billing = false
@@ -301,14 +300,13 @@ export async function approveCategorySuggestion(userId = DEFAULT_USER_ID, sugges
   let updatedTxCount = 0;
 
   if (Array.isArray(sampleTxIds) && sampleTxIds.length > 0) {
-    const mainCategoryName = parentName || createdCategory.name;
-    const subCategoryName = parentName ? createdCategory.name : createdCategory.name;
+    const chosenCat = createdCategory.name;
 
     const updateRes = await pool.query(
       `UPDATE transactions 
-       SET category = $1, sub_category = $2, category_id = $3
-       WHERE id = ANY($4::uuid[])`,
-      [mainCategoryName, subCategoryName, createdCategory.id, sampleTxIds]
+       SET category = $1
+       WHERE id = ANY($2::uuid[])`,
+      [chosenCat, sampleTxIds]
     );
     updatedTxCount = updateRes.rowCount;
   }

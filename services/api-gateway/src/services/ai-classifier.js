@@ -88,7 +88,6 @@ async function getUserLearningContext(userId = DEFAULT_USER_ID) {
        TRIM(t.merchant_name) AS merchant,
        TRIM(t.description) AS description,
        t.category,
-       t.sub_category,
        t.amount,
        EXTRACT(DOW FROM t.date)::int AS "dow"
      FROM transactions t

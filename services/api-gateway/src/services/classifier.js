@@ -224,7 +224,7 @@ export async function classifyTransaction({
   if (cleanMerchant || cleanDesc) {
     try {
       const manualHistoryRes = await pool.query(
-        `SELECT t.category, t.sub_category, t.merchant_name
+        `SELECT t.category, t.merchant_name
          FROM transactions t
          JOIN bank_accounts b ON t.account_id = b.id
          WHERE b.user_id = $1
@@ -251,7 +251,7 @@ export async function classifyTransaction({
 
       if (manualHistoryRes.rows.length > 0) {
         const row = manualHistoryRes.rows[0];
-        const resolved = resolveInHierarchy(row.category, row.sub_category);
+        const resolved = resolveInHierarchy(row.category);
         return {
           category: resolved.category,
           subCategory: resolved.subCategory,
@@ -414,7 +414,7 @@ export async function reclassifyUnreviewedTransactions(userId = '00000000-0000-0
 
   // 1. Fetch transactions where is_manual_category = false
   const txRes = await pool.query(
-    `SELECT t.id, t.merchant_name, t.description, t.amount, t.category, t.sub_category,
+    `SELECT t.id, t.merchant_name, t.description, t.amount, t.category,
             t.is_cc_billing, t.raw_data->>'category' AS raw_category
      FROM transactions t
      JOIN bank_accounts a ON t.account_id = a.id
@@ -516,19 +516,20 @@ export async function reclassifyUnreviewedTransactions(userId = '00000000-0000-0
 
   // Apply immediate updates (CC and Cash)
   for (const item of immediateUpdates) {
+    const chosenCat = item.subCategory || item.category;
     await pool.query(
       `UPDATE transactions 
-       SET category = $1, sub_category = $2, category_id = $3
-       WHERE id = $4`,
-      [item.category, item.subCategory, item.categoryId, item.txId]
+       SET category = $1
+       WHERE id = $2`,
+      [chosenCat, item.txId]
     );
-    if (item.oldCat !== item.category) {
+    if (item.oldCat !== chosenCat) {
       updatedCount++;
       if (sampleChanges.length < 15) {
         sampleChanges.push({
           merchant: item.cleanMerchant,
           oldCategory: item.oldCat || 'ללא סיווג',
-          newCategory: `${item.category} / ${item.subCategory}`,
+          newCategory: item.subCategory && item.subCategory !== item.category ? `${item.category} / ${item.subCategory}` : item.category,
           confidence: 1.0,
         });
       }
@@ -545,20 +546,18 @@ export async function reclassifyUnreviewedTransactions(userId = '00000000-0000-0
       continue;
     }
 
-    const { category, subCategory, subCategoryId, categoryId, cleanMerchant, confidence } = resolution;
-    const finalCatId = subCategoryId || categoryId;
+    const { category, subCategory, cleanMerchant, confidence } = resolution;
+    const chosenCat = subCategory || category;
 
     await pool.query(
       `UPDATE transactions 
        SET category = $1, 
-           sub_category = $2, 
-           category_id = $3,
            merchant_name = CASE 
-             WHEN merchant_name IS NULL OR merchant_name IN ('', 'בית עסק') THEN $4 
+             WHEN merchant_name IS NULL OR merchant_name IN ('', 'בית עסק') THEN $2 
              ELSE merchant_name 
            END
-       WHERE id = ANY($5::uuid[])`,
-      [category, subCategory, finalCatId, cleanMerchant, dossier.txIds]
+       WHERE id = ANY($3::uuid[])`,
+      [chosenCat, cleanMerchant, dossier.txIds]
     );
 
     if (dossier.oldCategory !== category) {
