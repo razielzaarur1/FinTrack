@@ -35,7 +35,12 @@ export default function LearnedRulesSection() {
     try {
       const res = await api.getCategoryRules();
       if (res && res.data) {
-        setRules(res.data);
+        const rulesList = Array.isArray(res.data.data)
+          ? res.data.data
+          : Array.isArray(res.data)
+          ? res.data
+          : [];
+        setRules(rulesList);
       }
     } catch (err) {
       console.error('Error fetching category rules:', err);

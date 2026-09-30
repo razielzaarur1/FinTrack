@@ -2501,7 +2501,8 @@ async function ensureFeeColumnsExist(pool) {
       }
 
       const tx = txRes.rows[0];
-      const classification = await classifyTransaction({
+      const classification = await classifyWithAi({
+        id: tx.id,
         userId: tx.user_id,
         merchantName: tx.merchant_name,
         description: tx.description,
@@ -2509,7 +2510,7 @@ async function ensureFeeColumnsExist(pool) {
         amount: parseFloat(tx.amount || 0),
       });
 
-      if (classification.category) {
+      if (classification && classification.success && classification.category) {
         const chosenCat = classification.subCategory || classification.category;
         const cleanMerchant = classification.cleanMerchant;
 
@@ -2528,14 +2529,18 @@ async function ensureFeeColumnsExist(pool) {
         return reply.code(200).send({
           success: true,
           category: chosenCat,
+          mainCategory: classification.category,
+          subCategory: classification.subCategory,
           cleanMerchant: cleanMerchant || tx.merchant_name,
-          source: classification.source,
           confidence: classification.confidence,
+          fitLevel: classification.fitLevel,
+          suggestedSubcategory: classification.suggestedSubcategory,
           rationale: classification.rationale,
+          modelUsed: classification.modelUsed,
         });
       }
 
-      return reply.code(200).send({ success: false, message: 'Could not classify' });
+      return reply.code(200).send({ success: false, message: classification?.reason || 'Could not classify' });
     } catch (err) {
       fastify.log.error(err, 'Failed to AI classify transaction');
       return reply.code(500).send({ error: 'Failed to classify transaction' });

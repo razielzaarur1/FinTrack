@@ -90,11 +90,17 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
         } else {
           setActiveTx((prev) => ({ ...prev, category: res.data.category }));
         }
-        setAiFeedback(`סווג כ-"${res.data.category}" ${res.data.confidence ? `(${Math.round(res.data.confidence * 100)}%)` : ''}`);
+        const label = res.data.subCategory && res.data.mainCategory && res.data.subCategory !== res.data.mainCategory
+          ? `${res.data.mainCategory} / ${res.data.subCategory}`
+          : res.data.category;
+        setAiFeedback(`סווג כ-"${label}" ${res.data.confidence ? `(${Math.round(res.data.confidence * 100)}%)` : ''}`);
         window.dispatchEvent(new CustomEvent('fintrack_tx_updated'));
+      } else {
+        setAiFeedback(res.data?.message || 'לא זוהתה קטגוריה');
       }
     } catch (err) {
       console.error('Failed to AI classify:', err);
+      setAiFeedback('שגיאה בסיווג AI');
     } finally {
       setAiClassifying(false);
     }

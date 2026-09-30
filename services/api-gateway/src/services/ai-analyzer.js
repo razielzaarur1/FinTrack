@@ -7,18 +7,12 @@ const DEFAULT_USER_ID = '00000000-0000-0000-0000-000000000001';
 
 // Static fallback candidates if ListModels cannot be queried
 const DEFAULT_CANDIDATE_MODELS = [
-  'gemini-1.5-flash-002',
-  'gemini-1.5-flash-001',
-  'gemini-1.5-flash',
-  'gemini-1.5-flash-latest',
-  'gemini-2.0-flash-001',
-  'gemini-2.0-flash',
-  'gemini-2.0-flash-exp',
-  'gemini-1.5-flash-8b',
-  'gemini-1.5-pro-002',
-  'gemini-1.5-pro-001',
-  'gemini-1.5-pro',
-  'gemini-1.5-pro-latest'
+  'gemini-2.5-flash',
+  'gemini-flash-latest',
+  'gemini-2.5-flash-lite',
+  'gemini-2.5-pro',
+  'gemini-pro-latest',
+  'gemini-3.8-flash',
 ];
 
 /**
@@ -100,14 +94,25 @@ export async function getAvailableGeminiModels(apiKey) {
     const data = await res.json();
     const list = (data.models || [])
       .filter((m) => m.supportedGenerationMethods?.includes('generateContent'))
-      .map((m) => m.name.replace(/^models\//, ''));
+      .map((m) => m.name.replace(/^models\//, ''))
+      .filter((name) => !name.includes('1.5') && !name.includes('2.0') && !name.includes('1.0'));
 
     if (list.length > 0) {
-      // Sort models: prioritize flash models, then 2.0 / 1.5, then pro
+      // Sort models: prioritize flash models, then 2.5, then pro
       list.sort((a, b) => {
-        const aFlash = a.includes('flash') ? 0 : 1;
-        const bFlash = b.includes('flash') ? 0 : 1;
-        if (aFlash !== bFlash) return aFlash - bFlash;
+        const getPriority = (name) => {
+          if (name.includes('2.5-flash')) return 1;
+          if (name.includes('flash-latest')) return 2;
+          if (name.includes('2.5-flash-lite')) return 3;
+          if (name.includes('2.5-pro')) return 4;
+          if (name.includes('pro-latest')) return 5;
+          if (name.includes('3.8-flash')) return 6;
+          if (name.includes('flash')) return 7;
+          return 8;
+        };
+        const pA = getPriority(a);
+        const pB = getPriority(b);
+        if (pA !== pB) return pA - pB;
         return a.localeCompare(b);
       });
       return list;

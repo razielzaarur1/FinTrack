@@ -21,7 +21,6 @@ import {
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import CategoryBadge from '@/components/common/CategoryBadge';
-import { getIconSvgMarkup } from '@/lib/svg-normalizer';
 
 export default function CategorySuggestionsSection({ categories = [], onCategoryCreated = () => {} }) {
   const [suggestions, setSuggestions] = useState({ pending: [], history: [] });
@@ -44,9 +43,11 @@ export default function CategorySuggestionsSection({ categories = [], onCategory
     setError(null);
     try {
       const res = await api.getCategorySuggestions();
-      if (res && res.data) {
-        setSuggestions(res.data);
-      }
+      const payload = res?.data?.data || res?.data || {};
+      setSuggestions({
+        pending: Array.isArray(payload.pending) ? payload.pending : [],
+        history: Array.isArray(payload.history) ? payload.history : [],
+      });
     } catch (err) {
       console.error('Error fetching suggestions:', err);
       setError('לא ניתן לטעון את המלצות הקטגוריות');
@@ -216,7 +217,7 @@ export default function CategorySuggestionsSection({ categories = [], onCategory
                             color: sugg.color || '#6366f1',
                           }}
                         >
-                          <CategoryBadge category={sugg.name} customSvg={getIconSvgMarkup(sugg.icon)} size={20} />
+                          <CategoryBadge category={sugg.name} size={20} />
                         </div>
                         <div>
                           <div className="flex items-center gap-2">

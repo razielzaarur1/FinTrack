@@ -180,9 +180,14 @@ export async function classifyBatchWithAi(items = [], { userId = DEFAULT_USER_ID
       return `• חוק משתמש פעיל: תבנית "${r.pattern}" -> ${r.category}${sub}${desc}`;
     });
 
-    // Prepare items payload
-    const itemsPayload = items.map((it, idx) => ({
-      id: it.id || `item_${idx}`,
+    // Prepare items payload with guaranteed IDs
+    const preparedItems = items.map((it, idx) => ({
+      ...it,
+      id: it.id || `item_${idx}_${Date.now()}`,
+    }));
+
+    const itemsPayload = preparedItems.map((it) => ({
+      id: it.id,
       merchantName: it.merchantName || '',
       description: it.description || '',
       amount: it.amount || 0,
@@ -230,7 +235,7 @@ ${JSON.stringify(itemsPayload, null, 2)}
     const dynamicModels = await getAvailableGeminiModels(geminiApiKey);
     const modelsToTry = dynamicModels.length > 0
       ? dynamicModels
-      : ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
+      : ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.5-flash-lite', 'gemini-2.5-pro'];
 
     const genAI = new GoogleGenerativeAI(geminiApiKey);
     let lastError = null;
@@ -250,8 +255,8 @@ ${JSON.stringify(itemsPayload, null, 2)}
         const parsed = JSON.parse(text);
 
         if (Array.isArray(parsed) && parsed.length > 0) {
-          const normalizedResults = parsed.map((res) => {
-            const originalItem = items.find((it) => it.id === res.id) || {};
+          const normalizedResults = parsed.map((res, resIdx) => {
+            const originalItem = preparedItems.find((it) => String(it.id) === String(res.id)) || preparedItems[resIdx] || {};
             const cleanMerchant = res.cleanMerchant || cleanIsraeliMerchantName(originalItem.merchantName);
 
             // Normalize category and subcategory against live tree
@@ -343,6 +348,7 @@ ${JSON.stringify(itemsPayload, null, 2)}
 export async function classifyWithAi(dossier = {}) {
   const batchRes = await classifyBatchWithAi([dossier], {
     userId: dossier.userId || DEFAULT_USER_ID,
+    hierarchy: dossier.hierarchy || null,
   });
 
   if (batchRes && batchRes.success && batchRes.results && batchRes.results.length > 0) {
