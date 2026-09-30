@@ -754,11 +754,12 @@ export default function SettingsPage() {
     setReclassifyResult(null);
     try {
       const res = await api.reclassifyUnreviewedTransactions();
-      if (res && res.success) {
-        setReclassifyResult(res);
+      const payload = res?.data || res;
+      if (payload && (payload.success || payload.scanned !== undefined)) {
+        setReclassifyResult(payload);
         window.dispatchEvent(new CustomEvent('fintrack_transactions_updated'));
       } else {
-        throw new Error(res.error || 'שגיאה בביצוע הסיווג מחדש');
+        throw new Error(res?.error || payload?.error || payload?.message || 'שגיאה בביצוע הסיווג מחדש');
       }
     } catch (err) {
       console.error('Reclassify error:', err);

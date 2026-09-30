@@ -412,14 +412,55 @@ export async function saveUserRule({
 export async function reclassifyUnreviewedTransactions(userId = '00000000-0000-0000-0000-000000000001') {
   const catHierarchy = await getUserCategoryHierarchy(userId);
 
-  // 1. Fetch transactions where is_manual_category = false
+  // 1. Fetch user active rules
+  let activeRules = [];
+  try {
+    const rulesRes = await pool.query(
+      `SELECT merchant_pattern AS pattern, category, sub_category AS "subCategory", match_type AS "matchType"
+       FROM user_category_rules
+       WHERE user_id = $1 AND is_active = true
+       ORDER BY LENGTH(merchant_pattern) DESC, updated_at DESC`,
+      [userId]
+    );
+    activeRules = rulesRes.rows;
+  } catch (err) {
+    console.warn('[Classifier] Failed to fetch activeRules in reclassify:', err.message);
+  }
+
+  // 2. Fetch past manual classifications cache
+  const manualMap = new Map();
+  try {
+    const manualHistoryRes = await pool.query(
+      `SELECT DISTINCT ON (LOWER(TRIM(t.merchant_name)))
+         LOWER(TRIM(t.merchant_name)) AS merchant_key,
+         t.category
+       FROM transactions t
+       JOIN bank_accounts b ON t.account_id = b.id
+       WHERE b.user_id = $1
+         AND t.is_manual_category = true
+         AND t.category IS NOT NULL
+         AND t.category NOT IN ('ללא סיווג', 'שונות')
+         AND t.is_cc_billing = false
+       ORDER BY LOWER(TRIM(t.merchant_name)), t.date DESC
+       LIMIT 100`,
+      [userId]
+    );
+    for (const r of manualHistoryRes.rows) {
+      if (r.merchant_key) manualMap.set(r.merchant_key, r.category);
+    }
+  } catch (err) {
+    console.warn('[Classifier] Failed to fetch manualMap in reclassify:', err.message);
+  }
+
+  // 3. Fetch transactions where is_manual_category = false
   const txRes = await pool.query(
     `SELECT t.id, t.merchant_name, t.description, t.amount, t.category,
             t.is_cc_billing, t.raw_data->>'category' AS raw_category
      FROM transactions t
      JOIN bank_accounts a ON t.account_id = a.id
      WHERE a.user_id = $1 AND (t.is_manual_category = false OR t.is_manual_category IS NULL)
-     ORDER BY t.date DESC`,
+     ORDER BY t.date DESC
+     LIMIT 500`,
     [userId]
   );
 
@@ -428,9 +469,9 @@ export async function reclassifyUnreviewedTransactions(userId = '00000000-0000-0
     return { total: 0, scanned: 0, updated: 0, unchanged: 0, sampleChanges: [] };
   }
 
-  // 2. Separate into immediately resolvable vs AI batch candidates
+  // 4. Separate into immediately resolvable (rules, manual habits, CC, cash) vs AI candidates
   const signatureMap = new Map(); // sigKey -> { dossier, txIds: [] }
-  const immediateUpdates = []; // { txId, category, subCategory, categoryId, subCategoryId, cleanMerchant }
+  const immediateUpdates = []; // { txId, category, subCategory, cleanMerchant, oldCat }
   const sampleChanges = [];
 
   for (const tx of transactions) {
@@ -438,39 +479,76 @@ export async function reclassifyUnreviewedTransactions(userId = '00000000-0000-0
     const cleanDesc = (tx.description || '').trim();
     const amount = parseFloat(tx.amount || 0);
 
-    // Hard check: CC billing
+    // 4A. Hard check: CC billing
     if (tx.is_cc_billing || isCcBillingPattern(cleanMerchant) || isCcBillingPattern(cleanDesc)) {
-      const misc = catHierarchy.rootLookup.get('שונות');
-      const ccSub = misc ? catHierarchy.rootMap.get(misc.rootId)?.subs?.find((s) => s.name === 'חיוב אשראי') : null;
       immediateUpdates.push({
         txId: tx.id,
         category: 'שונות',
         subCategory: 'חיוב אשראי',
-        categoryId: ccSub ? ccSub.id : misc?.rootId,
         cleanMerchant: cleanMerchant || 'חיוב כרטיס אשראי',
         oldCat: tx.category,
       });
       continue;
     }
 
-    // Hard check: Cash withdrawal
+    // 4B. Hard check: Cash withdrawal
     if (isCashWithdrawalTransaction(cleanMerchant, cleanDesc)) {
-      const house = catHierarchy.rootLookup.get('משק בית');
-      const cashSub = house ? catHierarchy.rootMap.get(house.rootId)?.subs?.find((s) => s.name === 'משיכת מזומן') : null;
       immediateUpdates.push({
         txId: tx.id,
         category: 'משק בית',
         subCategory: 'משיכת מזומן',
-        categoryId: cashSub ? cashSub.id : house?.rootId,
         cleanMerchant: cleanMerchant || 'משיכת מזומן',
         oldCat: tx.category,
       });
       continue;
     }
 
-    // Cluster by signature key: cleanMerchant + direction + rawCategory
+    // 4C. Check user rules
+    const lowerMerchant = cleanMerchant.toLowerCase();
+    let matchedRule = null;
+    if (lowerMerchant) {
+      for (const r of activeRules) {
+        if (r.matchType === 'exact' && lowerMerchant === r.pattern.toLowerCase()) {
+          matchedRule = r;
+          break;
+        } else if (r.matchType === 'contains' && lowerMerchant.includes(r.pattern.toLowerCase())) {
+          matchedRule = r;
+          break;
+        }
+      }
+    }
+    if (matchedRule) {
+      const resolved = resolveInHierarchy(matchedRule.category, matchedRule.subCategory);
+      immediateUpdates.push({
+        txId: tx.id,
+        category: resolved.category,
+        subCategory: resolved.subCategory,
+        cleanMerchant,
+        oldCat: tx.category,
+      });
+      continue;
+    }
+
+    // 4D. Check past manual classification habit
+    if (lowerMerchant && manualMap.has(lowerMerchant)) {
+      const pastCat = manualMap.get(lowerMerchant);
+      const resolved = resolveInHierarchy(pastCat);
+      immediateUpdates.push({
+        txId: tx.id,
+        category: resolved.category,
+        subCategory: resolved.subCategory,
+        cleanMerchant,
+        oldCat: tx.category,
+      });
+      continue;
+    }
+
+    // 4E. Cluster remaining into unique merchant signature keys
     const direction = amount < 0 ? 'expense' : 'income';
-    const sigKey = `${cleanIsraeliMerchantName(cleanMerchant)}:::${cleanDesc.slice(0, 30)}:::${direction}:::${tx.raw_category || ''}`;
+    const cleanM = cleanIsraeliMerchantName(cleanMerchant);
+    const sigKey = cleanM && cleanM !== 'בית עסק'
+      ? `${cleanM.toLowerCase()}:::${direction}:::${tx.raw_category || ''}`
+      : `${cleanDesc.replace(/\d+/g, '').trim().toLowerCase().slice(0, 25)}:::${direction}:::${tx.raw_category || ''}`;
 
     if (!signatureMap.has(sigKey)) {
       signatureMap.set(sigKey, {
@@ -487,8 +565,8 @@ export async function reclassifyUnreviewedTransactions(userId = '00000000-0000-0
     signatureMap.get(sigKey).txIds.push(tx.id);
   }
 
-  // 3. Process AI batches in chunks of 20 unique signatures
-  const uniqueDossiers = Array.from(signatureMap.values());
+  // 5. Process remaining unrecognized signatures with Gemini in compact batches
+  const uniqueDossiers = Array.from(signatureMap.values()).slice(0, 60);
   const batchSize = 20;
   const resolvedSignatures = new Map();
 
@@ -503,10 +581,6 @@ export async function reclassifyUnreviewedTransactions(userId = '00000000-0000-0
       }
     } catch (batchErr) {
       console.warn(`[Classifier] Batch ${i / batchSize + 1} error:`, batchErr.message);
-    }
-    // Delay 400ms between batches to prevent 429 rate limit
-    if (i + batchSize < uniqueDossiers.length) {
-      await new Promise((r) => setTimeout(r, 400));
     }
   }
 
