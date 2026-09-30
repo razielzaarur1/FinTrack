@@ -239,6 +239,8 @@ const applySplitsSchema = z.object({
 });
 
 export default async function receiptsRoutes(fastify, options) {
+  const isReceiptsPrefix = (options.prefix || '').endsWith('/receipts');
+
   // Ingest receipt from Telegram (Photo, Document, or URL)
   const handleIngestTelegram = async (request, reply) => {
     try {
@@ -382,7 +384,9 @@ export default async function receiptsRoutes(fastify, options) {
     }
   };
   fastify.post('/receipts/ingest-telegram', handleIngestTelegram);
-  fastify.post('/ingest-telegram', handleIngestTelegram);
+  if (isReceiptsPrefix) {
+    fastify.post('/ingest-telegram', handleIngestTelegram);
+  }
 
   // GET /api/v2/transactions/:id/receipts - List all receipts for a transaction with verification
   fastify.get('/:id/receipts', async (request, reply) => {
@@ -627,7 +631,9 @@ export default async function receiptsRoutes(fastify, options) {
     }
   };
   fastify.post('/receipts/:receiptId/move', handleMoveReceipt);
-  fastify.post('/:receiptId/move', handleMoveReceipt);
+  if (isReceiptsPrefix) {
+    fastify.post('/:receiptId/move', handleMoveReceipt);
+  }
 
   // GET /receipts/file/:filename - View/download receipt file
   const handleGetReceiptFile = async (request, reply) => {
@@ -651,7 +657,9 @@ export default async function receiptsRoutes(fastify, options) {
     return reply.send(stream);
   };
   fastify.get('/receipts/file/:filename', handleGetReceiptFile);
-  fastify.get('/file/:filename', handleGetReceiptFile);
+  if (isReceiptsPrefix) {
+    fastify.get('/file/:filename', handleGetReceiptFile);
+  }
 
   // DELETE /receipts/:receiptId - Delete receipt
   const handleDeleteReceipt = async (request, reply) => {
@@ -687,7 +695,9 @@ export default async function receiptsRoutes(fastify, options) {
     }
   };
   fastify.delete('/receipts/:receiptId', handleDeleteReceipt);
-  fastify.delete('/:receiptId', handleDeleteReceipt);
+  if (isReceiptsPrefix) {
+    fastify.delete('/:receiptId', handleDeleteReceipt);
+  }
 
   // POST /receipts/:receiptId/reanalyze - Re-analyze receipt
   const handleReanalyzeReceipt = async (request, reply) => {
@@ -753,7 +763,9 @@ export default async function receiptsRoutes(fastify, options) {
     }
   };
   fastify.post('/receipts/:receiptId/reanalyze', handleReanalyzeReceipt);
-  fastify.post('/:receiptId/reanalyze', handleReanalyzeReceipt);
+  if (isReceiptsPrefix) {
+    fastify.post('/:receiptId/reanalyze', handleReanalyzeReceipt);
+  }
 
   // POST /api/v2/transactions/:id/receipts/apply-splits - Convert receipt items to transaction splits!
   fastify.post('/:id/receipts/apply-splits', async (request, reply) => {
@@ -827,5 +839,7 @@ export default async function receiptsRoutes(fastify, options) {
     }
   };
   fastify.post('/receipts/test-ai', handleTestAi);
-  fastify.post('/test-ai', handleTestAi);
+  if (isReceiptsPrefix) {
+    fastify.post('/test-ai', handleTestAi);
+  }
 }
