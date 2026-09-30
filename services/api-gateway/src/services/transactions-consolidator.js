@@ -18,6 +18,7 @@ export async function consolidatePendingTransactions(clientOrPool = pool) {
       p.user_description AS pending_user_description,
       p.is_reviewed AS pending_reviewed,
       p.is_ignored AS pending_ignored,
+      p.is_notified AS pending_notified,
       c.category AS completed_category,
       c.is_manual_category AS completed_manual_category,
       c.user_description AS completed_user_description,
@@ -88,6 +89,10 @@ export async function consolidatePendingTransactions(clientOrPool = pool) {
 
         if (pair.pending_ignored) {
           setClauses.push(`is_ignored = true`);
+        }
+
+        if (pair.pending_notified) {
+          setClauses.push(`is_notified = true`);
         }
 
         if (setClauses.length > 0) {

@@ -374,6 +374,29 @@ export const api = {
         ...(initData ? { 'x-telegram-init-data': initData } : {}),
       },
     }),
+  updateTmaFeeClassification: (id, linkId, isFeeClassified, token, initData = '') =>
+    request(`/api/v2/transactions/tma/${id}/links/${linkId}/fee${token ? `?token=${encodeURIComponent(token)}` : ''}`, {
+      method: 'PATCH',
+      headers: {
+        ...(token ? { 'x-tma-token': token } : {}),
+        ...(initData ? { 'x-telegram-init-data': initData } : {}),
+      },
+      body: JSON.stringify({ isFeeClassified }),
+    }),
+  getTmaCandidates: (id, token, initData = '', minScore = 0) =>
+    request(`/api/v2/transactions/tma/${id}/candidates?minScore=${minScore}${token ? `&token=${encodeURIComponent(token)}` : ''}`, {
+      headers: {
+        ...(token ? { 'x-tma-token': token } : {}),
+        ...(initData ? { 'x-telegram-init-data': initData } : {}),
+      },
+    }),
+  getTmaTxFxDetails: (id, token, initData = '') =>
+    request(`/api/v2/transactions/tma/${id}/fx${token ? `?token=${encodeURIComponent(token)}` : ''}`, {
+      headers: {
+        ...(token ? { 'x-tma-token': token } : {}),
+        ...(initData ? { 'x-telegram-init-data': initData } : {}),
+      },
+    }),
   getTmaLinkable: (id, search = '', token, initData = '') =>
     request(`/api/v2/transactions/tma/${id}/linkable?${search ? `search=${encodeURIComponent(search)}&` : ''}${token ? `token=${encodeURIComponent(token)}` : ''}`, {
       headers: {

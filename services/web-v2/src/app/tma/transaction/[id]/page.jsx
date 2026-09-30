@@ -221,6 +221,10 @@ export default function TmaTransactionPage() {
   const [initData, setInitData] = useState('');
   const [isTelegramEnv, setIsTelegramEnv] = useState(null); // null: detecting, true: in telegram, false: blocked browser
   const [isLightMode, setIsLightMode] = useState(false);
+  const [candidates, setCandidates] = useState([]);
+  const [loadingCandidates, setLoadingCandidates] = useState(false);
+  const [fxDetails, setFxDetails] = useState(null);
+  const [loadingFx, setLoadingFx] = useState(false);
 
   // Telegram WebApp initialization & detection
   useEffect(() => {
@@ -231,8 +235,12 @@ export default function TmaTransactionPage() {
       const savedTheme = localStorage.getItem('tma_theme');
       if (savedTheme === 'light') {
         setIsLightMode(true);
-      } else if (!savedTheme && window.Telegram?.WebApp?.colorScheme === 'light') {
-        setIsLightMode(true);
+        document.documentElement.classList.add('light');
+        document.documentElement.classList.remove('dark');
+      } else {
+        setIsLightMode(false);
+        document.documentElement.classList.add('dark');
+        document.documentElement.classList.remove('light');
       }
     }
 
@@ -244,9 +252,12 @@ export default function TmaTransactionPage() {
           try {
             tg.ready();
             tg.expand();
+            const currentLight = localStorage.getItem('tma_theme') === 'light';
             if (tg.setHeaderColor) {
-              const currentLight = localStorage.getItem('tma_theme') === 'light' || tg.colorScheme === 'light';
-              tg.setHeaderColor(currentLight ? '#ffffff' : '#0f172a');
+              tg.setHeaderColor(currentLight ? '#ffffff' : '#0a0d14');
+            }
+            if (tg.setBackgroundColor) {
+              tg.setBackgroundColor(currentLight ? '#f8fafc' : '#0a0d14');
             }
           } catch (e) {
             console.warn('Telegram WebApp init error:', e);
@@ -351,6 +362,27 @@ export default function TmaTransactionPage() {
         api.getCategories({ tree: 'true' }).then((res) => {
           if (isMounted && res.data?.data) setDynamicCategories(res.data.data);
         }).catch(() => {});
+
+        // Fetch reconciliation candidates
+        setLoadingCandidates(true);
+        api.getTmaCandidates(id, token, initData).then((res) => {
+          if (isMounted && res.data?.data) setCandidates(res.data.data);
+        }).catch(() => {}).finally(() => { if (isMounted) setLoadingCandidates(false); });
+
+        // Fetch foreign currency FX details
+        const isForeignTx = Boolean(
+          data.isForeign ||
+          (data.originalCurrency && data.originalCurrency !== 'ILS') ||
+          (data.rawData?.originalCurrency && data.rawData.originalCurrency !== 'ILS')
+        );
+        if (data.fxDetails) {
+          setFxDetails(data.fxDetails);
+        } else if (isForeignTx) {
+          setLoadingFx(true);
+          api.getTmaTxFxDetails(id, token, initData).then((res) => {
+            if (isMounted && res.data?.data) setFxDetails(res.data.data);
+          }).catch(() => {}).finally(() => { if (isMounted) setLoadingFx(false); });
+        }
 
       } catch (err) {
         if (isMounted) {
@@ -607,12 +639,66 @@ export default function TmaTransactionPage() {
     setIsLightMode(next);
     if (typeof window !== 'undefined') {
       localStorage.setItem('tma_theme', next ? 'light' : 'dark');
-      if (window.Telegram?.WebApp?.setHeaderColor) {
-        window.Telegram.WebApp.setHeaderColor(next ? '#ffffff' : '#0f172a');
+      if (next) {
+        document.documentElement.classList.add('light');
+        document.documentElement.classList.remove('dark');
+      } else {
+        document.documentElement.classList.add('dark');
+        document.documentElement.classList.remove('light');
       }
-      if (window.Telegram?.WebApp?.HapticFeedback) {
-        window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+      if (window.Telegram?.WebApp) {
+        const tg = window.Telegram.WebApp;
+        if (tg.setHeaderColor) tg.setHeaderColor(next ? '#ffffff' : '#0a0d14');
+        if (tg.setBackgroundColor) tg.setBackgroundColor(next ? '#f8fafc' : '#0a0d14');
+        if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
       }
+    }
+  };
+
+  const handleToggleFeeClassification = async (linkId, currentStatus) => {
+    try {
+      const res = await api.updateTmaFeeClassification(id, linkId, !currentStatus, token, initData);
+      if (res.data) {
+        setLinks((prev) =>
+          prev.map((l) => (l.linkId === linkId ? { ...l, isFeeClassified: !currentStatus } : l))
+        );
+      }
+    } catch (err) {
+      console.error('Failed to update fee classification:', err);
+    }
+  };
+
+  const handleExecuteCandidateLink = async (cand) => {
+    const candTx = cand.candidate || cand;
+    const candId = candTx.id || cand.id;
+    try {
+      const diff = Math.abs(Math.abs(parseFloat(tx.amount)) - Math.abs(parseFloat(candTx.amount || 0)));
+      const hasFee = diff > 0.009;
+      const res = await api.linkTmaTransaction(
+        id,
+        {
+          targetTransactionId: candId,
+          linkType: 'cc_billing_match',
+          feeAmount: hasFee ? diff : null,
+          feeCategory: 'עמלות',
+          isFeeClassified: false,
+        },
+        token,
+        initData
+      );
+      if (res.data) {
+        api.getTmaLinks(id, token, initData).then((r) => {
+          if (r.data?.data) setLinks(r.data.data);
+        });
+        api.getTmaCandidates(id, token, initData).then((r) => {
+          if (r.data?.data) setCandidates(r.data.data);
+        });
+        if (typeof window !== 'undefined' && window.Telegram?.WebApp?.HapticFeedback) {
+          window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
+        }
+      }
+    } catch (err) {
+      console.error('Failed to link candidate:', err);
     }
   };
 
@@ -635,14 +721,14 @@ export default function TmaTransactionPage() {
       <Script src="https://telegram.org/js/telegram-web-app.js" strategy="beforeInteractive" />
 
       <div className={`min-h-screen font-sans rtl flex flex-col justify-between overflow-x-hidden transition-colors ${
-        isLightMode ? 'bg-slate-100 text-slate-900' : 'bg-slate-950 text-slate-100'
+        isLightMode ? 'light bg-[#f8fafc] text-[#0f172a]' : 'dark bg-[#0a0d14] text-[#f1f5f9]'
       }`}>
 
         {/* Loading State */}
         {loading && isTelegramEnv !== false && (
           <div className="p-12 text-center space-y-3 my-auto">
-            <div className="w-9 h-9 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto" />
-            <p className={`text-xs ${isLightMode ? 'text-slate-500' : 'text-slate-400'}`}>טוען את פרטי התנועה...</p>
+            <div className="w-9 h-9 border-2 border-brand-primary border-t-transparent rounded-full animate-spin mx-auto" />
+            <p className="text-xs text-dark-text-muted light:text-light-text-muted">טוען את פרטי התנועה...</p>
           </div>
         )}
 
@@ -653,8 +739,8 @@ export default function TmaTransactionPage() {
               <AlertCircle className="w-5 h-5 shrink-0" />
               <span>שגיאה בגישה לתנועה</span>
             </div>
-            <p className={isLightMode ? 'text-slate-700 leading-relaxed' : 'text-slate-300 leading-relaxed'}>{error}</p>
-            <p className="text-[11px] text-slate-400 pt-2 border-t border-rose-500/20">
+            <p className="leading-relaxed text-dark-text light:text-light-text">{error}</p>
+            <p className="text-[11px] text-dark-text-muted light:text-light-text-muted pt-2 border-t border-rose-500/20">
               ודא שפתחת את הקישור מתוך הודעת הבוט בטלגרם ושלא חלפו יותר מ-7 ימים מעת קבלתה.
             </p>
           </div>
@@ -664,18 +750,14 @@ export default function TmaTransactionPage() {
         {!loading && tx && isTelegramEnv !== false && (() => {
           const instInfo = extractInstallmentInfo(tx);
           return (
-          <div className={`w-full max-w-lg mx-auto min-h-screen flex flex-col justify-between border-x shadow-2xl transition-colors ${
-            isLightMode ? 'bg-white border-slate-200' : 'bg-slate-950 border-slate-800/80'
-          }`}>
+          <div className="w-full max-w-lg mx-auto min-h-screen flex flex-col justify-between border-x bg-dark-surface light:bg-light-surface border-dark-border light:border-light-border shadow-2xl transition-colors">
             {/* Header (Exact TransactionDrawer layout) */}
-            <div className={`p-4 sm:p-5 border-b flex items-center justify-between sticky top-0 backdrop-blur-md z-20 transition-colors ${
-              isLightMode ? 'bg-white/95 border-slate-200' : 'bg-slate-900/60 border-slate-800'
-            }`}>
+            <div className="p-4 sm:p-5 border-b border-dark-border light:border-light-border flex items-center justify-between sticky top-0 backdrop-blur-md z-20 transition-colors bg-dark-surface/95 light:bg-light-surface/95">
               <div className="flex items-center gap-3 min-w-0">
                 <CategoryBadge category={category || tx.category} size={22} />
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-indigo-500/15 text-indigo-400">
+                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-brand-primary/15 text-brand-primary">
                       {tx.accountDisplayName || tx.bankCompany?.toUpperCase()} {tx.cardLast4 ? `(••${tx.cardLast4})` : ''}
                     </span>
                     {tx.status === 'pending' && (
@@ -684,26 +766,22 @@ export default function TmaTransactionPage() {
                       </span>
                     )}
                   </div>
-                  <div className={`text-base sm:text-lg font-bold mt-0.5 truncate max-w-[220px] sm:max-w-xs ${
-                    isLightMode ? 'text-slate-900' : 'text-slate-100'
-                  }`}>
+                  <div className="text-base sm:text-lg font-bold mt-0.5 truncate max-w-[220px] sm:max-w-xs text-dark-text light:text-light-text">
                     {userDescription || cleanSpacedHebrew(getTransactionTitle(tx))}
                   </div>
-                  <div className={`text-xs font-mono flex items-center gap-1.5 flex-wrap ${
-                    isLightMode ? 'text-slate-500' : 'text-slate-400'
-                  }`}>
+                  <div className="text-xs font-mono flex items-center gap-1.5 flex-wrap text-dark-text-muted light:text-light-text-muted">
                     <span>{formatDate(tx.date, 'he')}</span>
                     <span>•</span>
-                    <span className={`font-bold ${isLightMode ? 'text-slate-900' : 'text-slate-200'}`}>
+                    <span className="font-bold text-dark-text light:text-light-text">
                       {formatILS(tx.amount, { showSign: true })}
                     </span>
                     {instInfo.isInstallment && (
                       <>
-                        <span className="px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 text-[10px] font-semibold">
+                        <span className="px-1.5 py-0.5 rounded bg-brand-primary/20 text-brand-primary text-[10px] font-semibold">
                           💳 {instInfo.text}
                         </span>
                         {instInfo.totalAmount > Math.abs(parseFloat(tx.amount) || 0) && (
-                          <span className="text-[10px] text-slate-400 font-sans">
+                          <span className="text-[10px] text-dark-text-muted light:text-light-text-muted font-sans">
                             (מתוך {formatILS(instInfo.totalAmount)})
                           </span>
                         )}
@@ -715,28 +793,22 @@ export default function TmaTransactionPage() {
               <button
                 type="button"
                 onClick={toggleTheme}
-                className={`p-2 rounded-xl border transition-colors ${
-                  isLightMode
-                    ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
-                    : 'bg-slate-800/80 hover:bg-slate-800 text-slate-300 hover:text-white border-slate-700'
-                }`}
+                className="p-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text transition-colors cursor-pointer"
                 title={isLightMode ? 'מעבר למצב כהה' : 'מעבר למצב בהיר'}
               >
-                {isLightMode ? <Moon className="w-5 h-5 text-indigo-600" /> : <Sun className="w-5 h-5 text-amber-400" />}
+                {isLightMode ? <Moon className="w-5 h-5 text-brand-primary" /> : <Sun className="w-5 h-5 text-amber-400" />}
               </button>
             </div>
 
             {/* Tab Selector Bar (All 7 TransactionDrawer tabs) */}
-            <div className={`flex border-b px-3 gap-1 text-xs font-medium overflow-x-auto no-scrollbar select-none sticky top-[73px] backdrop-blur-md z-10 transition-colors ${
-              isLightMode ? 'bg-slate-50/95 border-slate-200' : 'bg-slate-900/40 border-slate-800'
-            }`}>
+            <div className="flex border-b border-dark-border light:border-light-border px-3 gap-1 text-xs font-medium overflow-x-auto no-scrollbar select-none sticky top-[73px] backdrop-blur-md z-10 transition-colors bg-dark-surface/95 light:bg-light-surface/95">
               <button
                 type="button"
                 onClick={() => setActiveTab('details')}
                 className={`py-3 px-2.5 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
                   activeTab === 'details'
-                    ? 'border-indigo-500 text-indigo-400 font-semibold'
-                    : `border-transparent ${isLightMode ? 'text-slate-500 hover:text-slate-900' : 'text-slate-400 hover:text-slate-200'}`
+                    ? 'border-brand-primary text-brand-primary font-semibold'
+                    : 'border-transparent text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
                 }`}
               >
                 <FileText className="w-3.5 h-3.5" />
@@ -748,8 +820,8 @@ export default function TmaTransactionPage() {
                 onClick={() => setActiveTab('receipts')}
                 className={`py-3 px-2.5 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
                   activeTab === 'receipts'
-                    ? 'border-indigo-500 text-indigo-400 font-semibold'
-                    : `border-transparent ${isLightMode ? 'text-slate-500 hover:text-slate-900' : 'text-slate-400 hover:text-slate-200'}`
+                    ? 'border-brand-primary text-brand-primary font-semibold'
+                    : 'border-transparent text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
                 }`}
               >
                 <Receipt className="w-3.5 h-3.5" />
@@ -761,8 +833,8 @@ export default function TmaTransactionPage() {
                 onClick={() => setActiveTab('notes')}
                 className={`py-3 px-2.5 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
                   activeTab === 'notes'
-                    ? 'border-indigo-500 text-indigo-400 font-semibold'
-                    : `border-transparent ${isLightMode ? 'text-slate-500 hover:text-slate-900' : 'text-slate-400 hover:text-slate-200'}`
+                    ? 'border-brand-primary text-brand-primary font-semibold'
+                    : 'border-transparent text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
                 }`}
               >
                 <span>💬</span>
@@ -774,8 +846,8 @@ export default function TmaTransactionPage() {
                 onClick={() => setActiveTab('links')}
                 className={`py-3 px-2.5 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
                   activeTab === 'links'
-                    ? 'border-indigo-500 text-indigo-400 font-semibold'
-                    : `border-transparent ${isLightMode ? 'text-slate-500 hover:text-slate-900' : 'text-slate-400 hover:text-slate-200'}`
+                    ? 'border-brand-primary text-brand-primary font-semibold'
+                    : 'border-transparent text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
                 }`}
               >
                 <Link2 className="w-3.5 h-3.5" />
@@ -787,8 +859,8 @@ export default function TmaTransactionPage() {
                 onClick={() => setActiveTab('splits')}
                 className={`py-3 px-2.5 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
                   activeTab === 'splits'
-                    ? 'border-indigo-500 text-indigo-400 font-semibold'
-                    : `border-transparent ${isLightMode ? 'text-slate-500 hover:text-slate-900' : 'text-slate-400 hover:text-slate-200'}`
+                    ? 'border-brand-primary text-brand-primary font-semibold'
+                    : 'border-transparent text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
                 }`}
               >
                 <Split className="w-3.5 h-3.5" />
@@ -800,8 +872,8 @@ export default function TmaTransactionPage() {
                 onClick={() => setActiveTab('similar')}
                 className={`py-3 px-2.5 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
                   activeTab === 'similar'
-                    ? 'border-indigo-500 text-indigo-400 font-semibold'
-                    : `border-transparent ${isLightMode ? 'text-slate-500 hover:text-slate-900' : 'text-slate-400 hover:text-slate-200'}`
+                    ? 'border-brand-primary text-brand-primary font-semibold'
+                    : 'border-transparent text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
                 }`}
               >
                 <Layers className="w-3.5 h-3.5" />
@@ -813,8 +885,8 @@ export default function TmaTransactionPage() {
                 onClick={() => setActiveTab('scraper')}
                 className={`py-3 px-2.5 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
                   activeTab === 'scraper'
-                    ? 'border-indigo-500 text-indigo-400 font-semibold'
-                    : `border-transparent ${isLightMode ? 'text-slate-500 hover:text-slate-900' : 'text-slate-400 hover:text-slate-200'}`
+                    ? 'border-brand-primary text-brand-primary font-semibold'
+                    : 'border-transparent text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
                 }`}
               >
                 <Database className="w-3.5 h-3.5" />
@@ -829,7 +901,7 @@ export default function TmaTransactionPage() {
                 <form onSubmit={handleSaveDetails} className="space-y-4">
                   {/* Custom Name / Nickname */}
                   <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-slate-400">
+                    <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">
                       כינוי מותאם אישית (יוצג ככותרת)
                     </label>
                     <input
@@ -837,22 +909,22 @@ export default function TmaTransactionPage() {
                       value={userDescription}
                       onChange={(e) => setUserDescription(e.target.value)}
                       placeholder={cleanSpacedHebrew(getTransactionTitle(tx))}
-                      className="w-full p-2.5 rounded-xl border border-slate-800 bg-slate-900 text-slate-100 text-sm font-semibold focus:outline-none focus:border-indigo-500 transition-colors"
+                      className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-sm font-semibold focus:outline-none focus:border-brand-primary transition-colors"
                     />
                   </div>
 
                   {/* Read-Only Bank Merchant Name */}
                   <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-slate-400">
+                    <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">
                       שם בית העסק (מקור הבנק / כרטיס)
                     </label>
-                    <div className="w-full p-2.5 rounded-xl border border-slate-800/80 bg-slate-900/60 text-slate-200 font-medium text-sm flex items-center justify-between">
+                    <div className="w-full p-2.5 rounded-xl border border-dark-border/80 light:border-light-border/80 bg-dark-surface-elevated/70 light:bg-light-surface-elevated/70 text-dark-text light:text-light-text font-medium text-sm flex items-center justify-between">
                       <span className="truncate">{cleanSpacedHebrew(merchantName || tx.merchantName || 'לא צוין בית עסק')}</span>
                       {similarTxs.length > 0 && (
                         <button
                           type="button"
                           onClick={() => setActiveTab('similar')}
-                          className="text-[11px] text-indigo-400 hover:underline shrink-0 mr-2 font-semibold"
+                          className="text-[11px] text-brand-primary hover:underline shrink-0 mr-2 font-semibold cursor-pointer"
                         >
                           הצג דומות ({similarTxs.length})
                         </button>
@@ -862,135 +934,167 @@ export default function TmaTransactionPage() {
 
                   {/* Read-Only Financial Metadata Chips Grid */}
                   <div className="grid grid-cols-3 gap-2">
-                    <div className="p-2.5 rounded-xl border border-slate-800/80 bg-slate-900/50 space-y-1">
-                      <div className="text-[10px] font-medium text-slate-400">סכום חיוב</div>
-                      <div className={`text-xs sm:text-sm font-bold font-mono ${currentAmountNum > 0 ? 'text-emerald-400' : 'text-slate-100'}`}>
+                    <div className="p-2.5 rounded-xl border border-dark-border/80 light:border-light-border/80 bg-dark-surface-elevated/60 light:bg-light-surface-elevated/60 space-y-1">
+                      <div className="text-[10px] font-medium text-dark-text-muted light:text-light-text-muted">סכום חיוב</div>
+                      <div className={`text-xs sm:text-sm font-bold font-mono ${currentAmountNum > 0 ? 'text-brand-income' : 'text-dark-text light:text-light-text'}`}>
                         {formatILS(tx.amount, { showSign: true })}
                       </div>
                     </div>
 
-                    <div className="p-2.5 rounded-xl border border-slate-800/80 bg-slate-900/50 space-y-1">
-                      <div className="text-[10px] font-medium text-slate-400">תאריך עסקה</div>
-                      <div className="text-xs font-semibold text-slate-200 font-mono mt-0.5">
+                    <div className="p-2.5 rounded-xl border border-dark-border/80 light:border-light-border/80 bg-dark-surface-elevated/60 light:bg-light-surface-elevated/60 space-y-1">
+                      <div className="text-[10px] font-medium text-dark-text-muted light:text-light-text-muted">תאריך עסקה</div>
+                      <div className="text-xs font-semibold text-dark-text light:text-light-text font-mono mt-0.5">
                         {formatDate(tx.date, 'he')}
                       </div>
                     </div>
 
-                    <div className="p-2.5 rounded-xl border border-slate-800/80 bg-slate-900/50 space-y-1">
-                      <div className="text-[10px] font-medium text-slate-400">חשבון / כרטיס</div>
-                      <div className="text-xs font-semibold text-slate-200 truncate mt-0.5" title={tx.accountDisplayName || tx.bankCompany}>
+                    <div className="p-2.5 rounded-xl border border-dark-border/80 light:border-light-border/80 bg-dark-surface-elevated/60 light:bg-light-surface-elevated/60 space-y-1">
+                      <div className="text-[10px] font-medium text-dark-text-muted light:text-light-text-muted">חשבון / כרטיס</div>
+                      <div className="text-xs font-semibold text-dark-text light:text-light-text truncate mt-0.5" title={tx.accountDisplayName || tx.bankCompany}>
                         {tx.accountDisplayName || tx.bankCompany?.toUpperCase() || 'ראשי'}
                       </div>
                     </div>
                   </div>
 
+                  {/* Credit Card Billing Detection Banner */}
+                  {(tx.isCcBilling || tx.category === 'חיוב אשראי') && (
+                    <div className="p-3.5 rounded-xl border border-indigo-500/30 bg-indigo-500/10 flex items-center justify-between gap-3 text-xs animate-in fade-in duration-150">
+                      <div className="flex items-center gap-2.5">
+                        <CreditCard className="w-5 h-5 text-indigo-400 shrink-0" />
+                        <div>
+                          <div className="font-bold text-dark-text light:text-light-text">
+                            זוהה כחיוב חברת אשראי 💳
+                          </div>
+                          <div className="text-[11px] text-dark-text-muted light:text-light-text-muted">
+                            מוחרג אוטומטית למניעת כפילות הוצאה
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('links')}
+                        className="px-3 py-1.5 rounded-lg bg-brand-primary text-white font-semibold text-xs hover:bg-brand-primary-hover transition-all cursor-pointer shrink-0"
+                      >
+                        התאמות ({candidates.length}) ›
+                      </button>
+                    </div>
+                  )}
+
                   {/* Foreign Currency & Conversion Fee Analysis Card */}
-                  {tx.fxDetails && (
-                    <div className="p-3.5 rounded-2xl border border-blue-500/30 bg-blue-500/10 space-y-2.5 text-xs">
+                  {loadingFx ? (
+                    <div className="p-3.5 rounded-2xl border border-blue-500/20 bg-blue-500/5 flex items-center justify-center gap-2 text-xs text-blue-400">
+                      <RefreshCw className="w-4 h-4 animate-spin text-blue-500" />
+                      <span>טוען נתוני שער יציג ועמלות המרה...</span>
+                    </div>
+                  ) : (fxDetails || tx.fxDetails) && (() => {
+                    const fx = fxDetails || tx.fxDetails;
+                    return (
+                    <div className="p-3.5 rounded-2xl border border-blue-500/30 bg-blue-500/5 dark:bg-blue-500/10 space-y-2.5 text-xs">
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-1.5 font-bold text-slate-200">
+                        <div className="flex items-center gap-1.5 font-bold text-dark-text light:text-light-text">
                           <div className="p-1 rounded-md bg-blue-500/20 text-blue-400">
                             <Globe className="w-3.5 h-3.5" />
                           </div>
-                          <span>עסקת מט״ח ({tx.fxDetails.foreignCurrency || tx.fxDetails.originalCurrency || 'מט״ח'}) ועלויות המרה</span>
+                          <span>עסקת מט״ח ({fx.foreignCurrency || fx.originalCurrency || 'מט״ח'}) ועלויות המרה</span>
                         </div>
                         <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-blue-500/20 text-blue-400 font-mono" dir="ltr">
-                          {tx.fxDetails.foreignCurrency || tx.fxDetails.originalCurrency} / ILS
+                          {fx.foreignCurrency || fx.originalCurrency} / ILS
                         </span>
                       </div>
 
                       {/* 2-column: Original Foreign Amount vs Charged ILS */}
                       <div className="grid grid-cols-2 gap-2">
-                        <div className="p-2 rounded-xl border border-slate-800/80 bg-slate-900/60 space-y-0.5">
-                          <div className="text-[10px] text-slate-400">סכום במטבע מקורי</div>
-                          <div className="text-xs sm:text-sm font-bold font-mono text-slate-100" dir="ltr">
-                            {formatCurrency(tx.fxDetails.foreignAmount, tx.fxDetails.foreignCurrency || tx.fxDetails.originalCurrency)}
+                        <div className="p-2 rounded-xl border border-dark-border/60 light:border-light-border/60 bg-dark-surface-elevated/50 light:bg-light-surface-elevated/50 space-y-0.5">
+                          <div className="text-[10px] text-dark-text-muted light:text-light-text-muted">סכום במטבע מקורי</div>
+                          <div className="text-xs sm:text-sm font-bold font-mono text-dark-text light:text-light-text" dir="ltr">
+                            {formatCurrency(fx.foreignAmount, fx.foreignCurrency || fx.originalCurrency)}
                           </div>
                         </div>
 
-                        <div className="p-2 rounded-xl border border-slate-800/80 bg-slate-900/60 space-y-0.5">
-                          <div className="text-[10px] text-slate-400">סכום חיוב בפועל בחשבון</div>
-                          <div className="text-xs sm:text-sm font-bold font-mono text-rose-400" dir="ltr">
-                            {formatILS(tx.fxDetails.ilsAmount)}
+                        <div className="p-2 rounded-xl border border-dark-border/60 light:border-light-border/60 bg-dark-surface-elevated/50 light:bg-light-surface-elevated/50 space-y-0.5">
+                          <div className="text-[10px] text-dark-text-muted light:text-light-text-muted">סכום חיוב בפועל בחשבון</div>
+                          <div className="text-xs sm:text-sm font-bold font-mono text-rose-500" dir="ltr">
+                            {formatILS(fx.ilsAmount)}
                           </div>
                         </div>
                       </div>
 
                       {/* Rates Breakdown */}
-                      <div className="text-[11px] space-y-1 pt-1 border-t border-blue-500/20 text-slate-300">
+                      <div className="text-[11px] space-y-1 pt-1 border-t border-blue-500/20 text-dark-text-muted light:text-light-text-muted">
                         <div className="flex items-center justify-between">
-                          <span className="text-slate-400">שער יציג לתאריך העסקה ({formatDate(tx.fxDetails.rateDate || tx.date, 'he')}):</span>
-                          <span className="font-mono font-semibold" dir="ltr">
-                            1 {tx.fxDetails.foreignCurrency || tx.fxDetails.originalCurrency} = ₪{Number(tx.fxDetails.representativeRate).toFixed(4)}
+                          <span>שער יציג לתאריך העסקה ({formatDate(fx.rateDate || tx.date, 'he')}):</span>
+                          <span className="font-mono font-semibold text-dark-text light:text-light-text" dir="ltr">
+                            1 {fx.foreignCurrency || fx.originalCurrency} = ₪{Number(fx.representativeRate).toFixed(4)}
                           </span>
                         </div>
 
                         <div className="flex items-center justify-between">
-                          <span className="text-slate-400">עלות לפי שער יציג (ללא עמלות):</span>
-                          <span className="font-mono font-semibold" dir="ltr">
-                            {formatILS(tx.fxDetails.costAtRepresentativeRate)}
+                          <span>עלות לפי שער יציג (ללא עמלות):</span>
+                          <span className="font-mono font-semibold text-dark-text light:text-light-text" dir="ltr">
+                            {formatILS(fx.costAtRepresentativeRate)}
                           </span>
                         </div>
 
                         <div className="flex items-center justify-between">
-                          <span className="text-slate-400">שער חיוב אפקטיבי של הכרטיס:</span>
-                          <span className="font-mono font-semibold text-amber-400" dir="ltr">
-                            1 {tx.fxDetails.foreignCurrency || tx.fxDetails.originalCurrency} = ₪{Number(tx.fxDetails.effectiveRate).toFixed(4)}
+                          <span>שער חיוב אפקטיבי של הכרטיס:</span>
+                          <span className="font-mono font-semibold text-amber-500" dir="ltr">
+                            1 {fx.foreignCurrency || fx.originalCurrency} = ₪{Number(fx.effectiveRate).toFixed(4)}
                           </span>
                         </div>
                       </div>
 
                       {/* Conversion Fee Banner */}
-                      {tx.fxDetails.isPositiveFee ? (
+                      {fx.isPositiveFee ? (
                         <div className="p-2.5 rounded-xl bg-amber-500/15 border border-amber-500/25 space-y-1">
-                          <div className="flex items-center justify-between font-bold text-amber-400">
+                          <div className="flex items-center justify-between font-bold text-amber-500">
                             <span>עמלת המרה ששולמה:</span>
                             <span className="font-mono" dir="ltr">
-                              +{formatILS(tx.fxDetails.conversionFeeILS)}
-                              {tx.fxDetails.feePercent > 0 && ` (+${tx.fxDetails.feePercent}%)`}
+                              +{formatILS(fx.conversionFeeILS)}
+                              {fx.feePercent > 0 && ` (+${fx.feePercent}%)`}
                             </span>
                           </div>
-                          <div className="text-[10px] text-slate-400 flex items-center justify-between">
+                          <div className="text-[10px] text-dark-text-muted light:text-light-text-muted flex items-center justify-between">
                             <span>עלות עמלה ליחידת מטבע:</span>
-                            <span className="font-semibold text-slate-200 font-mono" dir="rtl">
-                              {Math.abs(tx.fxDetails.feePerUnitAgorot)} אגורות לכל {tx.fxDetails.foreignCurrency || tx.fxDetails.originalCurrency} (+{formatILS(Math.abs(tx.fxDetails.feePerUnit))})
+                            <span className="font-semibold text-dark-text light:text-light-text font-mono" dir="rtl">
+                              {Math.abs(fx.feePerUnitAgorot)} אגורות לכל {fx.foreignCurrency || fx.originalCurrency} (+{formatILS(Math.abs(fx.feePerUnit))})
                             </span>
                           </div>
                         </div>
                       ) : (
                         <div className="p-2.5 rounded-xl bg-emerald-500/15 border border-emerald-500/25 space-y-1">
-                          <div className="flex items-center justify-between font-bold text-emerald-400">
+                          <div className="flex items-center justify-between font-bold text-emerald-500">
                             <span>הפרש לטובתך (חיוב נמוך מהשער היציג):</span>
                             <span className="font-mono" dir="ltr">
-                              {formatILS(Math.abs(tx.fxDetails.conversionFeeILS))}
-                              {tx.fxDetails.feePercent !== 0 && ` (${tx.fxDetails.feePercent}%)`}
+                              {formatILS(Math.abs(fx.conversionFeeILS))}
+                              {fx.feePercent !== 0 && ` (${fx.feePercent}%)`}
                             </span>
                           </div>
-                          <div className="text-[10px] text-slate-400 flex items-center justify-between">
+                          <div className="text-[10px] text-dark-text-muted light:text-light-text-muted flex items-center justify-between">
                             <span>הפרש ליחידת מטבע:</span>
-                            <span className="font-semibold text-emerald-400 font-mono" dir="rtl">
-                              {Math.abs(tx.fxDetails.feePerUnitAgorot)} אגורות לכל {tx.fxDetails.foreignCurrency || tx.fxDetails.originalCurrency} ({formatILS(Math.abs(tx.fxDetails.feePerUnit))})
+                            <span className="font-semibold text-emerald-500 font-mono" dir="rtl">
+                              {Math.abs(fx.feePerUnitAgorot)} אגורות לכל {fx.foreignCurrency || fx.originalCurrency} ({formatILS(Math.abs(fx.feePerUnit))})
                             </span>
                           </div>
                         </div>
                       )}
                     </div>
-                  )}
+                    );
+                  })()}
 
                   {/* Installment Banner */}
                   {instInfo.isInstallment && (
-                    <div className="p-3.5 rounded-2xl border border-indigo-500/30 bg-indigo-500/10 flex items-center justify-between text-xs">
+                    <div className="p-3.5 rounded-2xl border border-brand-primary/30 bg-brand-primary/10 flex items-center justify-between text-xs">
                       <div className="flex items-center gap-2.5">
-                        <CreditCard className="w-4 h-4 text-indigo-400 shrink-0" />
+                        <CreditCard className="w-4 h-4 text-brand-primary shrink-0" />
                         <div>
-                          <div className="font-bold text-slate-200">עסקת תשלומים: {instInfo.text}</div>
-                          <div className="text-[11px] text-slate-400 mt-0.5">
+                          <div className="font-bold text-dark-text light:text-light-text">עסקת תשלומים: {instInfo.text}</div>
+                          <div className="text-[11px] text-dark-text-muted light:text-light-text-muted mt-0.5">
                             סכום חיוב חודשי: {formatILS(tx.amount)}
                             {instInfo.totalAmount > 0 && ` • סך כולל של העסקה: ${formatILS(instInfo.totalAmount)}`}
                           </div>
                         </div>
                       </div>
-                      <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-mono">
+                      <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-brand-primary/20 text-brand-primary font-mono">
                         {instInfo.number}/{instInfo.total}
                       </span>
                     </div>
@@ -998,7 +1102,7 @@ export default function TmaTransactionPage() {
 
                   {/* Category Picker */}
                   <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-slate-400">
+                    <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">
                       קטגוריה
                     </label>
                     <CategoryPicker
@@ -1009,23 +1113,23 @@ export default function TmaTransactionPage() {
                   </div>
 
                   {/* Checkboxes: Ignore & ApplyToSimilar */}
-                  <div className="space-y-2 pt-1 border-t border-slate-800/60">
-                    <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none">
+                  <div className="space-y-2 pt-1 border-t border-dark-border/60 light:border-light-border/60">
+                    <label className="flex items-center gap-2 text-xs text-dark-text-muted light:text-light-text-muted cursor-pointer select-none">
                       <input
                         type="checkbox"
                         checked={isIgnored}
                         onChange={(e) => setIsIgnored(e.target.checked)}
-                        className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-indigo-600 focus:ring-indigo-500 cursor-pointer shrink-0"
+                        className="w-4 h-4 rounded border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-brand-primary focus:ring-brand-primary cursor-pointer shrink-0"
                       />
                       <span>התעלם מתנועה זו (לא תיכלל בחישובים וגרפים)</span>
                     </label>
 
-                    <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none">
+                    <label className="flex items-center gap-2 text-xs text-dark-text-muted light:text-light-text-muted cursor-pointer select-none">
                       <input
                         type="checkbox"
                         checked={applyToSimilar}
                         onChange={(e) => setApplyToSimilar(e.target.checked)}
-                        className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-indigo-600 focus:ring-indigo-500 cursor-pointer shrink-0"
+                        className="w-4 h-4 rounded border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-brand-primary focus:ring-brand-primary cursor-pointer shrink-0"
                       />
                       <span>החל סיווג זה על כל התנועות הדומות בעתיד {similarTxs.length > 0 && `(${similarTxs.length} תנועות)`}</span>
                     </label>
@@ -1041,7 +1145,7 @@ export default function TmaTransactionPage() {
                       <button
                         type="button"
                         onClick={handleClose}
-                        className="text-[11px] underline hover:text-emerald-300 font-semibold"
+                        className="text-[11px] underline hover:text-emerald-300 font-semibold cursor-pointer"
                       >
                         סגור חלון
                       </button>
@@ -1059,7 +1163,7 @@ export default function TmaTransactionPage() {
                   <button
                     type="submit"
                     disabled={savingTx}
-                    className="w-full mt-4 flex items-center justify-center gap-2 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-sm transition-all cursor-pointer shadow-lg shadow-indigo-600/20 disabled:opacity-50"
+                    className="w-full mt-4 flex items-center justify-center gap-2 py-3 rounded-xl bg-brand-primary hover:bg-brand-primary-hover text-white font-bold text-sm transition-all cursor-pointer shadow-lg shadow-brand-primary/20 disabled:opacity-50"
                   >
                     <Save className="w-4 h-4" />
                     <span>{savingTx ? 'שומר שינויים...' : 'שמור שינויים'}</span>
@@ -1071,14 +1175,14 @@ export default function TmaTransactionPage() {
               {activeTab === 'receipts' && (
                 <div className="space-y-4">
                   {/* Mode Selector */}
-                  <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-slate-900 border border-slate-800 text-xs">
+                  <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-dark-surface-elevated light:bg-light-surface-elevated border border-dark-border light:border-light-border text-xs">
                     <button
                       type="button"
                       onClick={() => setUploadMode('file')}
                       className={`py-2 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-1.5 ${
                         uploadMode === 'file'
-                          ? 'bg-indigo-600 text-white shadow-sm'
-                          : 'text-slate-400 hover:text-slate-200'
+                          ? 'bg-brand-primary text-white shadow-sm'
+                          : 'text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
                       }`}
                     >
                       <Upload className="w-3.5 h-3.5" />
@@ -1089,8 +1193,8 @@ export default function TmaTransactionPage() {
                       onClick={() => setUploadMode('url')}
                       className={`py-2 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-1.5 ${
                         uploadMode === 'url'
-                          ? 'bg-indigo-600 text-white shadow-sm'
-                          : 'text-slate-400 hover:text-slate-200'
+                          ? 'bg-brand-primary text-white shadow-sm'
+                          : 'text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
                       }`}
                     >
                       <LinkIcon className="w-3.5 h-3.5" />
@@ -1100,7 +1204,7 @@ export default function TmaTransactionPage() {
 
                   {/* Upload Action */}
                   {uploadMode === 'file' ? (
-                    <div className="p-4 rounded-xl border border-dashed border-slate-800 bg-slate-900/50 text-center space-y-3">
+                    <div className="p-4 rounded-xl border border-dashed border-dark-border light:border-light-border bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40 text-center space-y-3">
                       <input
                         type="file"
                         ref={fileInputRef}
@@ -1112,21 +1216,21 @@ export default function TmaTransactionPage() {
                         type="button"
                         disabled={uploadingReceipt}
                         onClick={() => fileInputRef.current?.click()}
-                        className="w-full py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+                        className="w-full py-3 rounded-xl bg-dark-surface-elevated light:bg-light-surface-elevated hover:bg-dark-border light:hover:bg-light-border text-dark-text light:text-light-text text-xs font-semibold flex items-center justify-center gap-2 transition-colors border border-dark-border light:border-light-border cursor-pointer disabled:opacity-50"
                       >
                         {uploadingReceipt ? (
                           <>
-                            <RefreshCw className="w-4 h-4 animate-spin text-indigo-400" />
+                            <RefreshCw className="w-4 h-4 animate-spin text-brand-primary" />
                             <span>מעלה ומנתח באמצעות AI...</span>
                           </>
                         ) : (
                           <>
-                            <Upload className="w-4 h-4 text-indigo-400" />
+                            <Upload className="w-4 h-4 text-brand-primary" />
                             <span>בחר תמונה / צילום קבלה (עד 15MB)</span>
                           </>
                         )}
                       </button>
-                      <p className="text-[10px] text-slate-500">תומך בתמונות (JPG, PNG) ובקובצי PDF</p>
+                      <p className="text-[10px] text-dark-text-muted light:text-light-text-muted">תומך בתמונות (JPG, PNG) ובקובצי PDF</p>
                     </div>
                   ) : (
                     <form onSubmit={handleUrlReceipt} className="flex gap-2">
@@ -1135,12 +1239,12 @@ export default function TmaTransactionPage() {
                         placeholder="הדבק קישור לחשבונית דיגיטלית (https://...)"
                         value={digitalUrl}
                         onChange={(e) => setDigitalUrl(e.target.value)}
-                        className="flex-1 p-2.5 rounded-xl border border-slate-800 bg-slate-900 text-slate-100 text-xs focus:outline-none focus:border-indigo-500"
+                        className="flex-1 p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs focus:outline-none focus:border-brand-primary"
                       />
                       <button
                         type="submit"
                         disabled={uploadingReceipt || !digitalUrl.trim()}
-                        className="px-4 py-2.5 rounded-xl bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-500 transition-colors disabled:opacity-50"
+                        className="px-4 py-2.5 rounded-xl bg-brand-primary text-white text-xs font-semibold hover:bg-brand-primary-hover transition-colors cursor-pointer disabled:opacity-50"
                       >
                         {uploadingReceipt ? 'טוען...' : 'הוסף'}
                       </button>
@@ -1160,13 +1264,11 @@ export default function TmaTransactionPage() {
 
                   {/* List of Receipts */}
                   <div className="space-y-2">
-                    <div className="text-xs font-semibold text-slate-400 px-1">
+                    <div className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted px-1">
                       קבלות וחשבוניות מקושרות ({receipts.length})
                     </div>
                     {receipts.length === 0 ? (
-                      <div className={`p-6 rounded-xl border border-dashed text-center text-xs ${
-                        isLightMode ? 'border-slate-300 text-slate-400 bg-slate-50' : 'border-slate-800 text-slate-500 bg-slate-900/30'
-                      }`}>
+                      <div className="p-6 rounded-xl border border-dashed border-dark-border light:border-light-border text-center text-xs text-dark-text-muted light:text-light-text-muted bg-dark-surface-elevated/20 light:bg-light-surface-elevated/20">
                         לא צורפו קבלות או חשבוניות לתנועה זו עדיין.
                       </div>
                     ) : (
@@ -1174,19 +1276,17 @@ export default function TmaTransactionPage() {
                         const extracted = r.extracted_data || {};
                         const hasItems = Array.isArray(extracted.items) && extracted.items.length > 0;
                         return (
-                        <div key={r.id} className={`p-3.5 rounded-xl border space-y-3 text-xs transition-colors ${
-                          isLightMode ? 'bg-white border-slate-200 shadow-xs' : 'bg-slate-900/60 border-slate-800'
-                        }`}>
+                        <div key={r.id} className="p-3.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40 space-y-3 text-xs transition-colors">
                           <div className="flex items-center justify-between gap-3">
                             <div className="flex items-center gap-2.5 min-w-0">
-                              <Receipt className="w-4 h-4 text-indigo-400 shrink-0" />
+                              <Receipt className="w-4 h-4 text-brand-primary shrink-0" />
                               <div className="min-w-0">
-                                <div className={`font-semibold truncate ${isLightMode ? 'text-slate-900' : 'text-slate-200'}`}>
+                                <div className="font-semibold text-dark-text light:text-light-text truncate">
                                   {extracted.vendor || r.file_name || 'קבלה / חשבונית'}
                                 </div>
-                                <div className={`text-[11px] flex items-center gap-2 ${isLightMode ? 'text-slate-500' : 'text-slate-400'}`}>
+                                <div className="text-[11px] flex items-center gap-2 text-dark-text-muted light:text-light-text-muted">
                                   <span>{r.source_url ? 'קישור דיגיטלי' : 'קובץ'}</span>
-                                  {r.ai_analyzed && <span className="text-indigo-400 font-medium">✨ נותח ע״י AI</span>}
+                                  {r.ai_analyzed && <span className="text-purple-400 font-medium">✨ נותח ע״י AI</span>}
                                 </div>
                               </div>
                             </div>
@@ -1196,9 +1296,7 @@ export default function TmaTransactionPage() {
                                   href={r.source_url}
                                   target="_blank"
                                   rel="noreferrer"
-                                  className={`p-1.5 rounded-lg transition-colors ${
-                                    isLightMode ? 'text-indigo-600 hover:bg-slate-100' : 'text-indigo-400 hover:bg-slate-800'
-                                  }`}
+                                  className="p-1.5 rounded-lg text-brand-primary hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated transition-colors"
                                   title="פתח קישור"
                                 >
                                   <ExternalLink className="w-4 h-4" />
@@ -1208,9 +1306,7 @@ export default function TmaTransactionPage() {
                                   href={`/api/v2/transactions/tma/receipts/file/${r.file_path}?token=${encodeURIComponent(token)}`}
                                   target="_blank"
                                   rel="noreferrer"
-                                  className={`p-1.5 rounded-lg transition-colors ${
-                                    isLightMode ? 'text-indigo-600 hover:bg-slate-100' : 'text-indigo-400 hover:bg-slate-800'
-                                  }`}
+                                  className="p-1.5 rounded-lg text-brand-primary hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated transition-colors"
                                   title="הצג קובץ"
                                 >
                                   <ExternalLink className="w-4 h-4" />
@@ -1219,9 +1315,7 @@ export default function TmaTransactionPage() {
                               <button
                                 type="button"
                                 onClick={() => handleDeleteReceipt(r.id)}
-                                className={`p-1.5 text-rose-400 hover:text-rose-500 rounded-lg transition-colors ${
-                                  isLightMode ? 'hover:bg-rose-50' : 'hover:bg-slate-800'
-                                }`}
+                                className="p-1.5 text-brand-expense hover:bg-brand-expense/10 rounded-lg transition-colors cursor-pointer"
                                 title="מחק קבלה"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
@@ -1231,21 +1325,19 @@ export default function TmaTransactionPage() {
 
                           {/* Extracted Receipt Metadata: Date, Invoice Number, Total */}
                           {(extracted.date || extracted.total || extracted.invoice_number) && (
-                            <div className={`p-2 rounded-lg border text-[11px] flex flex-wrap items-center justify-between gap-2 ${
-                              isLightMode ? 'bg-slate-50 border-slate-200' : 'bg-slate-950/60 border-slate-800/80'
-                            }`}>
+                            <div className="p-2 rounded-lg border border-dark-border/80 light:border-light-border/80 bg-dark-surface-elevated light:bg-light-surface-elevated text-[11px] flex flex-wrap items-center justify-between gap-2">
                               {extracted.date && (
-                                <span className={isLightMode ? 'text-slate-600' : 'text-slate-400'}>
+                                <span className="text-dark-text-muted light:text-light-text-muted">
                                   📅 {extracted.date}
                                 </span>
                               )}
                               {extracted.invoice_number && (
-                                <span className={isLightMode ? 'text-slate-600' : 'text-slate-400'}>
+                                <span className="text-dark-text-muted light:text-light-text-muted">
                                   מס' חשבונית: {extracted.invoice_number}
                                 </span>
                               )}
                               {extracted.total && (
-                                <span className="font-bold text-indigo-500">
+                                <span className="font-bold text-brand-primary">
                                   סכום חשבונית: {formatILS(extracted.total)}
                                 </span>
                               )}
@@ -1253,39 +1345,31 @@ export default function TmaTransactionPage() {
                           )}
 
                           {/* Line Items List */}
-                          {hasItems ? (
+                          {hasItems && (
                             <div className="space-y-1.5 pt-1">
-                              <div className={`text-[11px] font-bold flex items-center justify-between px-1 ${
-                                isLightMode ? 'text-slate-700' : 'text-slate-300'
-                              }`}>
+                              <div className="text-[11px] font-bold flex items-center justify-between px-1 text-dark-text-muted light:text-light-text-muted">
                                 <span>פירוט פריטים ({extracted.items.length}):</span>
-                                <span className="text-indigo-500 font-mono">
+                                <span className="text-brand-primary font-mono">
                                   סה"כ: {formatILS(extracted.items.reduce((sum, it) => sum + (parseFloat(it.price) || 0), 0))}
                                 </span>
                               </div>
-                              <div className={`max-h-48 overflow-y-auto space-y-1 p-1.5 rounded-lg border ${
-                                isLightMode ? 'bg-slate-50 border-slate-200' : 'bg-slate-950 border-slate-800'
-                              }`}>
+                              <div className="max-h-48 overflow-y-auto space-y-1 p-1.5 rounded-lg border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface">
                                 {extracted.items.map((item, itIdx) => (
-                                  <div key={itIdx} className={`p-1.5 rounded-md flex items-center justify-between text-[11px] ${
-                                    isLightMode ? 'bg-white hover:bg-slate-100/60 text-slate-800' : 'bg-slate-900/60 hover:bg-slate-900 text-slate-200'
-                                  }`}>
+                                  <div key={itIdx} className="p-1.5 rounded-md flex items-center justify-between text-[11px] bg-dark-surface-elevated light:bg-light-surface-elevated hover:bg-dark-border light:hover:bg-light-border text-dark-text light:text-light-text">
                                     <div className="min-w-0 flex items-center gap-1.5">
                                       <span className="font-medium truncate">{item.name || 'פריט'}</span>
                                       {item.qty > 1 && (
-                                        <span className={`text-[10px] font-mono px-1 rounded ${
-                                          isLightMode ? 'bg-slate-200 text-slate-700' : 'bg-slate-800 text-slate-300'
-                                        }`}>
+                                        <span className="text-[10px] font-mono px-1 rounded bg-dark-border light:bg-light-border text-dark-text-muted light:text-light-text-muted">
                                           x{item.qty}
                                         </span>
                                       )}
                                       {item.category && (
-                                        <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-indigo-500/10 text-indigo-500 border border-indigo-500/20">
+                                        <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-brand-primary/10 text-brand-primary border border-brand-primary/20">
                                           {item.category}
                                         </span>
                                       )}
                                     </div>
-                                    <span className="font-bold font-mono text-emerald-500 shrink-0">
+                                    <span className="font-bold font-mono text-brand-income shrink-0">
                                       {formatILS(item.price)}
                                     </span>
                                   </div>
@@ -1295,19 +1379,19 @@ export default function TmaTransactionPage() {
                               <button
                                 type="button"
                                 onClick={() => handleSplitByReceipt(r)}
-                                className="w-full mt-1.5 py-1.5 px-3 rounded-lg bg-indigo-600/15 hover:bg-indigo-600/25 border border-indigo-500/30 text-indigo-500 hover:text-indigo-600 text-[11px] font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                                className="w-full mt-1.5 py-1.5 px-3 rounded-lg bg-brand-primary/15 hover:bg-brand-primary/25 border border-brand-primary/30 text-brand-primary text-[11px] font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
                               >
                                 <Split className="w-3.5 h-3.5" />
                                 <span>פצל תנועה זו לפי פריטי החשבונית</span>
                               </button>
                             </div>
-                          ) : r.ai_analyzed ? (
-                            <div className={`p-2 rounded-lg text-center text-[11px] ${
-                              isLightMode ? 'text-slate-400 bg-slate-50' : 'text-slate-500 bg-slate-950/40'
-                            }`}>
+                          )}
+
+                          {!hasItems && r.ai_analyzed && (
+                            <div className="p-2 rounded-lg text-center text-[11px] text-dark-text-muted light:text-light-text-muted bg-dark-surface light:bg-light-surface border border-dark-border/40 light:border-light-border/40">
                               לא חולצו פריטים בודדים מחשבונית זו
                             </div>
-                          ) : null}
+                          )}
                         </div>
                         );
                       })
@@ -1325,12 +1409,12 @@ export default function TmaTransactionPage() {
                       placeholder="הוסף הערה..."
                       value={newNote}
                       onChange={(e) => setNewNote(e.target.value)}
-                      className="flex-1 p-2.5 rounded-xl border border-slate-800 bg-slate-900 text-slate-100 text-xs focus:outline-none focus:border-indigo-500"
+                      className="flex-1 p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs focus:outline-none focus:border-brand-primary"
                     />
                     <button
                       type="submit"
                       disabled={addingNote || !newNote.trim()}
-                      className="px-4 py-2.5 rounded-xl bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-500 transition-colors disabled:opacity-50"
+                      className="px-4 py-2.5 rounded-xl bg-brand-primary text-white text-xs font-semibold hover:bg-brand-primary-hover transition-colors cursor-pointer disabled:opacity-50"
                     >
                       {addingNote ? 'מוסיף...' : 'הוסף'}
                     </button>
@@ -1338,17 +1422,17 @@ export default function TmaTransactionPage() {
 
                   <div className="space-y-2">
                     {notes.length === 0 ? (
-                      <div className="text-center py-8 text-xs text-slate-500">
+                      <div className="text-center py-8 text-xs text-dark-text-muted light:text-light-text-muted">
                         אין הערות עדיין
                       </div>
                     ) : (
                       notes.map((n) => (
-                        <div key={n.id} className="p-3 rounded-xl border border-slate-800 bg-slate-900 text-slate-200 flex items-center justify-between text-xs">
+                        <div key={n.id} className="p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text flex items-center justify-between text-xs">
                           <span>{n.note}</span>
                           <button
                             type="button"
                             onClick={() => handleDeleteNote(n.id)}
-                            className="text-rose-400 hover:text-rose-300 p-1"
+                            className="text-brand-expense hover:bg-brand-expense/10 p-1 rounded transition-colors cursor-pointer"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -1359,70 +1443,147 @@ export default function TmaTransactionPage() {
                 </div>
               )}
 
-              {/* 4. Links Tab (With integrated transaction search & link picker!) */}
+              {/* 4. Links Tab (With integrated candidates, fee classification & search picker) */}
               {activeTab === 'links' && (
                 <div className="space-y-4">
                   {/* Currently Linked Transactions */}
                   <div className="space-y-2">
-                    <div className="text-xs font-semibold text-slate-400 px-1">
+                    <div className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted px-1">
                       תנועות מקושרות ({links.length})
                     </div>
                     {links.length === 0 ? (
-                      <div className="p-4 rounded-xl border border-dashed border-slate-800 text-center text-xs text-slate-500 bg-slate-900/30">
+                      <div className="p-4 rounded-xl border border-dashed border-dark-border light:border-light-border text-center text-xs text-dark-text-muted light:text-light-text-muted bg-dark-surface-elevated/20 light:bg-light-surface-elevated/20">
                         אין תנועות מקושרות כרגע לתנועה זו.
                       </div>
                     ) : (
                       <div className="space-y-2">
                         {links.map((lnk) => (
-                          <div key={lnk.linkId} className="p-3 rounded-xl border border-indigo-500/30 bg-indigo-500/5 flex items-center justify-between gap-3 text-xs">
-                            <div className="flex items-center gap-2.5 min-w-0">
-                              <Link2 className="w-4 h-4 text-indigo-400 shrink-0" />
-                              <div className="min-w-0">
-                                <div className="font-semibold text-slate-200 truncate">
-                                  {cleanSpacedHebrew(lnk.userDescription || lnk.merchantName || lnk.description || 'ללא תיאור')}
-                                </div>
-                                <div className="text-[11px] text-slate-400 flex items-center gap-2">
-                                  <span>{formatDate(lnk.date, 'he')}</span>
-                                  <span>•</span>
-                                  <span className={Number(lnk.amount) < 0 ? 'text-rose-400' : 'text-emerald-400 font-medium'}>
-                                    {formatILS(lnk.amount)}
-                                  </span>
+                          <div key={lnk.linkId} className="p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40 space-y-2 text-xs">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <Link2 className="w-4 h-4 text-brand-primary shrink-0" />
+                                <div className="min-w-0">
+                                  <div className="font-semibold text-dark-text light:text-light-text truncate">
+                                    {cleanSpacedHebrew(lnk.userDescription || lnk.merchantName || lnk.description || 'ללא תיאור')}
+                                  </div>
+                                  <div className="text-[11px] text-dark-text-muted light:text-light-text-muted flex items-center gap-2">
+                                    <span>{formatDate(lnk.date, 'he')}</span>
+                                    <span>•</span>
+                                    <span className={Number(lnk.amount) < 0 ? 'text-brand-expense' : 'text-brand-income font-medium'}>
+                                      {formatILS(lnk.amount)}
+                                    </span>
+                                  </div>
                                 </div>
                               </div>
+                              <div className="flex items-center gap-2 shrink-0">
+                                <span className={`px-2 py-0.5 rounded-full font-medium text-[10px] ${
+                                  lnk.linkType === 'installment'
+                                    ? 'bg-brand-primary/20 text-brand-primary font-bold'
+                                    : lnk.linkType === 'cc_billing_match'
+                                    ? 'bg-emerald-500/20 text-emerald-400 font-bold'
+                                    : 'bg-brand-primary/15 text-brand-primary'
+                                }`}>
+                                  {lnk.linkType === 'refund'
+                                    ? 'זיכוי'
+                                    : lnk.linkType === 'correction'
+                                    ? 'תיקון'
+                                    : lnk.linkType === 'installment'
+                                    ? 'תשלומים 💳'
+                                    : lnk.linkType === 'cc_billing_match'
+                                    ? 'חיוב אשראי 💳'
+                                    : 'קשורה'}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleUnlink(lnk.linkId)}
+                                  className="p-1.5 text-brand-expense hover:bg-brand-expense/10 rounded-lg transition-colors cursor-pointer"
+                                  title="בטל קישור"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
                             </div>
-                            <div className="flex items-center gap-2 shrink-0">
-                              <span className="px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-400 font-medium text-[10px]">
-                                {lnk.linkType === 'refund' ? 'זיכוי' : lnk.linkType === 'correction' ? 'תיקון' : lnk.linkType === 'installment' ? 'תשלומים 💳' : 'קשורה'}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => handleUnlink(lnk.linkId)}
-                                className="p-1.5 text-rose-400 hover:text-rose-300 rounded-lg transition-colors"
-                                title="בטל קישור"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
+
+                            {/* Fee Classification Toggle */}
+                            {lnk.feeAmount > 0 && (
+                              <div className="flex items-center justify-between pt-1.5 border-t border-dark-border/40 light:border-light-border/40 text-[11px]">
+                                <span className="text-amber-500 font-mono">
+                                  הפרש עמלה: {formatILS(lnk.feeAmount)}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleFeeClassification(lnk.linkId, lnk.isFeeClassified)}
+                                  className={`px-2 py-0.5 rounded text-[10px] font-bold transition-colors cursor-pointer ${
+                                    lnk.isFeeClassified
+                                      ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                                      : 'bg-dark-surface light:bg-light-surface text-dark-text-muted light:text-light-text-muted border border-dark-border light:border-light-border'
+                                  }`}
+                                >
+                                  {lnk.isFeeClassified ? '✓ סווג כעמלה' : '+ סווג כעמלה'}
+                                </button>
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>
                     )}
                   </div>
 
+                  {/* Reconciliation Candidates Section */}
+                  {candidates.length > 0 && (
+                    <div className="space-y-2 pt-2 border-t border-dark-border/60 light:border-light-border/60">
+                      <div className="text-xs font-semibold text-brand-primary flex items-center gap-1.5 px-1">
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>מועמדים להתאמה אוטומטית ({candidates.length})</span>
+                      </div>
+                      <div className="space-y-2">
+                        {candidates.map((cand) => (
+                          <div
+                            key={cand.candidateTxId || cand.id}
+                            className="p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated/60 light:bg-light-surface-elevated/60 space-y-2 text-xs"
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="font-semibold text-dark-text light:text-light-text truncate">
+                                {cleanSpacedHebrew(cand.userDescription || cand.merchantName || cand.description || 'ללא תיאור')}
+                              </span>
+                              <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-brand-primary/15 text-brand-primary">
+                                {Math.round(cand.matchScore || cand.score || 0)}% התאמה
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between text-dark-text-muted light:text-light-text-muted text-[11px]">
+                              <span>{formatDate(cand.date, 'he')} • {cand.accountDisplayName || cand.bankCompany}</span>
+                              <span className="font-mono font-bold text-dark-text light:text-light-text">
+                                {formatILS(cand.amount)}
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleExecuteCandidateLink(cand)}
+                              className="w-full mt-1 py-1.5 rounded-lg bg-brand-primary hover:bg-brand-primary-hover text-white font-semibold text-xs transition-colors flex items-center justify-center gap-1 cursor-pointer"
+                            >
+                              <Link2 className="w-3.5 h-3.5" />
+                              <span>קשר תנועה זו עכשיו</span>
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Linking Action Section with Picker */}
-                  <div className="pt-3 space-y-3 border-t border-slate-800">
+                  <div className="pt-3 space-y-3 border-t border-dark-border/60 light:border-light-border/60">
                     <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-slate-400">
+                      <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">
                         סוג הקשר לחיבור
                       </label>
-                      <div className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-slate-900 border border-slate-800 text-xs">
+                      <div className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-dark-surface-elevated light:bg-light-surface-elevated border border-dark-border light:border-light-border text-xs">
                         <button
                           type="button"
                           onClick={() => setLinkType('refund')}
                           className={`py-1.5 px-2 rounded-lg font-medium transition-all ${
                             linkType === 'refund'
-                              ? 'bg-indigo-600 text-white shadow-sm'
-                              : 'text-slate-400 hover:text-slate-200'
+                              ? 'bg-brand-primary text-white shadow-sm'
+                              : 'text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
                           }`}
                         >
                           זיכוי / ביטול
@@ -1432,8 +1593,8 @@ export default function TmaTransactionPage() {
                           onClick={() => setLinkType('related')}
                           className={`py-1.5 px-2 rounded-lg font-medium transition-all ${
                             linkType === 'related'
-                              ? 'bg-indigo-600 text-white shadow-sm'
-                              : 'text-slate-400 hover:text-slate-200'
+                              ? 'bg-brand-primary text-white shadow-sm'
+                              : 'text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
                           }`}
                         >
                           תנועה קשורה
@@ -1443,8 +1604,8 @@ export default function TmaTransactionPage() {
                           onClick={() => setLinkType('correction')}
                           className={`py-1.5 px-2 rounded-lg font-medium transition-all ${
                             linkType === 'correction'
-                              ? 'bg-indigo-600 text-white shadow-sm'
-                              : 'text-slate-400 hover:text-slate-200'
+                              ? 'bg-brand-primary text-white shadow-sm'
+                              : 'text-dark-text-muted light:text-light-text-muted hover:text-dark-text light:hover:text-light-text'
                           }`}
                         >
                           תיקון / התאמה
@@ -1454,17 +1615,17 @@ export default function TmaTransactionPage() {
 
                     {/* Transaction Search & Picker */}
                     <div className="space-y-2">
-                      <label className="text-xs font-semibold text-slate-400">
+                      <label className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">
                         בחר תנועה לקישור (חיפוש וסינון מהיר)
                       </label>
                       <div className="relative">
-                        <Search className="w-4 h-4 text-slate-500 absolute right-3 top-3" />
+                        <Search className="w-4 h-4 text-dark-text-muted light:text-light-text-muted absolute right-3 top-3 pointer-events-none" />
                         <input
                           type="text"
                           value={linkSearch}
                           onChange={(e) => setLinkSearch(e.target.value)}
                           placeholder="חפש לפי שם בית עסק, תיאור, סכום..."
-                          className="w-full pr-9 pl-3 py-2.5 rounded-xl border border-slate-800 bg-slate-900 text-slate-100 text-xs focus:outline-none focus:border-indigo-500"
+                          className="w-full pr-9 pl-3 py-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs focus:outline-none focus:border-brand-primary"
                         />
                       </div>
 
@@ -1478,12 +1639,12 @@ export default function TmaTransactionPage() {
                       {/* List of Linkable Transactions */}
                       <div className="max-h-60 overflow-y-auto space-y-1.5 pr-1">
                         {loadingLinkable ? (
-                          <div className="py-6 text-center text-xs text-slate-500 flex items-center justify-center gap-2">
-                            <RefreshCw className="w-4 h-4 animate-spin text-indigo-400" />
+                          <div className="py-6 text-center text-xs text-dark-text-muted light:text-light-text-muted flex items-center justify-center gap-2">
+                            <RefreshCw className="w-4 h-4 animate-spin text-brand-primary" />
                             <span>מחפש תנועות...</span>
                           </div>
                         ) : linkableTxs.length === 0 ? (
-                          <div className="py-6 text-center text-xs text-slate-500">
+                          <div className="py-6 text-center text-xs text-dark-text-muted light:text-light-text-muted">
                             לא נמצאו תנועות תואמות
                           </div>
                         ) : (
@@ -1492,15 +1653,15 @@ export default function TmaTransactionPage() {
                               key={ltx.id}
                               type="button"
                               onClick={() => handleLinkDirect(ltx.id)}
-                              className="w-full text-right p-2.5 rounded-xl border border-slate-800/80 bg-slate-900/60 hover:bg-slate-800 hover:border-indigo-500/50 transition-all flex items-center justify-between gap-2.5 group"
+                              className="w-full text-right p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated/50 light:bg-light-surface-elevated/50 hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated hover:border-brand-primary/50 transition-all flex items-center justify-between gap-2.5 group cursor-pointer"
                             >
                               <div className="flex items-center gap-2 min-w-0 flex-1">
                                 <CategoryBadge category={ltx.category} size={18} />
                                 <div className="min-w-0 flex-1">
-                                  <div className="font-semibold text-xs text-slate-200 truncate group-hover:text-indigo-400 transition-colors">
+                                  <div className="font-semibold text-xs text-dark-text light:text-light-text truncate group-hover:text-brand-primary transition-colors">
                                     {cleanSpacedHebrew(ltx.userDescription || getTransactionTitle(ltx))}
                                   </div>
-                                  <div className="text-[10px] text-slate-500 flex items-center gap-1.5 mt-0.5">
+                                  <div className="text-[10px] text-dark-text-muted light:text-light-text-muted flex items-center gap-1.5 mt-0.5">
                                     <span>{formatDate(ltx.date, 'he')}</span>
                                     <span>•</span>
                                     <span className="truncate">{ltx.accountDisplayName || ltx.bankCompany}</span>
@@ -1508,10 +1669,10 @@ export default function TmaTransactionPage() {
                                 </div>
                               </div>
                               <div className="text-left shrink-0">
-                                <div className={`text-xs font-bold font-mono ${ltx.amount > 0 ? 'text-emerald-400' : 'text-slate-200'}`}>
+                                <div className={`text-xs font-bold font-mono ${ltx.amount > 0 ? 'text-brand-income' : 'text-dark-text light:text-light-text'}`}>
                                   {formatILS(ltx.amount, { showSign: true })}
                                 </div>
-                                <span className="text-[10px] text-indigo-400 font-semibold group-hover:underline">
+                                <span className="text-[10px] text-brand-primary font-semibold group-hover:underline">
                                   קשר +
                                 </span>
                               </div>
@@ -1527,26 +1688,22 @@ export default function TmaTransactionPage() {
               {/* 5. Splits Tab */}
               {activeTab === 'splits' && (
                 <div className="space-y-4">
-                  <div className={`p-3.5 rounded-xl border text-xs space-y-2 ${
-                    isLightMode ? 'bg-slate-50 border-slate-200' : 'bg-slate-900 border-slate-800'
-                  }`}>
+                  <div className="p-3.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-xs space-y-2">
                     <div className="flex justify-between font-semibold">
-                      <span className={isLightMode ? 'text-slate-500' : 'text-slate-400'}>סכום מקורי:</span>
-                      <span className="font-bold text-sm font-mono">{formatILS(parentAmount)}</span>
+                      <span className="text-dark-text-muted light:text-light-text-muted">סכום מקורי:</span>
+                      <span className="font-bold text-sm font-mono text-dark-text light:text-light-text">{formatILS(parentAmount)}</span>
                     </div>
                     <div className="flex justify-between items-center">
-                      <span className={isLightMode ? 'text-slate-500' : 'text-slate-400'}>סכום פיצולים נוכחי:</span>
-                      <span className={splitsTotal <= parentAmount + 0.01 && splitsTotal > 0 ? 'text-emerald-500 font-bold text-sm font-mono' : 'text-rose-400 font-bold text-sm font-mono'}>
+                      <span className="text-dark-text-muted light:text-light-text-muted">סכום פיצולים נוכחי:</span>
+                      <span className={splitsTotal <= parentAmount + 0.01 && splitsTotal > 0 ? 'text-brand-income font-bold text-sm font-mono' : 'text-brand-expense font-bold text-sm font-mono'}>
                         {formatILS(splitsTotal)}
                       </span>
                     </div>
-                    <div className={`flex justify-between items-center pt-2 border-t ${
-                      isLightMode ? 'border-slate-200' : 'border-slate-800'
-                    }`}>
-                      <span className={`font-semibold ${isLightMode ? 'text-slate-700' : 'text-slate-200'}`}>
+                    <div className="flex justify-between items-center pt-2 border-t border-dark-border/60 light:border-light-border/60">
+                      <span className="font-semibold text-dark-text light:text-light-text">
                         {remainingAmount > 0.01 ? 'יתרה שתוקצה לקטגוריה הראשית:' : 'יתרה לחלוקה:'}
                       </span>
-                      <span className={`font-bold text-sm font-mono ${Math.abs(remainingAmount) < 0.01 ? 'text-emerald-500' : 'text-indigo-400'}`}>
+                      <span className={`font-bold text-sm font-mono ${Math.abs(remainingAmount) < 0.01 ? 'text-brand-income' : 'text-brand-primary'}`}>
                         {formatILS(remainingAmount)}
                       </span>
                     </div>
@@ -1561,9 +1718,7 @@ export default function TmaTransactionPage() {
 
                   <div className="space-y-2.5">
                     {splits.map((s, idx) => (
-                      <div key={idx} className={`p-3 rounded-xl border space-y-2 ${
-                        isLightMode ? 'border-slate-200 bg-slate-50' : 'border-slate-800 bg-slate-900/60'
-                      }`}>
+                      <div key={idx} className="p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40 space-y-2">
                         <div className="flex items-center gap-2">
                           <input
                             type="number"
@@ -1571,9 +1726,7 @@ export default function TmaTransactionPage() {
                             value={s.amount || ''}
                             onChange={(e) => handleSplitChange(idx, 'amount', e.target.value)}
                             placeholder="0.00"
-                            className={`w-28 p-2 rounded-lg border text-xs font-mono ${
-                              isLightMode ? 'border-slate-300 bg-white text-slate-900' : 'border-slate-800 bg-slate-950 text-slate-100'
-                            }`}
+                            className="w-28 p-2 rounded-lg border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text text-xs font-mono"
                           />
                           <div className="flex-1 min-w-[130px]">
                             <CategoryPicker
@@ -1585,9 +1738,7 @@ export default function TmaTransactionPage() {
                           <button
                             type="button"
                             onClick={() => handleRemoveSplitRow(idx)}
-                            className={`p-2 text-rose-400 rounded-lg shrink-0 ${
-                              isLightMode ? 'hover:bg-rose-50' : 'hover:bg-slate-800'
-                            }`}
+                            className="p-2 text-brand-expense hover:bg-brand-expense/10 rounded-lg shrink-0 transition-colors cursor-pointer"
                             title="הסר שורה"
                           >
                             <Trash2 className="w-4 h-4" />
@@ -1598,9 +1749,7 @@ export default function TmaTransactionPage() {
                           value={s.description || ''}
                           onChange={(e) => handleSplitChange(idx, 'description', e.target.value)}
                           placeholder="תיאור לפיצול (אופציונלי)..."
-                          className={`w-full p-2 rounded-lg border text-xs ${
-                            isLightMode ? 'border-slate-300 bg-white text-slate-800' : 'border-slate-800 bg-slate-950 text-slate-200'
-                          }`}
+                          className="w-full p-2 rounded-lg border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text text-xs"
                         />
                       </div>
                     ))}
@@ -1610,11 +1759,7 @@ export default function TmaTransactionPage() {
                     <button
                       type="button"
                       onClick={handleAddSplitRow}
-                      className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl border text-xs font-semibold transition-colors ${
-                        isLightMode
-                          ? 'border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-700'
-                          : 'border-slate-800 bg-slate-900 hover:border-indigo-500 text-slate-200'
-                      }`}
+                      className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface hover:border-brand-primary text-xs font-semibold text-dark-text light:text-light-text transition-colors cursor-pointer"
                     >
                       <Plus className="w-4 h-4" />
                       <span>הוסף שורת פיצול</span>
@@ -1625,8 +1770,8 @@ export default function TmaTransactionPage() {
                       disabled={savingSplits || splits.length === 0 || splitsTotal > parentAmount + 0.01 || splitsTotal <= 0}
                       className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-white text-xs font-semibold transition-all ${
                         splitsTotal > 0 && splitsTotal <= parentAmount + 0.01
-                          ? 'bg-indigo-600 hover:bg-indigo-500 shadow-md shadow-indigo-600/20 cursor-pointer'
-                          : 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                          ? 'bg-brand-primary hover:bg-brand-primary-hover shadow-md shadow-brand-primary/20 cursor-pointer'
+                          : 'bg-dark-border light:bg-light-border text-dark-text-muted light:text-light-text-muted cursor-not-allowed'
                       }`}
                     >
                       <Check className="w-4 h-4" />
@@ -1639,14 +1784,14 @@ export default function TmaTransactionPage() {
               {/* 6. Similar Transactions Tab */}
               {activeTab === 'similar' && (
                 <div className="space-y-4">
-                  <div className="p-3.5 rounded-xl border border-slate-800 bg-slate-900 text-xs space-y-1">
-                    <div className="font-semibold text-slate-200 flex items-center gap-1.5">
-                      <Layers className="w-4 h-4 text-indigo-400" />
+                  <div className="p-3.5 rounded-xl border border-dark-border/80 light:border-light-border/80 bg-dark-surface-elevated light:bg-light-surface-elevated text-xs space-y-1">
+                    <div className="font-semibold text-dark-text light:text-light-text flex items-center gap-1.5">
+                      <Layers className="w-4 h-4 text-brand-primary" />
                       <span>תנועות נוספות עבור אותו בית עסק</span>
                     </div>
-                    <div className="text-slate-400">
+                    <div className="text-dark-text-muted light:text-light-text-muted">
                       בית עסק:{' '}
-                      <span className="font-bold text-slate-200">
+                      <span className="font-bold text-dark-text light:text-light-text">
                         {cleanSpacedHebrew(merchantName || tx.merchantName)}
                       </span>{' '}
                       ({similarTxs.length} תנועות נוספות במערכת)
@@ -1654,8 +1799,8 @@ export default function TmaTransactionPage() {
                   </div>
 
                   {similarTxs.length === 0 ? (
-                    <div className="py-10 text-center text-xs text-slate-500 border border-dashed border-slate-800 rounded-xl p-6 bg-slate-900/30">
-                      <Layers className="w-8 h-8 mx-auto text-slate-600 mb-2" />
+                    <div className="py-10 text-center text-xs text-dark-text-muted light:text-light-text-muted border border-dashed border-dark-border light:border-light-border rounded-xl p-6 bg-dark-surface-elevated/20 light:bg-light-surface-elevated/20">
+                      <Layers className="w-8 h-8 mx-auto text-dark-text-muted light:text-light-text-muted mb-2 opacity-50" />
                       <div className="font-semibold">לא נמצאו תנועות נוספות עבור בית עסק זה</div>
                     </div>
                   ) : (
@@ -1663,35 +1808,35 @@ export default function TmaTransactionPage() {
                       {similarTxs.map((stx) => (
                         <div
                           key={stx.id}
-                          className="p-3 rounded-xl border border-slate-800/80 bg-slate-900/60 flex items-center justify-between gap-3 text-xs"
+                          className="p-3 rounded-xl border border-dark-border/70 light:border-light-border/70 bg-dark-surface-elevated/50 light:bg-light-surface-elevated/50 flex items-center justify-between gap-3 text-xs"
                         >
                           <div className="flex items-center gap-2.5 min-w-0 flex-1">
                             <CategoryBadge category={stx.category} size={18} />
                             <div className="min-w-0 flex-1">
-                              <div className="font-bold text-slate-200 truncate">
+                              <div className="font-bold text-dark-text light:text-light-text truncate">
                                 {cleanSpacedHebrew(stx.userDescription || getTransactionTitle(stx))}
                               </div>
-                              <div className="text-[11px] text-slate-500 flex items-center gap-2 mt-0.5">
+                              <div className="text-[11px] text-dark-text-muted light:text-light-text-muted flex items-center gap-2 mt-0.5">
                                 <span className="font-mono">{formatDate(stx.date, 'he')}</span>
                                 <span>•</span>
-                                <span className={parseFloat(stx.amount) < 0 ? 'text-slate-200 font-bold' : 'text-emerald-400 font-bold'}>
+                                <span className={parseFloat(stx.amount) < 0 ? 'text-dark-text light:text-light-text font-bold' : 'text-brand-income font-bold'}>
                                   {formatILS(stx.amount, { showSign: true })}
                                 </span>
                               </div>
                             </div>
                           </div>
-                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 shrink-0">
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-dark-surface light:bg-light-surface border border-dark-border/40 text-dark-text-muted light:text-light-text-muted shrink-0">
                             {stx.category || 'ללא סיווג'}
                           </span>
                         </div>
                       ))}
 
                       {/* Total of all similar transactions */}
-                      <div className="mt-3 p-3.5 rounded-xl border border-slate-800 bg-slate-900 flex items-center justify-between text-xs font-semibold">
-                        <span className="text-slate-400">
+                      <div className="mt-3 p-3.5 rounded-xl border border-dark-border/80 light:border-light-border/80 bg-dark-surface-elevated light:bg-light-surface-elevated flex items-center justify-between text-xs font-semibold">
+                        <span className="text-dark-text-muted light:text-light-text-muted">
                           סך הכל ({similarTxs.length + 1} תנועות):
                         </span>
-                        <span className="text-sm font-bold font-mono text-slate-100" dir="ltr">
+                        <span className="text-sm font-bold font-mono text-dark-text light:text-light-text" dir="ltr">
                           {formatILS(
                             (parseFloat(tx.amount) || 0) + similarTxs.reduce((acc, stx) => acc + (parseFloat(stx.amount) || 0), 0),
                             { showSign: true }
@@ -1733,7 +1878,7 @@ export default function TmaTransactionPage() {
                 };
 
                 const scraperFields = [
-                  { label: 'מזהה תנועה (Identifier)', value: tx.identifier || rawObj.identifier || tx.id, icon: <Hash className="w-3.5 h-3.5 text-indigo-400" /> },
+                  { label: 'מזהה תנועה (Identifier)', value: tx.identifier || rawObj.identifier || tx.id, icon: <Hash className="w-3.5 h-3.5 text-brand-primary" /> },
                   { label: 'סטטוס תנועה (Status)', value: tx.status || rawObj.status || 'completed', badge: tx.status === 'pending' ? 'bg-amber-500/20 text-amber-400' : 'bg-emerald-500/20 text-emerald-400' },
                   { label: 'סוג תנועה (Type)', value: tx.type || rawObj.type || (parseFloat(tx.amount) < 0 ? 'expense' : 'income') },
                   { label: 'סכום מקורי (Original Amount)', value: rawObj.originalAmount != null ? `${rawObj.originalAmount} ${rawObj.originalCurrency || tx.originalCurrency || 'ILS'}` : (tx.originalAmount ? `${tx.originalAmount} ${tx.originalCurrency || 'ILS'}` : 'לא צוין') },
@@ -1746,7 +1891,7 @@ export default function TmaTransactionPage() {
                     value: instInfo.isInstallment 
                       ? `${instInfo.text}${instInfo.totalAmount > 0 ? ` (סך כולל: ${formatILS(instInfo.totalAmount)})` : ''}` 
                       : 'תשלום רגיל (תשלום יחיד)',
-                    badge: instInfo.isInstallment ? 'bg-indigo-500/20 text-indigo-300' : null
+                    badge: instInfo.isInstallment ? 'bg-brand-primary/20 text-brand-primary' : null
                   },
                   { label: 'חשבון / כרטיס מקור', value: `${tx.accountDisplayName || tx.bankCompany || ''} (${tx.cardLast4 ? `••${tx.cardLast4}` : 'ראשי'})` }
                 ];
@@ -1754,31 +1899,31 @@ export default function TmaTransactionPage() {
                 return (
                   <div className="space-y-4">
                     {/* Prominent Original Description & Memo Card */}
-                    <div className="p-3.5 rounded-xl border border-indigo-500/30 bg-indigo-500/5 space-y-2">
-                      <div className="text-[11px] font-bold text-indigo-400">
+                    <div className="p-3.5 rounded-xl border border-brand-primary/30 bg-brand-primary/5 space-y-2">
+                      <div className="text-[11px] font-bold text-brand-primary">
                         פירוט מקורי מהבנק / כרטיס אשראי (Original Description):
                       </div>
-                      <div className="text-sm font-semibold text-slate-100 select-all">
+                      <div className="text-sm font-semibold text-dark-text light:text-light-text select-all">
                         {cleanSpacedHebrew(tx.description) || 'ללא תיאור נוסף'}
                       </div>
                       {tx.memo && (
-                        <div className="text-xs text-slate-400 pt-1.5 border-t border-indigo-500/20">
+                        <div className="text-xs text-dark-text-muted light:text-light-text-muted pt-1.5 border-t border-brand-primary/20">
                           <span className="font-semibold">הערות ספק (Memo):</span> {cleanSpacedHebrew(tx.memo)}
                         </div>
                       )}
                     </div>
 
                     <div className="flex items-center justify-between">
-                      <div className="text-xs font-semibold text-slate-400 flex items-center gap-1.5">
-                        <Database className="w-4 h-4 text-indigo-400" />
+                      <div className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted flex items-center gap-1.5">
+                        <Database className="w-4 h-4 text-brand-primary" />
                         <span>כל המידע הגולמי שנשלף מסקריפר הבנק/האשראי</span>
                       </div>
                       <button
                         type="button"
                         onClick={handleCopyJson}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-800 bg-slate-900 text-xs font-medium hover:border-indigo-500 transition-colors text-slate-300"
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-xs font-medium hover:border-brand-primary transition-colors text-dark-text light:text-light-text cursor-pointer"
                       >
-                        {copiedRaw ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-slate-400" />}
+                        {copiedRaw ? <Check className="w-3.5 h-3.5 text-brand-income" /> : <Copy className="w-3.5 h-3.5 text-dark-text-muted" />}
                         <span>{copiedRaw ? 'הועתק!' : 'העתק JSON'}</span>
                       </button>
                     </div>
@@ -1786,12 +1931,12 @@ export default function TmaTransactionPage() {
                     {/* Structured Fields Grid */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       {scraperFields.map((field, idx) => (
-                        <div key={idx} className="p-3 rounded-xl border border-slate-800/80 bg-slate-900/50 space-y-1">
-                          <div className="text-[11px] font-medium text-slate-400 flex items-center gap-1">
+                        <div key={idx} className="p-3 rounded-xl border border-dark-border/70 light:border-light-border/70 bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40 space-y-1">
+                          <div className="text-[11px] font-medium text-dark-text-muted light:text-light-text-muted flex items-center gap-1">
                             {field.icon}
                             <span>{field.label}</span>
                           </div>
-                          <div className="text-xs font-semibold break-all text-slate-200">
+                          <div className="text-xs font-semibold break-all text-dark-text light:text-light-text">
                             {field.badge ? (
                               <span className={`px-2 py-0.5 rounded text-[11px] ${field.badge}`}>{field.value}</span>
                             ) : (
@@ -1804,10 +1949,10 @@ export default function TmaTransactionPage() {
 
                     {/* Raw JSON Code Block */}
                     <div className="space-y-1.5">
-                      <div className="text-xs font-semibold text-slate-400">
+                      <div className="text-xs font-semibold text-dark-text-muted light:text-light-text-muted">
                         JSON גולמי מלא (Full Raw Scraper Object):
                       </div>
-                      <pre className="p-3 rounded-xl border border-slate-800 bg-slate-900 text-[11px] font-mono text-emerald-400 overflow-x-auto max-h-60 leading-relaxed text-left" dir="ltr">
+                      <pre className="p-3 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-[11px] font-mono text-emerald-600 dark:text-emerald-400 overflow-x-auto max-h-60 leading-relaxed text-left" dir="ltr">
                         {rawJsonString}
                       </pre>
                     </div>
@@ -1817,9 +1962,9 @@ export default function TmaTransactionPage() {
             </div>
 
             {/* Footer Notice */}
-            <div className="p-3 text-center border-t border-slate-900 bg-slate-950">
-              <p className="text-[10px] text-slate-600 flex items-center justify-center gap-1">
-                <ShieldAlert className="w-3 h-3 text-slate-600" />
+            <div className="p-3 text-center border-t border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface">
+              <p className="text-[10px] text-dark-text-muted light:text-light-text-muted flex items-center justify-center gap-1">
+                <ShieldAlert className="w-3 h-3 text-dark-text-muted light:text-light-text-muted" />
                 FinTrack Zero-Trust TMA • ממשק מאובטח ומבודד
               </p>
             </div>

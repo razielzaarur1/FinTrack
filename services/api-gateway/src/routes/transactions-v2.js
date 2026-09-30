@@ -2818,6 +2818,14 @@ async function ensureFeeColumnsExist(pool) {
     if (!verifyTmaToken(token, id)) return reply.code(401).send({ error: 'Unauthorized' });
 
     await autoLinkInstallmentTransactions(pool, id).catch(() => {});
+    const feeCols = await ensureFeeColumnsExist(pool);
+    const feeSelect = feeCols 
+      ? `COALESCE(tl.fee_amount, 0) AS "feeAmount",
+         COALESCE(tl.fee_category, 'עמלות') AS "feeCategory",
+         COALESCE(tl.is_fee_classified, false) AS "isFeeClassified",`
+      : `0 AS "feeAmount",
+         'עמלות' AS "feeCategory",
+         false AS "isFeeClassified",`;
 
     try {
       const query = `
@@ -2826,6 +2834,7 @@ async function ensureFeeColumnsExist(pool) {
           tl.link_type AS "linkType",
           tl.note AS "linkNote",
           tl.created_at AS "linkedAt",
+          ${feeSelect}
           t.id AS "id",
           t.date AS "date",
           t.amount AS "amount",
@@ -2850,6 +2859,8 @@ async function ensureFeeColumnsExist(pool) {
       const data = res.rows.map(r => ({
         ...r,
         amount: parseFloat(r.amount),
+        feeAmount: r.feeAmount !== undefined ? parseFloat(r.feeAmount) : 0,
+        isFeeClassified: Boolean(r.isFeeClassified),
         merchantName: cleanSpacedHebrew(r.merchantName),
         description: cleanSpacedHebrew(r.description),
         userDescription: cleanSpacedHebrew(r.userDescription),
@@ -2869,24 +2880,96 @@ async function ensureFeeColumnsExist(pool) {
     const token = request.headers['x-tma-token'];
     if (!verifyTmaToken(token, id)) return reply.code(401).send({ error: 'Unauthorized' });
 
-    const { targetTransactionId, linkType = 'related', note = null } = request.body || {};
+    const { targetTransactionId, linkType = 'related', note = null, feeAmount = null, feeCategory = 'עמלות', isFeeClassified = false } = request.body || {};
     if (!targetTransactionId || targetTransactionId === id) {
       return reply.code(400).send({ error: 'מזהה תנועה לקישור אינו תקין' });
     }
 
     try {
+      await ensureFeeColumnsExist(pool);
       const [idA, idB] = id < targetTransactionId ? [id, targetTransactionId] : [targetTransactionId, id];
       const res = await pool.query(
-        `INSERT INTO transaction_links (transaction_id_a, transaction_id_b, link_type, note)
-         VALUES ($1, $2, $3, $4)
+        `INSERT INTO transaction_links (transaction_id_a, transaction_id_b, link_type, note, fee_amount, fee_category, is_fee_classified)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          ON CONFLICT (transaction_id_a, transaction_id_b)
-         DO UPDATE SET link_type = EXCLUDED.link_type, note = EXCLUDED.note
-         RETURNING id AS "linkId", link_type AS "linkType", note`,
-        [idA, idB, linkType, note]
+         DO UPDATE SET 
+           link_type = EXCLUDED.link_type, 
+           note = EXCLUDED.note,
+           fee_amount = EXCLUDED.fee_amount,
+           fee_category = EXCLUDED.fee_category,
+           is_fee_classified = EXCLUDED.is_fee_classified
+         RETURNING id AS "linkId", link_type AS "linkType", note, fee_amount AS "feeAmount", is_fee_classified AS "isFeeClassified"`,
+        [idA, idB, linkType, note, feeAmount, feeCategory, Boolean(isFeeClassified)]
       );
       return reply.code(201).send({ success: true, data: res.rows[0] });
     } catch (err) {
       return reply.code(500).send({ error: 'Database error' });
+    }
+  });
+
+  // PATCH /api/v2/transactions/tma/:id/links/:linkId/fee - Update fee classification in TMA
+  fastify.patch('/tma/:id/links/:linkId/fee', async (request, reply) => {
+    const isTgAuthorized = await validateTelegramAccess(request, reply);
+    if (!isTgAuthorized) return;
+
+    const { id, linkId } = request.params;
+    const token = request.headers['x-tma-token'];
+    if (!verifyTmaToken(token, id)) return reply.code(401).send({ error: 'Unauthorized' });
+
+    const { isFeeClassified } = request.body || {};
+    try {
+      await ensureFeeColumnsExist(pool);
+      const res = await pool.query(
+        `UPDATE transaction_links SET is_fee_classified = $1 WHERE id = $2 RETURNING id, fee_amount, is_fee_classified`,
+        [Boolean(isFeeClassified), linkId]
+      );
+      if (res.rowCount === 0) return reply.code(404).send({ error: 'Link not found' });
+      return reply.send({ success: true, data: res.rows[0] });
+    } catch (err) {
+      return reply.code(500).send({ error: 'Database error' });
+    }
+  });
+
+  // GET /api/v2/transactions/tma/:id/candidates - Get reconciliation candidates in TMA
+  fastify.get('/tma/:id/candidates', async (request, reply) => {
+    const isTgAuthorized = await validateTelegramAccess(request, reply);
+    if (!isTgAuthorized) return;
+
+    const { id } = request.params;
+    const token = request.headers['x-tma-token'];
+    if (!verifyTmaToken(token, id)) return reply.code(401).send({ error: 'Unauthorized' });
+
+    const minScore = parseInt(request.query.minScore || '0', 10);
+    try {
+      const candidates = await findMatchesForTransaction(pool, id, { minScore });
+      return reply.send({ success: true, data: candidates });
+    } catch (err) {
+      return reply.code(500).send({ error: 'Failed to find candidates' });
+    }
+  });
+
+  // GET /api/v2/transactions/tma/:id/fx - Get FX details in TMA
+  fastify.get('/tma/:id/fx', async (request, reply) => {
+    const isTgAuthorized = await validateTelegramAccess(request, reply);
+    if (!isTgAuthorized) return;
+
+    const { id } = request.params;
+    const token = request.headers['x-tma-token'];
+    if (!verifyTmaToken(token, id)) return reply.code(401).send({ error: 'Unauthorized' });
+
+    try {
+      const res = await pool.query(
+        `SELECT t.*, b.display_name AS "accountDisplayName", b.bank_company AS "bankCompany"
+         FROM transactions t
+         JOIN bank_accounts b ON t.account_id = b.id
+         WHERE t.id = $1`,
+        [id]
+      );
+      if (res.rows.length === 0) return reply.code(404).send({ error: 'Transaction not found' });
+      const fxDetails = await calculateFxDetails(res.rows[0]);
+      return reply.send({ success: true, data: fxDetails });
+    } catch (err) {
+      return reply.code(500).send({ error: 'Failed to calculate FX details' });
     }
   });
 

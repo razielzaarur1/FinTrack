@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { 
   X, 
   Split, 
@@ -40,7 +41,12 @@ import ReceiptsTab from './ReceiptsTab';
 
 export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinking }) {
   const { lang, t } = useApp();
+  const [mounted, setMounted] = useState(false);
   const [activeTx, setActiveTx] = useState(tx);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
   const [activeTab, setActiveTab] = useState('details'); // details, receipts, notes, links, splits, similar, scraper
   const [receiptsCount, setReceiptsCount] = useState(tx?.receiptsCount || (tx?.hasReceipts ? 1 : 0));
   const [category, setCategory] = useState(tx?.category || '');
@@ -470,9 +476,17 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-sm transition-opacity">
-      <div className="w-full max-w-lg bg-dark-surface light:bg-light-surface h-full border-l border-dark-border light:border-light-border shadow-2xl flex flex-col justify-between overflow-hidden">
+  if (!mounted || typeof document === 'undefined') return null;
+
+  return createPortal(
+    <div 
+      className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-sm transition-opacity"
+      style={{ top: 0, left: 0, right: 0, bottom: 0, margin: 0, padding: 0 }}
+    >
+      <div 
+        className="w-full max-w-lg bg-dark-surface light:bg-light-surface h-full border-l border-dark-border light:border-light-border shadow-2xl flex flex-col justify-between overflow-hidden"
+        style={{ height: '100dvh', maxHeight: '100dvh' }}
+      >
         {/* Header */}
         <div className="p-5 border-b border-dark-border light:border-light-border flex items-center justify-between">
           <div className="flex items-center gap-3 min-w-0">
@@ -1723,6 +1737,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

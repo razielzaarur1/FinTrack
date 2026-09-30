@@ -175,10 +175,18 @@ export async function checkBudgetExceeded(client, userId, category, notifiedBudg
   }
 }
 
+let isProcessingNotifications = false;
+
 /**
  * Main processor: processes unnotified transactions and sends real-time Telegram alerts
  */
 export async function processPendingNotifications(logger = console) {
+  if (isProcessingNotifications) {
+    logger.info?.('[NotifierEngine] Notification processing already in progress. Skipping concurrent run.');
+    return { processed: 0, message: 'Already in progress' };
+  }
+  isProcessingNotifications = true;
+
   const client = await pool.connect();
   try {
     // 1. Fetch system settings
@@ -329,6 +337,39 @@ function extractInstallmentDetails(tx) {
     const updatedNotifiedBudgets = { ...notifiedBudgets };
 
     for (const tx of toNotify) {
+      // Pre-notification duplicate suppression: check if an identical or pending transaction for this same purchase was already notified
+      const alreadyNotifiedCheck = await client.query(`
+        SELECT id FROM transactions
+        WHERE account_id = (SELECT account_id FROM transactions WHERE id = $1)
+          AND id != $1
+          AND is_notified = true
+          AND ABS(amount - $2) < 0.01
+          AND date >= ($3::date - INTERVAL '5 days')
+          AND date <= ($3::date + INTERVAL '5 days')
+          AND (
+            (NULLIF(TRIM($4), '') IS NOT NULL AND (
+              LOWER(TRIM(merchant_name)) = LOWER(TRIM($4)) OR
+              LOWER(TRIM(description)) = LOWER(TRIM($4)) OR
+              description ILIKE '%' || TRIM($4) || '%' OR
+              $4 ILIKE '%' || TRIM(merchant_name) || '%'
+            ))
+            OR (NULLIF(TRIM($5), '') IS NOT NULL AND description ILIKE '%' || TRIM($5) || '%')
+          )
+        LIMIT 1
+      `, [
+        tx.id,
+        tx.amount,
+        tx.date instanceof Date ? tx.date.toISOString().split('T')[0] : String(tx.date).slice(0, 10),
+        tx.merchant_name || '',
+        (tx.description || '').slice(0, 30)
+      ]);
+
+      if (alreadyNotifiedCheck.rows.length > 0) {
+        logger.info?.(`[NotifierEngine] Skipping duplicate notification for tx ${tx.id} (already notified matching tx ${alreadyNotifiedCheck.rows[0].id})`);
+        await client.query(`UPDATE transactions SET is_notified = true WHERE id = $1`, [tx.id]);
+        continue;
+      }
+
       // 1. Anomaly check using full history
       const anomalyResult = await analyzeAnomalyForTransaction(client, DEFAULT_USER_ID, tx, anomalyMinAmount);
       const isAnomaly = Boolean(anomalyResult.isAnomaly);
@@ -545,6 +586,7 @@ function extractInstallmentDetails(tx) {
     logger.error?.(`[NotifierEngine] Error in processPendingNotifications: ${err.message}`);
     return { error: err.message };
   } finally {
+    isProcessingNotifications = false;
     client.release();
   }
 }

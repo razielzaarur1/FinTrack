@@ -375,7 +375,7 @@ async function saveTransactionsList(client, accountId, transactions, userId = '0
     // in this account that should be transitioned and merged rather than duplicated!
     if (status !== 'pending') {
       const pendingCheckQuery = `
-        SELECT id, category, is_manual_category, user_description, is_reviewed, is_ignored
+        SELECT id, category, is_manual_category, user_description, is_reviewed, is_ignored, is_notified
         FROM transactions
         WHERE account_id = $1
           AND status = 'pending'
@@ -447,6 +447,9 @@ async function saveTransactionsList(client, accountId, transactions, userId = '0
             }
             if (matchedPending.is_ignored) {
               await client.query('UPDATE transactions SET is_ignored = true WHERE id = $1', [existingTx.id]);
+            }
+            if (matchedPending.is_notified) {
+              await client.query('UPDATE transactions SET is_notified = true WHERE id = $1', [existingTx.id]);
             }
             // Transfer receipts
             await client.query(

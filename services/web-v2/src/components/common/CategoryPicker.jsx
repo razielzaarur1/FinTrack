@@ -110,7 +110,7 @@ export default function CategoryPicker({
             <>
               <CategoryBadge category={value} size={18} />
               <div className="text-right min-w-0">
-                <div className="text-sm font-semibold text-dark-text-primary light:text-light-text-primary truncate">
+                <div className="text-sm font-semibold text-dark-text light:text-light-text truncate">
                   {selectedDetails?.subCat?.name || value}
                 </div>
                 {selectedDetails?.mainCat?.name && selectedDetails.mainCat.name !== (selectedDetails?.subCat?.name || value) && (
@@ -146,7 +146,7 @@ export default function CategoryPicker({
                 className={`py-1.5 rounded-lg transition-all font-semibold ${
                   activeTab === 'expense'
                     ? 'bg-rose-500/15 text-rose-500 shadow-xs'
-                    : 'text-dark-text-muted hover:text-dark-text-primary'
+                    : 'text-dark-text-muted hover:text-dark-text light:hover:text-light-text'
                 }`}
               >
                 הוצאות
@@ -157,7 +157,7 @@ export default function CategoryPicker({
                 className={`py-1.5 rounded-lg transition-all font-semibold ${
                   activeTab === 'income'
                     ? 'bg-emerald-500/15 text-emerald-500 shadow-xs'
-                    : 'text-dark-text-muted hover:text-dark-text-primary'
+                    : 'text-dark-text-muted hover:text-dark-text light:hover:text-light-text'
                 }`}
               >
                 הכנסות
@@ -206,7 +206,7 @@ export default function CategoryPicker({
                       >
                         <CategoryBadge category={cat.name} size={18} />
                         <div className="min-w-0">
-                          <div className="text-sm font-semibold text-dark-text-primary light:text-light-text-primary flex items-center gap-1.5">
+                          <div className="text-sm font-semibold text-dark-text light:text-light-text flex items-center gap-1.5">
                             <span>{cat.name}</span>
                             {isSelectedMain && <Check className="w-4 h-4 text-brand-primary" />}
                           </div>
@@ -244,7 +244,7 @@ export default function CategoryPicker({
                           className={`w-full flex items-center justify-between p-1.5 rounded-lg text-xs transition-colors text-right ${
                             isSelectedMain
                               ? 'bg-brand-primary/15 text-brand-primary font-bold'
-                              : 'hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-dark-text-muted'
+                              : 'hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-dark-text light:text-light-text'
                           }`}
                         >
                           <div className="flex items-center gap-2 font-medium">
@@ -264,7 +264,7 @@ export default function CategoryPicker({
                               className={`w-full flex items-center justify-between p-1.5 rounded-lg text-xs transition-colors text-right ${
                                 isSelectedSub
                                   ? 'bg-brand-primary/15 text-brand-primary font-bold'
-                                  : 'hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-dark-text-primary light:text-light-text-primary'
+                                  : 'hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-dark-text light:text-light-text'
                               }`}
                             >
                               <div className="flex items-center gap-2 min-w-0">
