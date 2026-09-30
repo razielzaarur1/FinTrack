@@ -9,7 +9,7 @@
     "scrape-all": "bash scripts/run-scrape-all.sh"
   },
   "dependencies": {
-    "israeli-bank-scrapers": "^6.0.0",
+    "israeli-bank-scrapers": "^6.12.1",
     "node-vault": "^0.10.2",
     "pg": "^8.13.1",
     "pino": "^9.6.0",

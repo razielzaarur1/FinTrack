@@ -27,7 +27,7 @@ async function request(endpoint, options = {}) {
     const data = isJson ? await res.json() : await res.text();
 
     if (!res.ok) {
-      let errMsg = (data?.error && data?.error !== 'Database error') ? data.error : (data?.message || data?.error);
+      let errMsg = data?.detail || ((data?.error && data?.error !== 'Database error') ? data.error : (data?.message || data?.error));
       if (!errMsg && typeof data === 'string' && data.trim().length > 0 && data.length < 200) {
         errMsg = data.trim();
       }
@@ -274,7 +274,10 @@ export const api = {
 
   // Telegram Integration
   getTelegramStatus: () => request('/api/system/telegram/status'),
-  testTelegramConnection: (chatId) => request('/api/system/telegram/test', { method: 'POST', body: JSON.stringify({ chatId }) }),
+  testTelegramConnection: (payload) => {
+    const body = typeof payload === 'object' && payload !== null ? payload : { chatId: payload };
+    return request('/api/system/telegram/test', { method: 'POST', body: JSON.stringify(body) });
+  },
 
   // TMA (Telegram Mini App) - Scoped Zero-Trust Endpoints
   getTmaTransaction: (id, token, initData = '') =>

@@ -426,7 +426,11 @@ export default function SettingsPage() {
     setTestingTelegram(true);
     setTestResult(null);
     try {
-      const res = await api.testTelegramConnection(telegramChatId.trim() || undefined);
+      const res = await api.testTelegramConnection({
+        chatId: telegramChatId.trim() || undefined,
+        botToken: telegramBotToken.trim() || undefined,
+        tmaBaseUrl: tmaBaseUrl.trim() || undefined,
+      });
       if (res.error) {
         setTestResult({ success: false, message: res.error });
       } else {

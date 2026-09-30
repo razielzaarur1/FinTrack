@@ -239,8 +239,8 @@ const applySplitsSchema = z.object({
 });
 
 export default async function receiptsRoutes(fastify, options) {
-  // POST /api/v2/transactions/receipts/ingest-telegram - Ingest receipt from Telegram (Photo, Document, or URL)
-  fastify.post('/receipts/ingest-telegram', async (request, reply) => {
+  // Ingest receipt from Telegram (Photo, Document, or URL)
+  const handleIngestTelegram = async (request, reply) => {
     try {
       // Check system settings for skipDeepAiAnalysis
       const settingsRes = await pool.query(
@@ -380,7 +380,9 @@ export default async function receiptsRoutes(fastify, options) {
       fastify.log.error(err, 'Failed to ingest receipt from Telegram');
       return reply.code(500).send({ error: 'Failed to process receipt', message: err.message });
     }
-  });
+  };
+  fastify.post('/receipts/ingest-telegram', handleIngestTelegram);
+  fastify.post('/ingest-telegram', handleIngestTelegram);
 
   // GET /api/v2/transactions/:id/receipts - List all receipts for a transaction with verification
   fastify.get('/:id/receipts', async (request, reply) => {
@@ -584,8 +586,8 @@ export default async function receiptsRoutes(fastify, options) {
     }
   });
 
-  // POST /api/v2/transactions/receipts/:receiptId/move - Move receipt to a different transaction
-  fastify.post('/receipts/:receiptId/move', async (request, reply) => {
+  // POST /receipts/:receiptId/move - Move receipt to a different transaction
+  const handleMoveReceipt = async (request, reply) => {
     const { receiptId } = request.params;
     const { targetTransactionId } = request.body || {};
 
@@ -623,10 +625,12 @@ export default async function receiptsRoutes(fastify, options) {
       fastify.log.error(err, 'Failed to move receipt');
       return reply.code(500).send({ error: 'Database error' });
     }
-  });
+  };
+  fastify.post('/receipts/:receiptId/move', handleMoveReceipt);
+  fastify.post('/:receiptId/move', handleMoveReceipt);
 
-  // GET /api/v2/transactions/receipts/file/:filename - View/download receipt file
-  fastify.get('/receipts/file/:filename', async (request, reply) => {
+  // GET /receipts/file/:filename - View/download receipt file
+  const handleGetReceiptFile = async (request, reply) => {
     const { filename } = request.params;
     const filePath = findReceiptFile(filename);
 
@@ -645,10 +649,12 @@ export default async function receiptsRoutes(fastify, options) {
     reply.header('Cache-Control', 'public, max-age=86400');
     const stream = fs.createReadStream(filePath);
     return reply.send(stream);
-  });
+  };
+  fastify.get('/receipts/file/:filename', handleGetReceiptFile);
+  fastify.get('/file/:filename', handleGetReceiptFile);
 
-  // DELETE /api/v2/transactions/receipts/:receiptId - Delete receipt
-  fastify.delete('/receipts/:receiptId', async (request, reply) => {
+  // DELETE /receipts/:receiptId - Delete receipt
+  const handleDeleteReceipt = async (request, reply) => {
     const { receiptId } = request.params;
 
     try {
@@ -679,10 +685,12 @@ export default async function receiptsRoutes(fastify, options) {
       fastify.log.error(err, 'Failed to delete receipt');
       return reply.code(500).send({ error: 'Database error' });
     }
-  });
+  };
+  fastify.delete('/receipts/:receiptId', handleDeleteReceipt);
+  fastify.delete('/:receiptId', handleDeleteReceipt);
 
-  // POST /api/v2/transactions/receipts/:receiptId/reanalyze - Re-analyze receipt
-  fastify.post('/receipts/:receiptId/reanalyze', async (request, reply) => {
+  // POST /receipts/:receiptId/reanalyze - Re-analyze receipt
+  const handleReanalyzeReceipt = async (request, reply) => {
     const { receiptId } = request.params;
 
     try {
@@ -743,7 +751,9 @@ export default async function receiptsRoutes(fastify, options) {
       fastify.log.error(err, 'Failed to reanalyze receipt');
       return reply.code(500).send({ error: 'Reanalysis failed' });
     }
-  });
+  };
+  fastify.post('/receipts/:receiptId/reanalyze', handleReanalyzeReceipt);
+  fastify.post('/:receiptId/reanalyze', handleReanalyzeReceipt);
 
   // POST /api/v2/transactions/:id/receipts/apply-splits - Convert receipt items to transaction splits!
   fastify.post('/:id/receipts/apply-splits', async (request, reply) => {
@@ -806,8 +816,8 @@ export default async function receiptsRoutes(fastify, options) {
     }
   });
 
-  // POST /api/v2/transactions/receipts/test-ai - Test Gemini API connection
-  fastify.post('/receipts/test-ai', async (request, reply) => {
+  // POST /receipts/test-ai - Test Gemini API connection
+  const handleTestAi = async (request, reply) => {
     const { apiKey } = request.body || {};
     try {
       const result = await testGeminiApiKey(apiKey);
@@ -815,5 +825,7 @@ export default async function receiptsRoutes(fastify, options) {
     } catch (err) {
       return reply.code(400).send({ success: false, error: err.message });
     }
-  });
+  };
+  fastify.post('/receipts/test-ai', handleTestAi);
+  fastify.post('/test-ai', handleTestAi);
 }

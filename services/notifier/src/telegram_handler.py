@@ -169,6 +169,23 @@ async def process_ingest_response(status_msg, resp_data: dict) -> None:
         await status_msg.edit_text(msg, parse_mode="HTML")
 
 
+async def post_to_gateway_receipts(client: httpx.AsyncClient, api_url: str, **kwargs) -> httpx.Response:
+    endpoints = [
+        f"{api_url}/api/receipts/ingest-telegram",
+        f"{api_url}/api/v2/transactions/receipts/ingest-telegram",
+    ]
+    last_resp = None
+    for url in endpoints:
+        try:
+            resp = await client.post(url, **kwargs)
+            if resp.status_code != 404:
+                return resp
+            last_resp = resp
+        except Exception as e:
+            logger.debug(f"Attempt failed for {url}: {e}")
+    return last_resp
+
+
 async def handle_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_chat or not update.message or not update.message.photo:
         return
@@ -189,11 +206,13 @@ async def handle_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYP
 
         async with httpx.AsyncClient(timeout=60.0) as client:
             files = {"file": ("telegram_receipt.jpg", bytes(file_bytes), "image/jpeg")}
-            resp = await client.post(f"{api_url}/api/receipts/ingest-telegram", files=files)
-            if resp.status_code in (200, 201):
+            resp = await post_to_gateway_receipts(client, api_url, files=files)
+            if resp and resp.status_code in (200, 201):
                 await process_ingest_response(status_msg, resp.json())
             else:
-                await status_msg.edit_text(f"❌ שגיאה בקליטת הקבלה ({resp.status_code}): {html.escape(resp.text[:300])}")
+                err_text = resp.text[:300] if resp else "לא התקבלה תשובה מהשרת"
+                status_code = resp.status_code if resp else 500
+                await status_msg.edit_text(f"❌ שגיאה בקליטת הקבלה ({status_code}): {html.escape(err_text)}")
     except Exception as e:
         logger.error(f"Error ingesting photo receipt: {e}", exc_info=True)
         await status_msg.edit_text(f"❌ שגיאה בקליטת הקבלה: {html.escape(str(e))}")
@@ -226,11 +245,13 @@ async def handle_receipt_document(update: Update, context: ContextTypes.DEFAULT_
 
         async with httpx.AsyncClient(timeout=60.0) as client:
             files = {"file": (fname, bytes(file_bytes), file_mime)}
-            resp = await client.post(f"{api_url}/api/receipts/ingest-telegram", files=files)
-            if resp.status_code in (200, 201):
+            resp = await post_to_gateway_receipts(client, api_url, files=files)
+            if resp and resp.status_code in (200, 201):
                 await process_ingest_response(status_msg, resp.json())
             else:
-                await status_msg.edit_text(f"❌ שגיאה בקליטת המסמך ({resp.status_code}): {html.escape(resp.text[:300])}")
+                err_text = resp.text[:300] if resp else "לא התקבלה תשובה מהשרת"
+                status_code = resp.status_code if resp else 500
+                await status_msg.edit_text(f"❌ שגיאה בקליטת המסמך ({status_code}): {html.escape(err_text)}")
     except Exception as e:
         logger.error(f"Error ingesting document receipt: {e}", exc_info=True)
         await status_msg.edit_text(f"❌ שגיאה בקליטת המסמך: {html.escape(str(e))}")
@@ -260,11 +281,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         api_url = os.getenv("INTERNAL_API_URL", "http://api-gateway:3000").rstrip("/")
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
-                resp = await client.post(f"{api_url}/api/receipts/ingest-telegram", json={"url": text})
-                if resp.status_code in (200, 201):
+                resp = await post_to_gateway_receipts(client, api_url, json={"url": text})
+                if resp and resp.status_code in (200, 201):
                     await process_ingest_response(status_msg, resp.json())
                 else:
-                    await status_msg.edit_text(f"❌ שגיאה בניתוח הקישור ({resp.status_code}): {html.escape(resp.text[:300])}")
+                    err_text = resp.text[:300] if resp else "לא התקבלה תשובה מהשרת"
+                    status_code = resp.status_code if resp else 500
+                    await status_msg.edit_text(f"❌ שגיאה בניתוח הקישור ({status_code}): {html.escape(err_text)}")
         except Exception as e:
             logger.error(f"Error ingesting URL receipt: {e}", exc_info=True)
             await status_msg.edit_text(f"❌ שגיאה בקליטת הקישור: {html.escape(str(e))}")

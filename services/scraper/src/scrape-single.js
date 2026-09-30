@@ -396,45 +396,149 @@ async function saveTransactionsList(client, accountId, transactions, userId = '0
       ]);
 
       if (pendingMatch.rows.length > 0) {
-        const matchedPendingId = pendingMatch.rows[0].id;
-        const updatePendingQuery = `
-          UPDATE transactions SET
-            status = $1,
-            external_id = $2,
-            date = $3,
-            processed_date = $4,
-            amount = $5,
-            currency = $6,
-            merchant_name = CASE 
-              WHEN transactions.is_manual_category = true THEN transactions.merchant_name 
-              ELSE $7 
-            END,
-            description = CASE 
-              WHEN transactions.user_description IS NOT NULL AND transactions.user_description != '' THEN transactions.description 
-              ELSE $8 
-            END,
-            category = COALESCE(transactions.category, $9),
-            raw_data = $10
-          WHERE id = $11
-          RETURNING id;
-        `;
-        const updateRes = await client.query(updatePendingQuery, [
-          status,
-          externalId,
-          txDate,
-          processedDate,
-          amount,
-          currency,
-          merchantName,
-          description,
-          category,
-          rawData,
-          matchedPendingId,
-        ]);
+        const matchedPending = pendingMatch.rows[0];
+        const matchedPendingId = matchedPending.id;
 
-        if (updateRes.rowCount > 0) {
-          insertedCount++;
-          continue; // Successfully merged into existing transaction preserving all user edits & child relations!
+        // Check if a transaction with (accountId, externalId) already exists in DB!
+        const existingTxRes = await client.query(
+          'SELECT id, is_manual_category, category, user_description FROM transactions WHERE account_id = $1 AND external_id = $2',
+          [accountId, externalId]
+        );
+
+        if (existingTxRes.rows.length > 0) {
+          const existingTx = existingTxRes.rows[0];
+          if (existingTx.id === matchedPendingId) {
+            // Same row: update in place without changing external_id
+            await client.query(`
+              UPDATE transactions SET
+                status = $1, date = $2, processed_date = $3, amount = $4, currency = $5,
+                merchant_name = CASE WHEN is_manual_category = true THEN merchant_name ELSE $6 END,
+                description = CASE WHEN user_description IS NOT NULL AND user_description != '' THEN description ELSE $7 END,
+                category = COALESCE(category, $8),
+                raw_data = $9
+              WHERE id = $10
+            `, [status, txDate, processedDate, amount, currency, merchantName, description, category, rawData, matchedPendingId]);
+            insertedCount++;
+            continue;
+          } else {
+            // A DIFFERENT row already has this (account_id, external_id)!
+            // Merge matchedPendingId into existingTx.id to avoid unique constraint collision.
+            if (matchedPending.is_manual_category && !existingTx.is_manual_category && matchedPending.category) {
+              await client.query(
+                'UPDATE transactions SET category = $1, is_manual_category = true WHERE id = $2',
+                [matchedPending.category, existingTx.id]
+              );
+            }
+            if (matchedPending.user_description && !existingTx.user_description) {
+              await client.query(
+                'UPDATE transactions SET user_description = $1 WHERE id = $2',
+                [matchedPending.user_description, existingTx.id]
+              );
+            }
+            if (matchedPending.is_reviewed) {
+              await client.query('UPDATE transactions SET is_reviewed = true WHERE id = $1', [existingTx.id]);
+            }
+            if (matchedPending.is_ignored) {
+              await client.query('UPDATE transactions SET is_ignored = true WHERE id = $1', [existingTx.id]);
+            }
+            // Transfer receipts
+            await client.query(
+              'UPDATE transaction_receipts SET transaction_id = $1 WHERE transaction_id = $2',
+              [existingTx.id, matchedPendingId]
+            );
+            // Transfer notes
+            await client.query(
+              'UPDATE transaction_notes SET transaction_id = $1 WHERE transaction_id = $2',
+              [existingTx.id, matchedPendingId]
+            );
+            // Transfer splits
+            await client.query(
+              'UPDATE transaction_splits SET transaction_id = $1 WHERE transaction_id = $2',
+              [existingTx.id, matchedPendingId]
+            );
+            // Transfer links
+            await client.query(
+              'UPDATE transaction_links SET transaction_id_a = $1 WHERE transaction_id_a = $2 AND transaction_id_b <> $1',
+              [existingTx.id, matchedPendingId]
+            );
+            await client.query(
+              'UPDATE transaction_links SET transaction_id_b = $1 WHERE transaction_id_b = $2 AND transaction_id_a <> $1',
+              [existingTx.id, matchedPendingId]
+            );
+            await client.query(
+              'DELETE FROM transaction_links WHERE transaction_id_a = $1 OR transaction_id_b = $1',
+              [matchedPendingId]
+            );
+            // Delete obsolete duplicate pending row
+            await client.query('DELETE FROM transactions WHERE id = $1', [matchedPendingId]);
+
+            // Update existing row with latest scraped data
+            await client.query(`
+              UPDATE transactions SET
+                status = $1, date = $2, processed_date = $3, amount = $4, currency = $5,
+                merchant_name = CASE WHEN is_manual_category = true THEN merchant_name ELSE $6 END,
+                description = CASE WHEN user_description IS NOT NULL AND user_description != '' THEN description ELSE $7 END,
+                category = COALESCE(category, $8),
+                raw_data = $9
+              WHERE id = $10
+            `, [status, txDate, processedDate, amount, currency, merchantName, description, category, rawData, existingTx.id]);
+            insertedCount++;
+            continue;
+          }
+        }
+
+        // No conflicting existing transaction with externalId exists:
+        try {
+          const updatePendingQuery = `
+            UPDATE transactions SET
+              status = $1,
+              external_id = $2,
+              date = $3,
+              processed_date = $4,
+              amount = $5,
+              currency = $6,
+              merchant_name = CASE 
+                WHEN transactions.is_manual_category = true THEN transactions.merchant_name 
+                ELSE $7 
+              END,
+              description = CASE 
+                WHEN transactions.user_description IS NOT NULL AND transactions.user_description != '' THEN transactions.description 
+                ELSE $8 
+              END,
+              category = COALESCE(transactions.category, $9),
+              raw_data = $10
+            WHERE id = $11
+            RETURNING id;
+          `;
+          const updateRes = await client.query(updatePendingQuery, [
+            status,
+            externalId,
+            txDate,
+            processedDate,
+            amount,
+            currency,
+            merchantName,
+            description,
+            category,
+            rawData,
+            matchedPendingId,
+          ]);
+
+          if (updateRes.rowCount > 0) {
+            insertedCount++;
+            continue; // Successfully merged into existing transaction preserving all user edits & child relations!
+          }
+        } catch (updateErr) {
+          // If a race condition caused a unique constraint collision on uq_account_external (23505),
+          // handle gracefully instead of crashing the scrape job:
+          if (updateErr.code === '23505') {
+            logger.warn({ accountId, externalId, matchedPendingId }, 'Handling concurrent uq_account_external conflict gracefully');
+            try {
+              await client.query('DELETE FROM transactions WHERE id = $1', [matchedPendingId]);
+            } catch (_) {}
+          } else {
+            throw updateErr;
+          }
         }
       }
     }
@@ -732,6 +836,8 @@ export async function scrapeAccount({ accountId, bank, encryptedCreds, daysBack 
       '--disable-dev-shm-usage',
       '--disable-gpu',
       '--no-zygote',
+      '--disable-blink-features=AutomationControlled',
+      '--window-size=1920,1080',
     ];
 
     if (proxyServer) {

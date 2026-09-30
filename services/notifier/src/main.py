@@ -37,6 +37,8 @@ class TelegramConfigPayload(BaseModel):
 class TestNotifyPayload(BaseModel):
     chatId: Optional[Any] = None
     message: Optional[str] = None
+    botToken: Optional[str] = None
+    tmaBaseUrl: Optional[str] = None
 
 
 class TransactionNotifyPayload(BaseModel):
@@ -244,16 +246,24 @@ async def set_telegram_config(payload: TelegramConfigPayload):
 
 @app.post("/api/notify/test")
 async def send_test_message(payload: TestNotifyPayload):
+    # Auto-initialize bot if token provided and bot not currently active
+    if not bot_app and payload.botToken:
+        try:
+            logger.info("Attempting on-the-fly bot initialization from test payload...")
+            await configure_bot(payload.botToken, payload.chatId, payload.tmaBaseUrl)
+        except Exception as e:
+            logger.warning(f"On-the-fly bot configuration failed: {e}")
+
     target_chat = payload.chatId if payload.chatId is not None else allowed_chat_id
     if not bot_app:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="בוט הטלגרם אינו מוגדר או אינו פעיל. אנא הזן טוקן ושמור תחילה."
+            detail="בוט הטלגרם אינו מוגדר או אינו פעיל. אנא ודא שהטוקן תקין ושמור הגדרות תחילה."
         )
     if not target_chat:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="לא הוגדר Chat ID לשליחת הודעת הבדיקה."
+            detail="לא הוגדר Chat ID. אנא הזן מזהה צ׳אט לשליחת הודעת הבדיקה."
         )
 
     text = payload.message or (

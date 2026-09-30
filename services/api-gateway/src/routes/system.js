@@ -292,11 +292,39 @@ export default async function systemRoutes(fastify, options) {
       );
       const settings = settingsRes.rows[0]?.settings || {};
       const chatId = request.body?.chatId || settings.telegramChatId;
+      const botToken = request.body?.botToken || settings.telegramBotToken;
+      const tmaBaseUrl = request.body?.tmaBaseUrl || settings.tmaBaseUrl;
+
+      if (!botToken) {
+        return reply.code(400).send({
+          error: 'טרם הוזן טוקן בוט טלגרם (Bot Token). אנא הזן טוקן ושמור תחילה.',
+          message: 'טרם הוזן טוקן בוט טלגרם (Bot Token). אנא הזן טוקן ושמור תחילה.'
+        });
+      }
+
+      if (!chatId) {
+        return reply.code(400).send({
+          error: 'טרם הוזן מזהה צ׳אט (Chat ID). אנא הזן Chat ID ושמור תחילה.',
+          message: 'טרם הוזן מזהה צ׳אט (Chat ID). אנא הזן Chat ID ושמור תחילה.'
+        });
+      }
+
+      // Proactively configure notifier bot if token is present
+      try {
+        await fetch(`${NOTIFIER_URL.replace(/\/$/, '')}/api/notify/configure`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ botToken, chatId, tmaBaseUrl }),
+          signal: AbortSignal.timeout(6000),
+        });
+      } catch (confErr) {
+        fastify.log.warn(`[System] Bot pre-configuration warning: ${confErr.message}`);
+      }
 
       const res = await fetch(`${NOTIFIER_URL.replace(/\/$/, '')}/api/notify/test`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chatId }),
+        body: JSON.stringify({ chatId, botToken, tmaBaseUrl }),
         signal: AbortSignal.timeout(8000),
       });
 
@@ -309,11 +337,12 @@ export default async function systemRoutes(fastify, options) {
       }
 
       if (!res.ok) {
-        return reply.code(res.status).send(data);
+        const errorDetail = data?.detail || data?.error || data?.message || responseText;
+        return reply.code(res.status).send({ error: errorDetail, message: errorDetail, ...data });
       }
       return reply.code(200).send(data);
     } catch (err) {
-      return reply.code(500).send({ error: err.message });
+      return reply.code(500).send({ error: err.message, message: err.message });
     }
   });
 
