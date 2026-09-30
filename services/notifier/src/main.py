@@ -381,25 +381,14 @@ async def notify_transaction(payload: TransactionNotifyPayload):
         )
 
     reply_markup = None
-    keyboard = []
     if payload.tmaUrl and payload.tmaUrl.startswith("https://"):
-        keyboard.append([
-            InlineKeyboardButton(
-                text="✏️ צפה וערוך תנועה (TMA)",
-                web_app=WebAppInfo(url=payload.tmaUrl)
-            )
-        ])
-    if payload.linkedTmaUrl and payload.linkedTmaUrl.startswith("https://") and payload.linkedTransaction:
-        l_name = str(payload.linkedTransaction.get("merchantName") or payload.linkedTransaction.get("description") or "עסקה מקושרת")
-        l_name_short = html.escape(l_name[:18])
-        keyboard.append([
-            InlineKeyboardButton(
-                text=f"🔗 צפה בתנועה המקושרת ({l_name_short})",
-                web_app=WebAppInfo(url=payload.linkedTmaUrl)
-            )
-        ])
-    if keyboard:
         try:
+            keyboard = [[
+                InlineKeyboardButton(
+                    text="✏️ צפה וערוך תנועה (TMA)",
+                    web_app=WebAppInfo(url=payload.tmaUrl)
+                )
+            ]]
             reply_markup = InlineKeyboardMarkup(keyboard)
         except Exception as e:
             logger.warning(f"Could not build TMA button: {e}")
