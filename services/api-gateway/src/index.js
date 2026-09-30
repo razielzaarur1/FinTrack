@@ -14,7 +14,6 @@ import systemRoutes from './routes/system.js';
 import dashboardRoutes from './routes/dashboard.js';
 import scraperRoutes from './routes/scraper.js';
 import internalRoutes from './routes/internal.js';
-import transactionsV2Routes from './routes/transactions-v2.js';
 import categoriesRoutes from './routes/categories.js';
 import analyticsRoutes from './routes/analytics.js';
 import authRoutes from './routes/auth.js';
@@ -164,7 +163,8 @@ fastify.addHook('onRequest', async (request, reply) => {
 await fastify.register(dashboardRoutes, { prefix: '/api/dashboard' });
 await fastify.register(accountsRoutes, { prefix: '/api/accounts' });
 await fastify.register(transactionsRoutes, { prefix: '/api/transactions' });
-await fastify.register(transactionsV2Routes, { prefix: '/api/v2/transactions' });
+await fastify.register(transactionsRoutes, { prefix: '/api/v2/transactions' }); // Dual compatibility alias
+await fastify.register(receiptsRoutes, { prefix: '/api/transactions' });
 await fastify.register(receiptsRoutes, { prefix: '/api/v2/transactions' });
 await fastify.register(receiptsRoutes, { prefix: '/api/receipts' });
 await fastify.register(categoriesRoutes, { prefix: '/api/categories' });

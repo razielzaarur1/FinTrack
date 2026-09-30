@@ -32,11 +32,15 @@ import {
   ExternalLink,
   RotateCcw,
   Calendar,
-  Loader2
+  Loader2,
+  FileSpreadsheet
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useApp } from '@/lib/app-context';
 import CategoryBadge from '@/components/common/CategoryBadge';
+import IconPickerModal from '@/components/common/IconPickerModal';
+import CsvImportWizard from '@/components/transactions/CsvImportWizard';
+import CardsSettingsTab from '@/components/settings/CardsSettingsTab';
 import { CATEGORIES_DATA, setDynamicCategories } from '@/lib/categories';
 import { generateDesignSystemPrompt } from '@/lib/designSystemPrompt';
 import { normalizeCategorySvg, getIconSvgMarkup } from '@/lib/svg-normalizer';
@@ -132,7 +136,7 @@ export default function SettingsPage() {
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const tabParam = new URLSearchParams(window.location.search).get('tab');
-      if (tabParam && ['general', 'categories', 'reconciliation', 'telegram', 'ai', 'danger'].includes(tabParam)) {
+      if (tabParam && ['general', 'cards', 'categories', 'data', 'reconciliation', 'telegram', 'ai', 'danger'].includes(tabParam)) {
         setActiveSettingsTab(tabParam);
       }
     }
@@ -151,6 +155,7 @@ export default function SettingsPage() {
 
   // Add/Edit Category Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isIconPickerOpen, setIsIconPickerOpen] = useState(false);
   const [editingCat, setEditingCat] = useState(null);
   const [modalParentId, setModalParentId] = useState(null);
   const [modalParentName, setModalParentName] = useState('');
@@ -168,6 +173,33 @@ export default function SettingsPage() {
   const [aiError, setAiError] = useState('');
   const [reclassifying, setReclassifying] = useState(false);
   const [reclassifyResult, setReclassifyResult] = useState(null);
+
+  // Data Import & Export State
+  const [isCsvImportOpen, setIsCsvImportOpen] = useState(false);
+  const [accountsList, setAccountsList] = useState([]);
+  const [exportPeriod, setExportPeriod] = useState('current_month'); // 'current_month' | 'last_3_months' | 'current_year' | 'all_time' | 'custom'
+  const [exportStartDate, setExportStartDate] = useState('');
+  const [exportEndDate, setExportEndDate] = useState('');
+  const [exportAccountId, setExportAccountId] = useState('');
+  const [exportReceiptFilter, setExportReceiptFilter] = useState('all'); // 'all' | 'with_receipt' | 'analyzed_only' | 'no_receipt'
+  const [exportFields, setExportFields] = useState([
+    'date',
+    'merchant',
+    'amount',
+    'currency',
+    'type',
+    'account',
+    'account_number',
+    'category',
+    'status',
+    'original_description',
+    'notes',
+    'receipt_status',
+    'receipt_amount',
+    'id',
+  ]);
+  const [exportLoading, setExportLoading] = useState(false);
+  const [exportMessage, setExportMessage] = useState('');
 
   const checkBotStatus = async () => {
     try {
@@ -542,6 +574,7 @@ export default function SettingsPage() {
   useEffect(() => {
     loadCategories();
     loadSettings();
+    loadAccounts();
   }, []);
 
   const handleSaveSyncSettings = async (days) => {
@@ -745,7 +778,13 @@ export default function SettingsPage() {
         } else if (res.data.color) {
           setFormColor(res.data.color);
         }
-        if (res.data.customSvg) setFormSvg(res.data.customSvg);
+        if (res.data.iconName) {
+          setFormIcon(res.data.iconName);
+          const svgCode = getIconSvgMarkup(res.data.iconName);
+          setFormSvg(normalizeCategorySvg(svgCode));
+        } else if (res.data.customSvg) {
+          setFormSvg(normalizeCategorySvg(res.data.customSvg));
+        }
         if (res.data.designConcept) setAiDesignConcept(res.data.designConcept);
         setAiAttemptIndex(1);
       }
@@ -774,7 +813,13 @@ export default function SettingsPage() {
         parentColor,
       });
       if (res.data) {
-        if (res.data.customSvg) setFormSvg(res.data.customSvg);
+        if (res.data.iconName) {
+          setFormIcon(res.data.iconName);
+          const svgCode = getIconSvgMarkup(res.data.iconName);
+          setFormSvg(normalizeCategorySvg(svgCode));
+        } else if (res.data.customSvg) {
+          setFormSvg(normalizeCategorySvg(res.data.customSvg));
+        }
         if (res.data.designConcept) setAiDesignConcept(res.data.designConcept);
         setAiAttemptIndex(nextAttempt);
       }
@@ -783,6 +828,82 @@ export default function SettingsPage() {
       setAiError(err.message || 'שגיאה ביצירת עיצוב חלופי לאייקון עם AI');
     } finally {
       setAiSuggestingAlternative(false);
+    }
+  };
+
+  // Handle icon selection from the Gallery Modal
+  const handleSelectIconFromGallery = ({ iconName, labelHe, svg }) => {
+    setFormIcon(iconName);
+    setFormSvg(svg);
+    if (labelHe) setAiDesignConcept(labelHe);
+  };
+
+  // Load user accounts for export/import
+  const loadAccounts = async () => {
+    try {
+      const res = await api.getAccounts();
+      if (Array.isArray(res.data)) {
+        setAccountsList(res.data);
+      }
+    } catch (err) {
+      console.error('Failed to load accounts in settings:', err);
+    }
+  };
+
+  // Handle CSV Export
+  const handleExportCSV = async () => {
+    setExportLoading(true);
+    setExportMessage('');
+
+    let startDate = undefined;
+    let endDate = undefined;
+    const now = new Date();
+
+    if (exportPeriod === 'current_month') {
+      const start = new Date(now.getFullYear(), now.getMonth(), 1);
+      const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+      startDate = start.toISOString().slice(0, 10);
+      endDate = end.toISOString().slice(0, 10);
+    } else if (exportPeriod === 'last_3_months') {
+      const start = new Date(now.getFullYear(), now.getMonth() - 2, 1);
+      const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+      startDate = start.toISOString().slice(0, 10);
+      endDate = end.toISOString().slice(0, 10);
+    } else if (exportPeriod === 'current_year') {
+      startDate = `${now.getFullYear()}-01-01`;
+      endDate = `${now.getFullYear()}-12-31`;
+    } else if (exportPeriod === 'custom') {
+      startDate = exportStartDate || undefined;
+      endDate = exportEndDate || undefined;
+    }
+
+    try {
+      const res = await api.exportTransactionsCsv({
+        startDate,
+        endDate,
+        accountId: exportAccountId || undefined,
+        receiptFilter: exportReceiptFilter,
+        fields: exportFields,
+      });
+
+      if (res.data) {
+        const blob = new Blob([res.data], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `fintrack-export-${new Date().toISOString().slice(0, 10)}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+        setExportMessage('קובץ האקסל / CSV הופק והורד בהצלחה!');
+        setTimeout(() => setExportMessage(''), 5000);
+      } else {
+        throw new Error(res.error || 'שגיאה בייצוא הנתונים');
+      }
+    } catch (err) {
+      console.error('Export error:', err);
+      setExportMessage('שגיאה בייצוא: ' + (err.message || 'לא ניתן להוריד את הקובץ'));
+    } finally {
+      setExportLoading(false);
     }
   };
 
@@ -919,8 +1040,10 @@ export default function SettingsPage() {
       <div className="flex items-center gap-1.5 p-1.5 rounded-2xl bg-dark-surface-elevated/80 light:bg-light-surface-elevated/80 border border-dark-border light:border-light-border overflow-x-auto no-scrollbar shadow-2xs">
         {[
           { id: 'general', label: lang === 'he' ? 'כללי ומערכת' : 'General', icon: SettingsIcon },
+          { id: 'cards', label: lang === 'he' ? 'כרטיסים וחשבונות' : 'Cards & Accounts', icon: CreditCard },
           { id: 'categories', label: lang === 'he' ? 'ניהול קטגוריות' : 'Categories', icon: Tag },
-          { id: 'reconciliation', label: lang === 'he' ? 'התאמת אשראי' : 'Credit Card Match', icon: CreditCard },
+          { id: 'data', label: lang === 'he' ? 'ייבוא וייצוא נתונים' : 'Data Import & Export', icon: Download },
+          { id: 'reconciliation', label: lang === 'he' ? 'התאמת אשראי' : 'Credit Card Match', icon: Layers },
           { id: 'telegram', label: lang === 'he' ? 'בוט טלגרם והתראות' : 'Telegram & Alerts', icon: Send },
           { id: 'ai', label: lang === 'he' ? 'בינה מלאכותית (AI)' : 'Gemini AI', icon: Sparkles },
           { id: 'danger', label: lang === 'he' ? 'אזור רגיש' : 'Danger Zone', icon: AlertTriangle },
@@ -1269,6 +1392,11 @@ export default function SettingsPage() {
         </div>
       )}
 
+      {/* Tab: Cards & Accounts */}
+      {activeSettingsTab === 'cards' && (
+        <CardsSettingsTab />
+      )}
+
       {/* Tab 2: Categories */}
       {activeSettingsTab === 'categories' && (
         <div className="space-y-6 animate-in fade-in duration-150">
@@ -1606,6 +1734,254 @@ export default function SettingsPage() {
           })}
         </div>
       </div>
+    </div>
+  )}
+
+      {/* Tab: Data Import & Export */}
+      {activeSettingsTab === 'data' && (
+        <div className="space-y-6 animate-in fade-in duration-150">
+          {/* Card 1: Advanced CSV / Excel Export */}
+          <div className="p-5 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface space-y-5 shadow-sm">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-dark-border/60 light:border-light-border/60 pb-4">
+              <div>
+                <h3 className="font-semibold text-base flex items-center gap-2">
+                  <Download className="w-5 h-5 text-brand-primary" />
+                  <span>ייצוא נתונים (CSV / Excel)</span>
+                </h3>
+                <p className="text-xs text-dark-text-muted light:text-light-text-muted mt-0.5">
+                  הורדת נתוני התנועות בפורמט תקני לקריאה מושלמת באקסל ללא ג'יבריש (UTF-8 BOM), עם בחירת טווח תאריכים, חשבון, סינון קבלות ושדות מותאמים
+                </p>
+              </div>
+            </div>
+
+            {/* Filter Controls Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-xs">
+              {/* Period Selector */}
+              <div className="space-y-1.5">
+                <label className="font-semibold text-dark-text light:text-light-text">תקופת ייצוא</label>
+                <select
+                  value={exportPeriod}
+                  onChange={(e) => setExportPeriod(e.target.value)}
+                  className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text font-medium"
+                >
+                  <option value="current_month">החודש הנוכחי</option>
+                  <option value="last_3_months">3 חודשים אחרונים</option>
+                  <option value="current_year">שנה נוכחית ({new Date().getFullYear()})</option>
+                  <option value="all_time">כל הזמנים (כל ההיסטוריה)</option>
+                  <option value="custom">טווח תאריכים מותאם אישית...</option>
+                </select>
+              </div>
+
+              {/* Account Selector */}
+              <div className="space-y-1.5">
+                <label className="font-semibold text-dark-text light:text-light-text">חשבון</label>
+                <select
+                  value={exportAccountId}
+                  onChange={(e) => setExportAccountId(e.target.value)}
+                  className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text font-medium"
+                >
+                  <option value="">כל החשבונות</option>
+                  {accountsList.map((acc) => (
+                    <option key={acc.id} value={acc.id}>
+                      {acc.displayName || acc.bankCompany} {acc.accountNumber ? `(..${acc.accountNumber.slice(-4)})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Receipt / Invoice Filter */}
+              <div className="space-y-1.5">
+                <label className="font-semibold text-dark-text light:text-light-text">סינון קבלות וחשבוניות</label>
+                <select
+                  value={exportReceiptFilter}
+                  onChange={(e) => setExportReceiptFilter(e.target.value)}
+                  className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text font-medium"
+                >
+                  <option value="all">כל התנועות (ללא תלות בקבלה)</option>
+                  <option value="with_receipt">רק תנועות עם קבלה/חשבונית מצורפת</option>
+                  <option value="analyzed_only">רק קבלות שנותחו ב-AI (מנותח)</option>
+                  <option value="no_receipt">תנועות ללא קבלה או שטרם נותחה (לא מנותח)</option>
+                </select>
+              </div>
+
+              {/* Custom Date Pickers if custom period selected */}
+              {exportPeriod === 'custom' && (
+                <>
+                  <div className="space-y-1.5">
+                    <label className="font-semibold text-dark-text light:text-light-text">מתאריך</label>
+                    <input
+                      type="date"
+                      value={exportStartDate}
+                      onChange={(e) => setExportStartDate(e.target.value)}
+                      className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text font-medium"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="font-semibold text-dark-text light:text-light-text">עד תאריך</label>
+                    <input
+                      type="date"
+                      value={exportEndDate}
+                      onChange={(e) => setExportEndDate(e.target.value)}
+                      className="w-full p-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text font-medium"
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Custom Field Selection */}
+            <div className="p-4 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated/40 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-dark-text light:text-light-text">
+                  בחירת שדות לייצוא בקובץ: ({exportFields.length} נבחרו)
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setExportFields([
+                      'date', 'merchant', 'amount', 'currency', 'type', 'account', 'account_number',
+                      'category', 'status', 'original_description', 'notes', 'receipt_status', 'receipt_amount', 'id'
+                    ])}
+                    className="text-[11px] font-semibold text-brand-primary hover:underline cursor-pointer"
+                  >
+                    בחר הכל
+                  </button>
+                  <span className="text-dark-text-muted">•</span>
+                  <button
+                    type="button"
+                    onClick={() => setExportFields(['date', 'merchant', 'amount'])}
+                    className="text-[11px] font-semibold text-dark-text-muted hover:underline cursor-pointer"
+                  >
+                    מינימלי (תאריך, עסק, סכום)
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 text-xs">
+                {[
+                  { key: 'date', label: 'תאריך' },
+                  { key: 'merchant', label: 'שם בית עסק / תיאור' },
+                  { key: 'amount', label: 'סכום' },
+                  { key: 'currency', label: 'מטבע' },
+                  { key: 'type', label: 'סוג תנועה' },
+                  { key: 'account', label: 'חשבון מקור' },
+                  { key: 'account_number', label: '4 ספרות / מזהה' },
+                  { key: 'category', label: 'קטגוריה' },
+                  { key: 'status', label: 'סטטוס' },
+                  { key: 'original_description', label: 'תיאור מקורי מהבנק' },
+                  { key: 'notes', label: 'הערות' },
+                  { key: 'receipt_status', label: 'סטטוס קבלה' },
+                  { key: 'receipt_amount', label: 'סכום מנותח מקבלה' },
+                  { key: 'id', label: 'מזהה תנועה (ID)' },
+                ].map((f) => {
+                  const isChecked = exportFields.includes(f.key);
+                  return (
+                    <label
+                      key={f.key}
+                      className={`flex items-center gap-2 p-2 rounded-lg border cursor-pointer select-none transition-colors ${
+                        isChecked
+                          ? 'border-brand-primary/40 bg-brand-primary/10 text-dark-text light:text-light-text font-semibold'
+                          : 'border-dark-border/60 bg-dark-surface text-dark-text-muted hover:bg-dark-surface-elevated'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setExportFields([...exportFields, f.key]);
+                          } else {
+                            if (exportFields.length > 1) {
+                              setExportFields(exportFields.filter((k) => k !== f.key));
+                            }
+                          }
+                        }}
+                        className="rounded accent-brand-primary"
+                      />
+                      <span className="truncate">{f.label}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Export Action Button */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
+              <div className="text-xs text-dark-text-muted">
+                {exportMessage ? (
+                  <span className={exportMessage.includes('שגיאה') ? 'text-red-400 font-semibold' : 'text-brand-income font-semibold'}>
+                    {exportMessage}
+                  </span>
+                ) : (
+                  <span>הקובץ ייפתח באופן תקין בעברית בכל גרסאות Microsoft Excel, Google Sheets ו-Apple Numbers</span>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={handleExportCSV}
+                disabled={exportLoading}
+                className="px-6 py-2.5 rounded-xl bg-brand-primary hover:bg-brand-primary-hover text-white text-xs font-bold shadow-md transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                {exportLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                <span>{exportLoading ? 'מייצא נתונים...' : 'הורד קובץ CSV / Excel'}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Card 2: Smart CSV Import */}
+          <div className="p-5 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface space-y-4 shadow-sm">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-dark-border/60 light:border-light-border/60 pb-4">
+              <div>
+                <h3 className="font-semibold text-base flex items-center gap-2">
+                  <FileSpreadsheet className="w-5 h-5 text-brand-income" />
+                  <span>ייבוא תנועות חכם (Smart CSV Import)</span>
+                </h3>
+                <p className="text-xs text-dark-text-muted light:text-light-text-muted mt-0.5">
+                  ייבוא קבצי אקסל ו-CSV מכל הבנקים וכרטיסי האשראי עם זיהוי עמודות אוטומטי, סיכום לפי חשבון ואפשרות ליצירת חשבון חדש ישירות מהחלון
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsCsvImportOpen(true)}
+                className="px-5 py-2.5 rounded-xl bg-brand-income hover:bg-brand-income/90 text-white text-xs font-bold shadow-md transition-colors flex items-center justify-center gap-2 cursor-pointer shrink-0"
+              >
+                <Upload className="w-4 h-4" />
+                <span>פתח אשף ייבוא תנועות 🚀</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+              <div className="p-3.5 rounded-xl border border-dark-border/60 bg-dark-surface-elevated/40 space-y-1">
+                <div className="font-bold text-dark-text light:text-light-text flex items-center gap-1.5">
+                  <Check className="w-4 h-4 text-brand-income" />
+                  <span>תמיכה בכל המוסדות</span>
+                </div>
+                <div className="text-dark-text-muted text-[11px]">
+                  לאומי, פועלים, דיסקונט, מזרחי, הבנק הבינלאומי, מקס, כאל, ישראכרט וקבצים מותאמים אישית.
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-xl border border-dark-border/60 bg-dark-surface-elevated/40 space-y-1">
+                <div className="font-bold text-dark-text light:text-light-text flex items-center gap-1.5">
+                  <Check className="w-4 h-4 text-brand-income" />
+                  <span>זיהוי מפרידים ועמודות</span>
+                </div>
+                <div className="text-dark-text-muted text-[11px]">
+                  זיהוי אוטומטי של תאריכים, סכומי חובה/זכות ושמות בתי עסק עם אפשרות התאמה ידנית.
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-xl border border-dark-border/60 bg-dark-surface-elevated/40 space-y-1">
+                <div className="font-bold text-dark-text light:text-light-text flex items-center gap-1.5">
+                  <Check className="w-4 h-4 text-brand-income" />
+                  <span>סיכום ויצירת חשבונות</span>
+                </div>
+                <div className="text-dark-text-muted text-[11px]">
+                  קיבוץ תנועות לפי חשבון ואפשרות ליצור חשבונות בנק/אשראי חדשים מתוך האשף בלחיצה אחת.
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -2551,6 +2927,16 @@ export default function SettingsPage() {
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
+                      onClick={() => setIsIconPickerOpen(true)}
+                      className="px-2.5 py-1 rounded-lg bg-brand-primary/15 hover:bg-brand-primary/25 border border-brand-primary/30 text-brand-primary text-[11px] font-semibold flex items-center gap-1 transition-colors cursor-pointer shadow-xs"
+                      title="בחר אייקון תקני מתוך הגלריה"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>בחר מהגלריה 🎨</span>
+                    </button>
+
+                    <button
+                      type="button"
                       onClick={handleAiAlternativeSvg}
                       disabled={aiSuggestingAlternative || !formName.trim()}
                       className="px-2.5 py-1 rounded-lg bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/30 text-purple-400 text-[11px] font-semibold flex items-center gap-1 transition-colors disabled:opacity-40 cursor-pointer shadow-xs"
@@ -2784,6 +3170,25 @@ export default function SettingsPage() {
           </div>
         </div>
       )}
+
+      {/* Icon Picker Modal */}
+      <IconPickerModal
+        isOpen={isIconPickerOpen}
+        onClose={() => setIsIconPickerOpen(false)}
+        onSelectIcon={handleSelectIconFromGallery}
+        activeColor={formColor}
+        currentSvg={formSvg}
+      />
+
+      {/* Smart CSV Import Wizard */}
+      <CsvImportWizard
+        isOpen={isCsvImportOpen}
+        onClose={() => setIsCsvImportOpen(false)}
+        onImportSuccess={() => {
+          loadAccounts();
+          loadCategories();
+        }}
+      />
     </div>
   );
 }

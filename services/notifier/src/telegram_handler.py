@@ -32,7 +32,7 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     welcome_text = (
         "👋 <b>שלום! אני הבוט האישי שלך ב-FinTrack.</b>\n\n"
         "המערכת מחוברת ומוכנה. אשלח לך עדכונים שוטפים:\n"
-        "• 💳 <b>תנועות חדשות:</b> עדכון מיידי עם כפתור לעריכה פנימית (TMA)\n"
+        "• 💳 <b>תנועות חדשות:</b> עדכון מיידי עם כפתור לעריכה פנימית\n"
         "• 🚨 <b>זיהוי חריגות:</b> התראה על תנועות חדשות/חריגות מכל ההיסטוריה\n"
         "• ⚠️ <b>חריגות תקציב:</b> התראה כשנחצה תקציב חודשי בקטגוריה\n"
         "• 🔐 <b>סנכרון בנקים:</b> קליטה מהירה של קודי OTP בהודעה חוזרת\n\n"
@@ -47,7 +47,7 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         try:
             keyboard = [[
                 InlineKeyboardButton(
-                    text="🌐 פתח את FinTrack (TMA)",
+                    text="🌐 פתח את FinTrack",
                     web_app=WebAppInfo(url=tma_url.rstrip("/"))
                 )
             ]]
@@ -171,6 +171,7 @@ async def process_ingest_response(status_msg, resp_data: dict) -> None:
 
 async def post_to_gateway_receipts(client: httpx.AsyncClient, api_url: str, **kwargs) -> httpx.Response:
     endpoints = [
+        f"{api_url}/api/transactions/receipts/ingest-telegram",
         f"{api_url}/api/receipts/ingest-telegram",
         f"{api_url}/api/v2/transactions/receipts/ingest-telegram",
     ]

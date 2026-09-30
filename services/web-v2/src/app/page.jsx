@@ -61,7 +61,7 @@ export default function DashboardPage() {
         }),
         api.getMonthlyTrend(6, undefined, monthStartDay),
         api.getAccounts(),
-        api.getTransactionsV2({ limit: 5 }),
+        api.getTransactions({ limit: 5 }),
       ]);
 
       if (overviewRes.data) setOverview(overviewRes.data);
@@ -188,69 +188,85 @@ export default function DashboardPage() {
           </Link>
         </div>
 
-        {accounts.length === 0 ? (
+        {accounts.filter((acc) => acc.showBalance !== false).length === 0 ? (
           <div className="p-8 rounded-2xl border border-dashed border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface flex flex-col items-center justify-center text-center space-y-3">
             <Landmark className="w-10 h-10 text-dark-text-muted light:text-light-text-muted opacity-50" />
-            <div className="text-sm font-medium">{t('noData')}</div>
+            <div className="text-sm font-medium">
+              {accounts.length > 0 ? (lang === 'he' ? 'כל היתרות מוגדרות כמוסתרות בהגדרות' : 'All card balances are set to hidden') : t('noData')}
+            </div>
             <p className="text-xs text-dark-text-muted light:text-light-text-muted max-w-sm">
-              {t('connectFirstAccount')}
+              {accounts.length > 0 ? (lang === 'he' ? 'ניתן לשנות את הגדרות התצוגה בעמוד ניהול כרטיסים' : 'You can configure visibility in Cards Settings') : t('connectFirstAccount')}
             </p>
             <Link
               href="/accounts"
               className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-brand-primary text-white text-xs font-semibold shadow-md shadow-brand-primary/20 hover:bg-brand-primary-hover transition-all"
             >
               <PlusCircle className="w-4 h-4" />
-              <span>{t('addAccount')}</span>
+              <span>{accounts.length > 0 ? (lang === 'he' ? 'נהל חשבונות' : 'Manage Accounts') : t('addAccount')}</span>
             </Link>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-            {accounts.map((acc) => {
-              const inst = getInstitutionById(acc.bankCompany);
-              const isCredit = acc.accountType === 'credit' || inst.type === 'credit';
-              const isRefund = isCredit && (acc.balance || 0) < 0;
+            {accounts
+              .filter((acc) => acc.showBalance !== false)
+              .map((acc) => {
+                const inst = getInstitutionById(acc.bankCompany);
+                const isWallet = acc.bankCompany === 'wallet';
+                const isPrepaid = Boolean(acc.isPrepaid);
+                const isCredit = !isWallet && !isPrepaid && (acc.accountType === 'credit' || inst.type === 'credit');
+                const isRefund = isCredit && (acc.balance || 0) < 0;
+                const displayBalance = isPrepaid
+                  ? (acc.calculatedBalance !== undefined ? acc.calculatedBalance : acc.balance)
+                  : acc.balance;
 
-              return (
-                <div
-                  key={acc.id}
-                  className="p-4 rounded-2xl border border-dark-border/80 light:border-light-border/80 bg-dark-surface light:bg-light-surface space-y-2 hover:border-brand-primary/50 transition-all shadow-sm"
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <InstitutionLogo bankCompany={acc.bankCompany} size={28} />
-                      <span className="text-xs font-bold" style={{ color: inst.color }}>
-                        {inst.name}
+                return (
+                  <div
+                    key={acc.id}
+                    className="p-4 rounded-2xl border border-dark-border/80 light:border-light-border/80 bg-dark-surface light:bg-light-surface space-y-2 hover:border-brand-primary/50 transition-all shadow-sm"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <InstitutionLogo bankCompany={acc.bankCompany} size={28} />
+                        <span className="text-xs font-bold" style={{ color: inst.color }}>
+                          {isWallet ? (lang === 'he' ? 'ארנק מזומנים' : 'Cash Wallet') : inst.name}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1 font-mono text-[11px] text-dark-text-muted light:text-light-text-muted">
+                        {isPrepaid && (
+                          <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-500">
+                            נטען
+                          </span>
+                        )}
+                        <span>••••{acc.accountNumber ? acc.accountNumber.slice(-4) : '0000'}</span>
+                      </div>
+                    </div>
+
+                    <div className="font-bold text-sm truncate text-dark-text light:text-light-text">
+                      {acc.displayName || (isWallet ? (lang === 'he' ? 'ארנק מזומנים' : 'Cash Wallet') : inst.name)}
+                    </div>
+
+                    <div className="flex items-baseline justify-between pt-1">
+                      <span className="text-[11px] text-dark-text-muted light:text-light-text-muted">
+                        {isCredit ? (isRefund ? 'זיכוי צפוי:' : 'חיוב צפוי:') : 'יתרה:'}
+                      </span>
+                      <span 
+                        className={`text-base font-bold ${
+                          isWallet || isRefund
+                            ? 'text-emerald-500' 
+                            : isPrepaid
+                            ? 'text-amber-500'
+                            : isCredit 
+                            ? 'text-brand-amber' 
+                            : (displayBalance < 0 ? 'text-rose-500' : 'text-emerald-500')
+                        }`} 
+                        dir="ltr"
+                      >
+                        {formatILS(displayBalance, { showSign: isRefund || (!isCredit && !isWallet && !isPrepaid && displayBalance < 0) })}
                       </span>
                     </div>
-                    <span className="text-[11px] font-mono text-dark-text-muted light:text-light-text-muted">
-                      ••••{acc.accountNumber || '0000'}
-                    </span>
                   </div>
-
-                  <div className="font-bold text-sm truncate text-dark-text light:text-light-text">
-                    {acc.displayName || inst.name}
-                  </div>
-
-                  <div className="flex items-baseline justify-between pt-1">
-                    <span className="text-[11px] text-dark-text-muted light:text-light-text-muted">
-                      {isCredit ? (isRefund ? 'זיכוי צפוי:' : 'חיוב צפוי:') : 'יתרה:'}
-                    </span>
-                    <span 
-                      className={`text-base font-bold ${
-                        isRefund 
-                          ? 'text-emerald-500' 
-                          : isCredit 
-                          ? 'text-brand-amber' 
-                          : (acc.balance < 0 ? 'text-rose-500' : 'text-emerald-500')
-                      }`} 
-                      dir="ltr"
-                    >
-                      {formatILS(acc.balance, { showSign: isRefund || (!isCredit && acc.balance < 0) })}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })}
           </div>
         )}
       </div>

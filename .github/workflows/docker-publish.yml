@@ -28,6 +28,7 @@ jobs:
           - service: web-v2
             context: ./services/web-v2
             image: fintrack-web-v2
+            alias_image: fintrack-web
           - service: notifier
             context: ./services/notifier
             image: fintrack-notifier
@@ -62,5 +63,7 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ steps.repo_owner.outputs.owner }}/${{ matrix.image }}:latest
             ${{ env.REGISTRY }}/${{ steps.repo_owner.outputs.owner }}/${{ matrix.image }}:${{ github.sha }}
+            ${{ matrix.alias_image && format('{0}/{1}/{2}:latest', env.REGISTRY, steps.repo_owner.outputs.owner, matrix.alias_image) || '' }}
+            ${{ matrix.alias_image && format('{0}/{1}/{2}:{3}', env.REGISTRY, steps.repo_owner.outputs.owner, matrix.alias_image, github.sha) || '' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

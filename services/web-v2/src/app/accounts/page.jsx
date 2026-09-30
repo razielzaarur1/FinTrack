@@ -25,12 +25,16 @@ import {
   Zap,
   PiggyBank,
   Utensils,
-  Clock
+  Clock,
+  Eye,
+  EyeOff,
+  Percent
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { formatILS, formatDate, formatRelativeTime } from '@/lib/formatters';
 import { ISRAELI_INSTITUTIONS, getInstitutionById, INSTITUTION_CATEGORIES } from '@/lib/institutions';
 import InstitutionLogo from '@/components/common/InstitutionLogo';
+import AddWalletTransactionModal from '@/components/transactions/AddWalletTransactionModal';
 import { useApp } from '@/lib/app-context';
 
 function SyncProgressModal({ syncState, onClose }) {
@@ -241,12 +245,22 @@ export default function AccountsPage() {
   const [diagnosticsResult, setDiagnosticsResult] = useState(null);
   const [copiedReport, setCopiedReport] = useState(false);
 
+  // Wallet Modal & Balance Reveal States
+  const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
+  const [selectedWalletAccount, setSelectedWalletAccount] = useState(null);
+  const [revealedBalances, setRevealedBalances] = useState({});
+
   // Edit Account Flow
   const [editingAccount, setEditingAccount] = useState(null);
   const [editName, setEditName] = useState('');
   const [editAccountNumber, setEditAccountNumber] = useState('');
   const [editBillingDay, setEditBillingDay] = useState(10);
   const [editBalance, setEditBalance] = useState(0);
+  const [editIncludeInExpenses, setEditIncludeInExpenses] = useState(true);
+  const [editShowBalance, setEditShowBalance] = useState(true);
+  const [editIsPrepaid, setEditIsPrepaid] = useState(false);
+  const [editPrepaidMode, setEditPrepaidMode] = useState('link_offset');
+  const [editDiscountPercentage, setEditDiscountPercentage] = useState(0);
   const [savingEdit, setSavingEdit] = useState(false);
 
   const loadAccounts = async () => {
@@ -528,6 +542,11 @@ export default function AccountsPage() {
     setEditAccountNumber(acc.accountNumber || '');
     setEditBillingDay(acc.billingDay || 10);
     setEditBalance(acc.balance !== undefined ? acc.balance : 0);
+    setEditIncludeInExpenses(acc.includeInExpenses !== false);
+    setEditShowBalance(acc.showBalance !== false);
+    setEditIsPrepaid(Boolean(acc.isPrepaid));
+    setEditPrepaidMode(acc.prepaidMode || 'link_offset');
+    setEditDiscountPercentage(acc.discountPercentage || 0);
   };
 
   const handleSaveEdit = async (e) => {
@@ -538,6 +557,11 @@ export default function AccountsPage() {
       const isWallet = editingAccount.bankCompany === 'wallet' || editingAccount.accountType === 'wallet';
       const payload = {
         displayName: editName.trim() || undefined,
+        includeInExpenses: editIncludeInExpenses,
+        showBalance: editShowBalance,
+        isPrepaid: editIsPrepaid,
+        prepaidMode: editPrepaidMode,
+        discountPercentage: parseFloat(editDiscountPercentage) || 0,
       };
       if (isWallet) {
         payload.balance = parseFloat(editBalance) || 0;
@@ -676,11 +700,29 @@ export default function AccountsPage() {
                     </div>
                   </div>
 
-                  {/* Card Display Name & Billing Cycle Badge */}
+                  {/* Card Display Name & Badges */}
                   <div>
-                    <h3 className="font-bold text-lg text-dark-text light:text-light-text tracking-tight truncate">
-                      {acc.displayName || (isWallet ? 'ארנק מזומנים' : inst.name)}
-                    </h3>
+                    <div className="flex items-center gap-2 flex-wrap mb-1">
+                      <h3 className="font-bold text-lg text-dark-text light:text-light-text tracking-tight truncate">
+                        {acc.displayName || (isWallet ? 'ארנק מזומנים' : inst.name)}
+                      </h3>
+                      {acc.isPrepaid && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-500 border border-amber-500/25">
+                          כרטיס נטען
+                        </span>
+                      )}
+                      {!isWallet && acc.includeInExpenses === false && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-500/15 text-rose-500 border border-rose-500/25">
+                          לא בהוצאות
+                        </span>
+                      )}
+                      {acc.showBalance === false && (
+                        <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-slate-500/15 text-slate-400 border border-slate-500/25 flex items-center gap-1">
+                          <EyeOff className="w-2.5 h-2.5" />
+                          <span>מוסתר</span>
+                        </span>
+                      )}
+                    </div>
                     {isCredit && (
                       <div className="flex items-center gap-1.5 mt-1">
                         <span className="text-[11px] px-2 py-0.5 rounded-md bg-indigo-500/10 text-indigo-400 dark:text-indigo-300 font-medium flex items-center gap-1">
@@ -702,6 +744,8 @@ export default function AccountsPage() {
                       <span>
                         {isWallet 
                           ? 'יתרת מזומנים נוכחית'
+                          : acc.isPrepaid
+                          ? 'יתרת כרטיס נטען'
                           : isCredit 
                           ? (isRefund ? 'זיכוי צפוי במחזור הקרוב' : 'חיוב צפוי במחזור הקרוב')
                           : (lang === 'he' ? 'יתרה בעו״ש' : 'Current Balance')}
@@ -718,24 +762,76 @@ export default function AccountsPage() {
                       )}
                     </div>
 
-                    <div 
-                      className={`text-2xl md:text-3xl font-bold tracking-tight ${
-                        isWallet
-                          ? 'text-emerald-500 dark:text-emerald-400'
-                          : isRefund 
-                          ? 'text-emerald-500 dark:text-emerald-400' 
-                          : isCredit 
-                          ? 'text-brand-amber' 
-                          : (acc.balance < 0 ? 'text-rose-500' : 'text-emerald-500')
-                      }`}
-                      dir="ltr"
-                    >
-                      {formatILS(
-                        isCredit ? (acc.upcomingCharge ?? acc.balance) : acc.balance, 
-                        { showSign: isRefund || (!isCredit && !isWallet && acc.balance < 0) }
+                    {acc.showBalance === false && !revealedBalances[acc.id] ? (
+                      <div className="flex items-center justify-between py-1">
+                        <span className="text-xl md:text-2xl font-bold tracking-widest text-dark-text-muted light:text-light-text-muted font-mono select-none">
+                          •••••• ₪
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setRevealedBalances((prev) => ({ ...prev, [acc.id]: true }))}
+                          className="p-1 rounded-lg hover:bg-dark-surface light:hover:bg-light-surface text-dark-text-muted hover:text-dark-text text-xs"
+                          title="הצג יתרה"
+                        >
+                          <Eye className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between">
+                        <div 
+                          className={`text-2xl md:text-3xl font-bold tracking-tight ${
+                            isWallet
+                              ? 'text-emerald-500 dark:text-emerald-400'
+                              : acc.isPrepaid
+                              ? 'text-amber-500'
+                              : isRefund 
+                              ? 'text-emerald-500 dark:text-emerald-400' 
+                              : isCredit 
+                              ? 'text-brand-amber' 
+                              : (acc.balance < 0 ? 'text-rose-500' : 'text-emerald-500')
+                          }`}
+                          dir="ltr"
+                        >
+                          {formatILS(
+                            acc.isPrepaid
+                              ? (acc.calculatedBalance !== undefined ? acc.calculatedBalance : acc.balance)
+                              : isCredit
+                              ? (acc.upcomingCharge ?? acc.balance)
+                              : acc.balance, 
+                            { showSign: isRefund || (!isCredit && !isWallet && !acc.isPrepaid && acc.balance < 0) }
+                          )}
+                        </div>
+                        {acc.showBalance === false && (
+                          <button
+                            type="button"
+                            onClick={() => setRevealedBalances((prev) => ({ ...prev, [acc.id]: false }))}
+                            className="p-1 rounded-lg hover:bg-dark-surface light:hover:bg-light-surface text-dark-text-muted hover:text-dark-text text-xs"
+                            title="הסתר יתרה"
+                          >
+                            <EyeOff className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Prepaid Card Breakdown */}
+                  {acc.isPrepaid && (
+                    <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 space-y-1 text-xs">
+                      <div className="flex items-center justify-between text-[11px] text-amber-500 font-semibold">
+                        <span>כרטיס נטען ({acc.prepaidMode === 'ignore_all' ? 'התעלם מהוצאות' : 'קיזוז טעינות'})</span>
+                        {Number(acc.discountPercentage) > 0 && (
+                          <span>{acc.discountPercentage}% הנחה בטעינה</span>
+                        )}
+                      </div>
+                      {acc.totalLoads !== undefined && (
+                        <div className="flex items-center justify-between text-[10px] text-dark-text-muted light:text-light-text-muted pt-0.5">
+                          <span>טעינות אפקטיביות: {formatILS(acc.effectiveLoaded || 0)}</span>
+                          <span>נוצל: {formatILS(acc.totalExpenses || 0)}</span>
+                        </div>
                       )}
                     </div>
-                  </div>
+                  )}
 
                   {/* Credit Card Cycle Information */}
                   {isCredit && (
@@ -803,14 +899,27 @@ export default function AccountsPage() {
 
                   <div className="flex items-center gap-1">
                     {isWallet ? (
-                      <button
-                        onClick={() => handleOpenEdit(acc)}
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 text-xs font-semibold transition-colors"
-                        title="עדכן יתרה"
-                      >
-                        <Banknote className="w-3.5 h-3.5" />
-                        <span>עדכן יתרה</span>
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => {
+                            setSelectedWalletAccount(acc);
+                            setIsWalletModalOpen(true);
+                          }}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/25 text-xs font-semibold transition-colors"
+                          title="הוסף תנועת מזומן לארנק"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>הוסף תנועה</span>
+                        </button>
+                        <button
+                          onClick={() => handleOpenEdit(acc)}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-dark-surface-elevated light:bg-light-surface-elevated hover:bg-dark-surface-elevated/80 text-dark-text-muted hover:text-dark-text text-xs font-semibold transition-colors"
+                          title="עדכן יתרה"
+                        >
+                          <Banknote className="w-3.5 h-3.5" />
+                          <span>עדכן יתרה</span>
+                        </button>
+                      </div>
                     ) : (
                       <>
                         <button
@@ -935,6 +1044,94 @@ export default function AccountsPage() {
                   </div>
                 </>
               )}
+
+              {/* Card Expense Inclusion & Visibility Toggles */}
+              <div className="space-y-3 pt-3 border-t border-dark-border light:border-light-border">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="text-xs font-semibold text-dark-text light:text-light-text block">
+                      כלול בחישוב הוצאות
+                    </label>
+                    <span className="text-[11px] text-dark-text-muted light:text-light-text-muted">
+                      תנועות מכרטיס זה ייכללו בסך ההוצאות החודשי
+                    </span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={editIncludeInExpenses}
+                    onChange={(e) => setEditIncludeInExpenses(e.target.checked)}
+                    className="w-4 h-4 rounded text-brand-primary accent-brand-primary"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="text-xs font-semibold text-dark-text light:text-light-text block">
+                      הצג יתרה במסכים הראשיים
+                    </label>
+                    <span className="text-[11px] text-dark-text-muted light:text-light-text-muted">
+                      הצגת היתרה בדשבורד וברשימת החשבונות
+                    </span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={editShowBalance}
+                    onChange={(e) => setEditShowBalance(e.target.checked)}
+                    className="w-4 h-4 rounded text-brand-primary accent-brand-primary"
+                  />
+                </div>
+
+                {editingAccount.bankCompany !== 'wallet' && (
+                  <div className="p-3 rounded-xl border border-amber-500/20 bg-amber-500/5 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-semibold text-dark-text light:text-light-text flex items-center gap-1.5">
+                        <Percent className="w-3.5 h-3.5 text-amber-500" />
+                        <span>כרטיס נטען (Prepaid)</span>
+                      </label>
+                      <input
+                        type="checkbox"
+                        checked={editIsPrepaid}
+                        onChange={(e) => setEditIsPrepaid(e.target.checked)}
+                        className="w-4 h-4 rounded text-amber-500 accent-amber-500"
+                      />
+                    </div>
+
+                    {editIsPrepaid && (
+                      <div className="space-y-3 pt-2">
+                        <div>
+                          <label className="text-[11px] font-medium text-dark-text-muted light:text-light-text-muted block mb-1">
+                            אופן החישוב:
+                          </label>
+                          <select
+                            value={editPrepaidMode}
+                            onChange={(e) => setEditPrepaidMode(e.target.value)}
+                            className="w-full p-2 rounded-lg border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-xs text-dark-text light:text-light-text"
+                          >
+                            <option value="link_offset">קיזוז הוצאות מול טעינות (Offset)</option>
+                            <option value="ignore_all">התעלם מכל התנועות (Ignore all)</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="text-[11px] font-medium text-dark-text-muted light:text-light-text-muted block mb-1">
+                            אחוז הנחה בטעינה (%):
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="0.5"
+                            value={editDiscountPercentage}
+                            onChange={(e) => setEditDiscountPercentage(e.target.value)}
+                            placeholder="20"
+                            className="w-full p-2 rounded-lg border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-xs font-mono text-dark-text light:text-light-text"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
 
               <div className="flex gap-2 pt-2">
                 <button
@@ -1450,6 +1647,14 @@ export default function AccountsPage() {
       <SyncProgressModal
         syncState={syncModal}
         onClose={() => setSyncModal((prev) => ({ ...prev, isOpen: false }))}
+      />
+
+      {/* Manual Cash Wallet Transaction Modal */}
+      <AddWalletTransactionModal
+        isOpen={isWalletModalOpen}
+        onClose={() => setIsWalletModalOpen(false)}
+        defaultAccountId={selectedWalletAccount?.id}
+        onSuccess={loadAccounts}
       />
     </div>
   );

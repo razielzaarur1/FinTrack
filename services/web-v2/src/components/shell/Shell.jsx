@@ -88,7 +88,7 @@ export default function Shell({ children }) {
             </div>
             <div>
               <div className="font-bold tracking-wide text-base flex items-center gap-1.5">
-                FinTrack <span className="text-[10px] px-1.5 py-0.2 rounded bg-brand-primary/20 text-brand-primary font-semibold">v2</span>
+                FinTrack
               </div>
               <div className="text-[11px] text-dark-text-muted light:text-light-text-muted">ניהול פיננסי חכם</div>
             </div>
@@ -164,7 +164,7 @@ export default function Shell({ children }) {
             <div className="w-8 h-8 rounded-xl bg-brand-primary flex items-center justify-center text-white font-bold text-sm shadow-xs">
               FT
             </div>
-            <span className="font-bold text-base tracking-tight">FinTrack <span className="text-[10px] text-brand-primary font-mono">v2</span></span>
+            <span className="font-bold text-base tracking-tight">FinTrack</span>
           </div>
 
           <div className="flex items-center gap-1.5">

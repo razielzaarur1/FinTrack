@@ -3,8 +3,8 @@ import { AppProvider } from '@/lib/app-context';
 import Shell from '@/components/shell/Shell';
 
 export const metadata = {
-  title: 'FinTrack v2 - Personal Finance',
-  description: 'Fast, secure personal finance platform without friction',
+  title: 'FinTrack - ניהול פיננסי אישי',
+  description: 'ניהול פיננסי חכם, מהיר ומאובטח ללא חיכוך',
   manifest: '/manifest.json',
   icons: {
     icon: '/icon-192.svg',

@@ -62,6 +62,21 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
   const [aiClassifying, setAiClassifying] = useState(false);
   const [aiFeedback, setAiFeedback] = useState(null);
 
+  // Wallet editable fields
+  const isWalletTx = Boolean(
+    activeTx?.bankCompany === 'wallet' || 
+    activeTx?.rawData?.isManual || 
+    activeTx?.accountDisplayName === '???? ???????'
+  );
+  const [walletAmount, setWalletAmount] = useState(Math.abs(parseFloat(tx?.amount) || 0));
+  const [walletType, setWalletType] = useState((parseFloat(tx?.amount) || 0) < 0 ? 'expense' : 'income');
+  const [walletDate, setWalletDate] = useState(
+    tx?.date ? new Date(tx.date).toISOString().slice(0, 16) : ''
+  );
+  const [walletMerchant, setWalletMerchant] = useState(tx?.merchantName || '');
+  const [deletingTx, setDeletingTx] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
   const handleAiClassify = async () => {
     if (!activeTx?.id) return;
     setAiClassifying(true);
@@ -108,6 +123,11 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
     if (tx) {
       setActiveTx(tx);
       setTxHistory([]);
+      setWalletAmount(Math.abs(parseFloat(tx.amount) || 0));
+      setWalletType((parseFloat(tx.amount) || 0) < 0 ? 'expense' : 'income');
+      setWalletDate(tx.date ? new Date(tx.date).toISOString().slice(0, 16) : '');
+      setWalletMerchant(tx.merchantName || '');
+      setShowDeleteConfirm(false);
     }
   }, [tx]);
 
@@ -263,21 +283,44 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
     }
   };
 
-  const handleSaveDetails = async () => {
+  const handleDeleteWalletTx = async () => {
+    setDeletingTx(true);
+    try {
+      await api.deleteTransaction(activeTx.id);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('fintrack_tx_updated'));
+      }
+      onClose?.();
+    } catch (err) {
+      console.error('Failed to delete wallet transaction:', err);
+    } finally {
+      setDeletingTx(false);
+      setShowDeleteConfirm(false);
+    }
+  };
+
+    const handleSaveDetails = async () => {
     setSavingTx(true);
     try {
-      const res = await api.updateTransaction(activeTx.id, {
+      const payload = {
         category,
         userDescription: userDesc.trim(),
         isIgnored,
         applyToSimilar,
-      });
+      };
+
+      if (isWalletTx) {
+        const numAmt = parseFloat(walletAmount) || 0;
+        payload.amount = walletType === 'expense' ? -numAmt : numAmt;
+        payload.date = walletDate ? new Date(walletDate).toISOString() : activeTx.date;
+        payload.merchantName = walletMerchant.trim() || '???? ???????';
+      }
+
+      const res = await api.updateTransaction(activeTx.id, payload);
       if (res.data) {
         onUpdate?.({
           ...activeTx,
-          category,
-          userDescription: userDesc.trim(),
-          isIgnored,
+          ...payload,
         });
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('fintrack_tx_updated'));

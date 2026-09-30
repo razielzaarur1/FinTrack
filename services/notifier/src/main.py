@@ -385,7 +385,7 @@ async def notify_transaction(payload: TransactionNotifyPayload):
         try:
             keyboard = [[
                 InlineKeyboardButton(
-                    text="✏️ צפה וערוך תנועה (TMA)",
+                    text="✏️ צפה וערוך תנועה",
                     web_app=WebAppInfo(url=payload.tmaUrl)
                 )
             ]]

@@ -76,7 +76,7 @@ export const api = {
   updateAccount: (id, data) => request(`/api/accounts/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteAccount: (id) => request(`/api/accounts/${id}`, { method: 'DELETE' }),
 
-  getTransactionsV2: (params = {}) => {
+  getTransactions: (params = {}) => {
     const searchParams = new URLSearchParams();
     Object.entries(params).forEach(([key, val]) => {
       if (val !== undefined && val !== null && val !== '') {
@@ -87,38 +87,43 @@ export const api = {
         }
       }
     });
-    return request(`/api/v2/transactions?${searchParams.toString()}`);
+    return request(`/api/transactions?${searchParams.toString()}`);
   },
-  getFilterCounts: () => request('/api/v2/transactions/filter-counts'),
-  getTransaction: (id) => request(`/api/v2/transactions/${id}`),
-  getCurrencies: (params) => request(`/api/v2/transactions/currencies${params?.refresh ? '?refresh=true' : ''}`),
-  updateTransaction: (id, data) => request(`/api/v2/transactions/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
-  getSimilarTransactions: (id) => request(`/api/v2/transactions/${id}/similar`),
-  getTxFxDetails: (id) => request(`/api/v2/transactions/${id}/fx`),
-  bulkUpdateTransactions: (data) => request('/api/v2/transactions/bulk-update', { method: 'POST', body: JSON.stringify(data) }),
-  detectCcBillingAnomalies: () => request('/api/v2/transactions/detect-anomalies', { method: 'POST' }),
+  getTransactionsV2: (params) => api.getTransactions(params),
+  getFilterCounts: () => request('/api/transactions/filter-counts'),
+  getTransaction: (id) => request(`/api/transactions/${id}`),
+  getCurrencies: (params) => request(`/api/transactions/currencies${params?.refresh ? '?refresh=true' : ''}`),
+  createTransaction: (data) => request('/api/transactions', { method: 'POST', body: JSON.stringify(data) }),
+  updateTransaction: (id, data) => request(`/api/transactions/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteTransaction: (id) => request(`/api/transactions/${id}`, { method: 'DELETE' }),
+  getSimilarTransactions: (id) => request(`/api/transactions/${id}/similar`),
+  getTxFxDetails: (id) => request(`/api/transactions/${id}/fx`),
+  bulkUpdateTransactions: (data) => request('/api/transactions/bulk-update', { method: 'POST', body: JSON.stringify(data) }),
+  detectCcBillingAnomalies: () => request('/api/transactions/detect-anomalies', { method: 'POST' }),
+  exportTransactionsCsv: (data) => request('/api/transactions/export', { method: 'POST', body: JSON.stringify(data || {}) }),
+  importCsvTransactions: (data) => request('/api/transactions/import-csv', { method: 'POST', body: JSON.stringify(data || {}) }),
 
   // Splits
-  getSplits: (txId) => request(`/api/v2/transactions/${txId}/splits`),
-  saveSplits: (txId, splits) => request(`/api/v2/transactions/${txId}/splits`, { method: 'PUT', body: JSON.stringify({ splits }) }),
-  deleteSplits: (txId) => request(`/api/v2/transactions/${txId}/splits`, { method: 'DELETE' }),
+  getSplits: (txId) => request(`/api/transactions/${txId}/splits`),
+  saveSplits: (txId, splits) => request(`/api/transactions/${txId}/splits`, { method: 'PUT', body: JSON.stringify({ splits }) }),
+  deleteSplits: (txId) => request(`/api/transactions/${txId}/splits`, { method: 'DELETE' }),
 
   // Notes
-  getNotes: (txId) => request(`/api/v2/transactions/${txId}/notes`),
-  addNote: (txId, note) => request(`/api/v2/transactions/${txId}/notes`, { method: 'POST', body: JSON.stringify({ note }) }),
-  deleteNote: (noteId) => request(`/api/v2/transactions/notes/${noteId}`, { method: 'DELETE' }),
+  getNotes: (txId) => request(`/api/transactions/${txId}/notes`),
+  addNote: (txId, note) => request(`/api/transactions/${txId}/notes`, { method: 'POST', body: JSON.stringify({ note }) }),
+  deleteNote: (noteId) => request(`/api/transactions/notes/${noteId}`, { method: 'DELETE' }),
 
   // Links
-  getLinks: (txId) => request(`/api/v2/transactions/${txId}/links`),
-  linkTransaction: (txId, data) => request(`/api/v2/transactions/${txId}/links`, { method: 'POST', body: JSON.stringify(data) }),
-  deleteLink: (linkId) => request(`/api/v2/transactions/links/${linkId}`, { method: 'DELETE' }),
-  updateLinkFee: (linkId, data) => request(`/api/v2/transactions/links/${linkId}/fee`, { method: 'PATCH', body: JSON.stringify(data) }),
+  getLinks: (txId) => request(`/api/transactions/${txId}/links`),
+  linkTransaction: (txId, data) => request(`/api/transactions/${txId}/links`, { method: 'POST', body: JSON.stringify(data) }),
+  deleteLink: (linkId) => request(`/api/transactions/links/${linkId}`, { method: 'DELETE' }),
+  updateLinkFee: (linkId, data) => request(`/api/transactions/links/${linkId}/fee`, { method: 'PATCH', body: JSON.stringify(data) }),
 
   // Reconciliation & Credit Card Billings
-  getReconciliationCandidates: (txId, params) => request(`/api/v2/transactions/${txId}/reconciliation-candidates${params?.minScore ? `?minScore=${params.minScore}` : ''}`),
-  reconcileCcAuto: (data) => request('/api/v2/transactions/reconcile-auto', { method: 'POST', body: JSON.stringify(data || {}) }),
-  detectCcBillings: (data) => request('/api/v2/transactions/detect-cc-billings', { method: 'POST', body: JSON.stringify(data || {}) }),
-  getDetectedCcMerchants: () => request('/api/v2/transactions/detected-cc-merchants'),
+  getReconciliationCandidates: (txId, params) => request(`/api/transactions/${txId}/reconciliation-candidates${params?.minScore ? `?minScore=${params.minScore}` : ''}`),
+  reconcileCcAuto: (data) => request('/api/transactions/reconcile-auto', { method: 'POST', body: JSON.stringify(data || {}) }),
+  detectCcBillings: (data) => request('/api/transactions/detect-cc-billings', { method: 'POST', body: JSON.stringify(data || {}) }),
+  getDetectedCcMerchants: () => request('/api/transactions/detected-cc-merchants'),
 
   // Categories & Learning
   getCategories: (arg1, arg2) => {
@@ -143,7 +148,7 @@ export const api = {
   getCategoryRules: () => request('/api/categories/rules'),
   reclassifyAllTransactions: () => request('/api/categories/reclassify-all', { method: 'POST' }),
   aiSuggestCategory: (data) => request('/api/categories/ai-suggest', { method: 'POST', body: JSON.stringify(data) }),
-  aiClassifyTransaction: (id) => request(`/api/v2/transactions/${id}/ai-classify`, { method: 'POST' }),
+  aiClassifyTransaction: (id) => request(`/api/transactions/${id}/ai-classify`, { method: 'POST' }),
 
   // Review Queue
   getReviewQueue: (options = {}) => {
@@ -155,11 +160,11 @@ export const api = {
     } else if (options && options.tab) {
       tab = options.tab;
     }
-    return request(`/api/v2/transactions/review-queue?tab=${encodeURIComponent(tab)}`);
+    return request(`/api/transactions/review-queue?tab=${encodeURIComponent(tab)}`);
   },
   reviewTransaction: (id, payload) => {
     const body = typeof payload === 'string' ? { action: payload } : payload;
-    return request(`/api/v2/transactions/${id}/review`, { method: 'POST', body: JSON.stringify(body) });
+    return request(`/api/transactions/${id}/review`, { method: 'POST', body: JSON.stringify(body) });
   },
 
   // Analytics & Statistics
@@ -449,40 +454,40 @@ export const api = {
     }),
 
   // Receipts & Invoices
-  getReceipts: (txId) => request(`/api/v2/transactions/${txId}/receipts`),
+  getReceipts: (txId) => request(`/api/transactions/${txId}/receipts`),
   uploadReceipt: (txId, file) => {
     const formData = new FormData();
     formData.append('file', file);
-    return request(`/api/v2/transactions/${txId}/receipts`, {
+    return request(`/api/transactions/${txId}/receipts`, {
       method: 'POST',
       body: formData,
     });
   },
   analyzeReceiptUrl: (txId, url) =>
-    request(`/api/v2/transactions/${txId}/receipts/url`, {
+    request(`/api/transactions/${txId}/receipts/url`, {
       method: 'POST',
       body: JSON.stringify({ url }),
     }),
   deleteReceipt: (receiptId) =>
-    request(`/api/v2/transactions/receipts/${receiptId}`, { method: 'DELETE' }),
+    request(`/api/transactions/receipts/${receiptId}`, { method: 'DELETE' }),
   reanalyzeReceipt: (receiptId) =>
-    request(`/api/v2/transactions/receipts/${receiptId}/reanalyze`, { method: 'POST' }),
+    request(`/api/transactions/receipts/${receiptId}/reanalyze`, { method: 'POST' }),
   applyReceiptSplits: (txId, splits) =>
-    request(`/api/v2/transactions/${txId}/receipts/apply-splits`, {
+    request(`/api/transactions/${txId}/receipts/apply-splits`, {
       method: 'POST',
       body: JSON.stringify({ splits }),
     }),
   testGeminiApiKey: (apiKey) =>
-    request('/api/v2/transactions/receipts/test-ai', {
+    request('/api/transactions/receipts/test-ai', {
       method: 'POST',
       body: JSON.stringify({ apiKey }),
     }),
   moveReceipt: (receiptId, targetTransactionId) =>
-    request(`/api/v2/transactions/receipts/${receiptId}/move`, {
+    request(`/api/transactions/receipts/${receiptId}/move`, {
       method: 'POST',
       body: JSON.stringify({ targetTransactionId }),
     }),
-  getReceiptFileUrl: (filename) => `/api/v2/transactions/receipts/file/${encodeURIComponent(filename)}`,
+  getReceiptFileUrl: (filename) => `/api/transactions/receipts/file/${encodeURIComponent(filename)}`,
 };
 
 

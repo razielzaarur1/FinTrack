@@ -118,7 +118,15 @@ const updateAccountSchema = z.object({
   displayName: z.string().optional(),
   billingDay: z.coerce.number().int().min(1).max(31).optional(),
   balance: z.coerce.number().optional(),
+  initialBalance: z.coerce.number().optional(),
   accountNumber: z.string().optional(),
+  includeInExpenses: z.boolean().optional(),
+  isPrepaid: z.boolean().optional(),
+  prepaidMode: z.enum(['ignore_all', 'link_offset']).optional(),
+  discountPercentage: z.coerce.number().min(0).max(100).optional(),
+  showBalance: z.boolean().optional(),
+  enableMemoAmountParsing: z.boolean().nullable().optional(),
+  memoParsingScope: z.enum(['pending_only', 'all']).nullable().optional(),
 });
 
 function formatLocalYMD(d) {
@@ -293,6 +301,14 @@ export default async function accountsRoutes(fastify, options) {
            account_number AS "accountNumber",
            COALESCE(billing_day, 10)::INT AS "billingDay",
            COALESCE(balance, 0)::FLOAT AS balance,
+           COALESCE(initial_balance, 0)::FLOAT AS "initialBalance",
+           COALESCE(include_in_expenses, true) AS "includeInExpenses",
+           COALESCE(is_prepaid, false) AS "isPrepaid",
+           COALESCE(prepaid_mode, 'link_offset') AS "prepaidMode",
+           COALESCE(discount_percentage, 0)::FLOAT AS "discountPercentage",
+           COALESCE(show_balance, true) AS "showBalance",
+           enable_memo_amount_parsing AS "enableMemoAmountParsing",
+           memo_parsing_scope AS "memoParsingScope",
            'ILS' AS currency,
            is_active AS "isActive",
            last_scraped_at AS "lastScrapedAt",
@@ -444,6 +460,33 @@ export default async function accountsRoutes(fastify, options) {
               nextBillingDate: nextStr,
               prevBillingDate: prevStr,
             };
+          }
+
+          if (acc.isPrepaid) {
+            try {
+              const prepaidRes = await pool.query(
+                `SELECT
+                   COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0)::FLOAT AS "totalLoads",
+                   COALESCE(SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END), 0)::FLOAT AS "totalExpenses"
+                 FROM transactions
+                 WHERE account_id = $1`,
+                [acc.id]
+              );
+              const totalLoads = prepaidRes.rows[0]?.totalLoads || 0;
+              const totalExpenses = prepaidRes.rows[0]?.totalExpenses || 0;
+              const discountPercentage = parseFloat(acc.discountPercentage) || 0;
+              const effectiveLoaded = totalLoads * (1 + (discountPercentage / 100));
+              const calculatedBalance = Math.round(((parseFloat(acc.balance) || 0) + effectiveLoaded - totalExpenses) * 100) / 100;
+              return {
+                ...acc,
+                totalLoads,
+                effectiveLoaded,
+                totalExpenses,
+                calculatedBalance,
+                balance: calculatedBalance,
+                upcomingCharge: calculatedBalance,
+              };
+            } catch (_) {}
           }
 
           return {
@@ -666,25 +709,112 @@ export default async function accountsRoutes(fastify, options) {
       });
     }
 
-    const { displayName, billingDay, balance, accountNumber } = parseResult.data;
+    const {
+      displayName,
+      billingDay,
+      balance,
+      initialBalance,
+      accountNumber,
+      includeInExpenses,
+      isPrepaid,
+      prepaidMode,
+      discountPercentage,
+      showBalance,
+      enableMemoAmountParsing,
+      memoParsingScope,
+    } = parseResult.data;
+
     try {
-      const result = await pool.query(
-        `UPDATE bank_accounts
-         SET display_name = COALESCE($1, display_name),
-             billing_day = COALESCE($2, billing_day),
-             balance = COALESCE($3, balance),
-             account_number = COALESCE($4, account_number)
-         WHERE id = $5 AND user_id = $6
-         RETURNING id, user_id, bank_company, display_name, account_number AS "accountNumber", billing_day AS "billingDay", balance, is_active`,
-        [
-          displayName !== undefined ? displayName : null,
-          billingDay !== undefined ? billingDay : null,
-          balance !== undefined ? balance : null,
-          accountNumber !== undefined ? (accountNumber.trim() || null) : null,
-          id,
-          DEFAULT_USER_ID,
-        ]
-      );
+      const setClauses = [];
+      const values = [];
+
+      if (displayName !== undefined) {
+        values.push(displayName.trim() || null);
+        setClauses.push(`display_name = $${values.length}`);
+      }
+      if (billingDay !== undefined) {
+        values.push(billingDay);
+        setClauses.push(`billing_day = $${values.length}`);
+      }
+      if (initialBalance !== undefined) {
+        values.push(initialBalance);
+        setClauses.push(`initial_balance = $${values.length}`);
+      }
+      if (accountNumber !== undefined) {
+        values.push(accountNumber.trim() || null);
+        setClauses.push(`account_number = $${values.length}`);
+      }
+      if (includeInExpenses !== undefined) {
+        values.push(includeInExpenses);
+        setClauses.push(`include_in_expenses = $${values.length}`);
+      }
+      if (isPrepaid !== undefined) {
+        values.push(isPrepaid);
+        setClauses.push(`is_prepaid = $${values.length}`);
+      }
+      if (prepaidMode !== undefined) {
+        values.push(prepaidMode);
+        setClauses.push(`prepaid_mode = $${values.length}`);
+      }
+      if (discountPercentage !== undefined) {
+        values.push(discountPercentage);
+        setClauses.push(`discount_percentage = $${values.length}`);
+      }
+      if (showBalance !== undefined) {
+        values.push(showBalance);
+        setClauses.push(`show_balance = $${values.length}`);
+      }
+      if (enableMemoAmountParsing !== undefined) {
+        values.push(enableMemoAmountParsing);
+        setClauses.push(`enable_memo_amount_parsing = $${values.length}`);
+      }
+      if (memoParsingScope !== undefined) {
+        values.push(memoParsingScope);
+        setClauses.push(`memo_parsing_scope = $${values.length}`);
+      }
+      if (balance !== undefined) {
+        const accRow = await pool.query(
+          `SELECT is_prepaid, discount_percentage FROM bank_accounts WHERE id = $1`,
+          [id]
+        );
+        const isCardPrepaid = isPrepaid !== undefined ? isPrepaid : (accRow.rows[0]?.is_prepaid || false);
+        if (isCardPrepaid) {
+          const disc = discountPercentage !== undefined ? discountPercentage : (parseFloat(accRow.rows[0]?.discount_percentage) || 0);
+          const txRes = await pool.query(
+            `SELECT
+               COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0)::FLOAT AS "totalLoads",
+               COALESCE(SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END), 0)::FLOAT AS "totalExpenses"
+             FROM transactions WHERE account_id = $1`,
+            [id]
+          );
+          const tLoads = txRes.rows[0]?.totalLoads || 0;
+          const tExpenses = txRes.rows[0]?.totalExpenses || 0;
+          const effLoads = tLoads * (1 + (disc / 100));
+          const netDiff = effLoads - tExpenses;
+          const baseBalance = balance - netDiff;
+          values.push(baseBalance);
+          setClauses.push(`balance = $${values.length}, initial_balance = $${values.length}`);
+        } else {
+          values.push(balance);
+          setClauses.push(`balance = $${values.length}`);
+        }
+      }
+
+      if (setClauses.length === 0) {
+        return reply.status(400).send({ success: false, error: 'No fields to update' });
+      }
+
+      values.push(id, DEFAULT_USER_ID);
+      const query = `UPDATE bank_accounts
+         SET ${setClauses.join(', ')}
+         WHERE id = $${values.length - 1} AND user_id = $${values.length}
+         RETURNING id, user_id, bank_company, display_name, account_number AS "accountNumber",
+                   billing_day AS "billingDay", balance, initial_balance AS "initialBalance",
+                   include_in_expenses AS "includeInExpenses", is_prepaid AS "isPrepaid",
+                   prepaid_mode AS "prepaidMode", discount_percentage AS "discountPercentage",
+                   show_balance AS "showBalance", enable_memo_amount_parsing AS "enableMemoAmountParsing",
+                   memo_parsing_scope AS "memoParsingScope", is_active`;
+      const result = await pool.query(query, values);
 
       if (result.rowCount === 0) {
         return reply.status(404).send({ success: false, error: 'Account not found' });

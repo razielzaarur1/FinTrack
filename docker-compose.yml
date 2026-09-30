@@ -28,12 +28,15 @@ services:
         reservations:
           memory: 16m
 
-  # ── Web v2 Interface (Primary Frontend – internal only, accessed via Nginx) ─
+  # ── Web Interface (Primary Frontend – internal only, accessed via Nginx) ─
   web-v2:
     image: ghcr.io/razielzaarur1/fintrack-web-v2:latest
     container_name: finapp-web-v2
     networks:
-      - fintrack-net
+      fintrack-net:
+        aliases:
+          - web
+          - web-v2
     expose:
       - "3000"
     environment:

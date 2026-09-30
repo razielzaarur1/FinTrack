@@ -92,18 +92,23 @@ export function normalizeCategorySvg(rawSvg) {
     return ' stroke="currentColor"';
   });
 
-  // 9. Normalize stroke-width proportionally
-  svg = svg.replace(/\s*stroke-width\s*=\s*(['"]).*?\1/gi, ` stroke-width="${proportionalStroke}"`);
-  svg = svg.replace(/\s*stroke-linecap\s*=\s*(['"]).*?\1/gi, ' stroke-linecap="round"');
-  svg = svg.replace(/\s*stroke-linejoin\s*=\s*(['"]).*?\1/gi, ' stroke-linejoin="round"');
+  // 9. Normalize stroke attributes inside elements:
+  // If stroke-width is present on any inner element, normalize it proportionally
+  svg = svg.replace(/\bstroke-width\s*=\s*(['"]).*?\1/gi, `stroke-width="${proportionalStroke}"`);
+  svg = svg.replace(/\bstroke-linecap\s*=\s*(['"]).*?\1/gi, 'stroke-linecap="round"');
+  svg = svg.replace(/\bstroke-linejoin\s*=\s*(['"]).*?\1/gi, 'stroke-linejoin="round"');
 
   // 10. Clean root <svg> tag attributes:
   svg = svg.replace(/<svg\b([^>]*)>/i, (match, attrs) => {
     let cleanAttrs = attrs
-      .replace(/\s*width\s*=\s*(['"]).*?\1/gi, '')
-      .replace(/\s*height\s*=\s*(['"]).*?\1/gi, '')
+      // Strip standalone width and height only, without stripping stroke-width
+      .replace(/(?<![a-zA-Z-])width\s*=\s*(['"]).*?\1/gi, '')
+      .replace(/(?<![a-zA-Z-])height\s*=\s*(['"]).*?\1/gi, '')
       .replace(/\s*class\s*=\s*(['"]).*?\1/gi, '')
-      .replace(/\s*preserveAspectRatio\s*=\s*(['"]).*?\1/gi, '');
+      .replace(/\s*preserveAspectRatio\s*=\s*(['"]).*?\1/gi, '')
+      .replace(/\s*stroke-width\s*=\s*(['"]).*?\1/gi, '')
+      .replace(/\s*stroke-linecap\s*=\s*(['"]).*?\1/gi, '')
+      .replace(/\s*stroke-linejoin\s*=\s*(['"]).*?\1/gi, '');
 
     // Ensure viewBox exists
     if (!/viewBox/i.test(cleanAttrs)) {
@@ -113,9 +118,16 @@ export function normalizeCategorySvg(rawSvg) {
     // Ensure scalable responsive container attributes
     cleanAttrs += ' width="100%" height="100%" preserveAspectRatio="xMidYMid meet" style="max-width:100%;max-height:100%;display:block;"';
 
-    // Ensure stroke defaults if it was an outline icon without root attributes
-    if (!/stroke\s*=/i.test(cleanAttrs) && (!hasFills || hasStrokes)) {
-      cleanAttrs += ` stroke="currentColor" fill="none" stroke-width="${proportionalStroke}" stroke-linecap="round" stroke-linejoin="round"`;
+    // If it's not exclusively a solid fill icon, enforce outline stroke rules
+    const isSolidFillIcon = hasFills && !hasStrokes && !/stroke\s*=/i.test(cleanAttrs);
+    if (!isSolidFillIcon) {
+      if (!/stroke\s*=/i.test(cleanAttrs)) {
+        cleanAttrs += ' stroke="currentColor"';
+      }
+      if (!/fill\s*=/i.test(cleanAttrs)) {
+        cleanAttrs += ' fill="none"';
+      }
+      cleanAttrs += ` stroke-width="${proportionalStroke}" stroke-linecap="round" stroke-linejoin="round"`;
     }
 
     return `<svg${cleanAttrs}>`;

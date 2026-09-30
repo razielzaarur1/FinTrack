@@ -1,8 +1,8 @@
 {
-  "name": "fintrack-web-v2",
+  "name": "fintrack-web",
   "version": "2.0.0",
   "private": true,
-  "description": "FinTrack v2 - Frictionless Modern Personal Finance Web Application",
+  "description": "FinTrack - Frictionless Modern Personal Finance Web Application",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

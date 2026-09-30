@@ -66,7 +66,7 @@ function CategoryTransactionsDrawer({ categoryName, startDate, endDate, dateRang
     if (!categoryName) return;
     setLoading(true);
 
-    api.getTransactionsV2({
+    api.getTransactions({
       categories: targetCategoryList,
       startDate,
       endDate,

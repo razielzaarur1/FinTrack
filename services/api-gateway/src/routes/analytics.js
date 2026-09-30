@@ -53,10 +53,13 @@ export default async function analyticsRoutes(fastify, options) {
           END), 0) AS "totalExpense",
           COUNT(*) AS "transactionCount"
         FROM transactions t
+        JOIN bank_accounts a ON t.account_id = a.id
         LEFT JOIN categories c ON (t.category = c.name OR t.category = c.name_en)
         WHERE t.date >= $1 AND t.date <= $2 
           AND t.is_ignored = false
           AND (t.is_cc_billing = false OR t.is_cc_billing IS NULL)
+          AND (a.include_in_expenses IS NOT FALSE)
+          AND (a.is_prepaid = false OR a.prepaid_mode != 'ignore_all' OR a.prepaid_mode IS NULL)
       `;
       const txRes = await pool.query(txQuery, [startDate, endDate]);
       const income = parseFloat(txRes.rows[0].totalIncome);
@@ -99,6 +102,8 @@ export default async function analyticsRoutes(fastify, options) {
     const conditions = [
       't.is_ignored = false', 
       '(t.is_cc_billing = false OR t.is_cc_billing IS NULL)',
+      '(a.include_in_expenses IS NOT FALSE)',
+      '(a.is_prepaid = false OR a.prepaid_mode != \'ignore_all\' OR a.prepaid_mode IS NULL)',
       `t.date >= (CURRENT_DATE - INTERVAL '${monthsCount + 2} months')`
     ];
     const values = [];

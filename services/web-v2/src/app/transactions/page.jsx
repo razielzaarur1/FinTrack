@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback, useMemo, Suspense } from 'react';
+import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { 
   Search, 
@@ -28,7 +29,8 @@ import {
   EyeOff,
   Zap,
   ShieldAlert,
-  AlertCircle
+  AlertCircle,
+  Wallet
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { formatILS, formatDate, cleanSpacedHebrew, getTransactionTitle, formatCurrency, extractInstallmentInfo } from '@/lib/formatters';
@@ -38,6 +40,7 @@ import CategoryPicker from '@/components/common/CategoryPicker';
 import InstitutionLogo from '@/components/common/InstitutionLogo';
 import MultiSelectDropdown from '@/components/common/MultiSelectDropdown';
 import TransactionDrawer from '@/components/transactions/TransactionDrawer';
+import AddWalletTransactionModal from '@/components/transactions/AddWalletTransactionModal';
 import { CATEGORIES_DATA, getCategoryDetails } from '@/lib/categories';
 import { getFinancialMonthRange, getCurrentFinancialMonth, getPreviousFinancialMonth } from '@/lib/date-utils';
 
@@ -111,6 +114,7 @@ function TransactionsContent() {
   const [showFilters, setShowFilters] = useState(Boolean(initialAccountId || initStart || initEnd));
   const [selectedTx, setSelectedTx] = useState(null);
   const [selectMode, setSelectMode] = useState(false);
+  const [walletModalOpen, setWalletModalOpen] = useState(false);
 
   // Multi-selection state & banner
   const [selectedIds, setSelectedIds] = useState(new Set());
@@ -563,7 +567,7 @@ function TransactionsContent() {
         }
       }
 
-      const res = await api.getTransactionsV2({
+      const res = await api.getTransactions({
         limit: 30,
         cursor,
         cursorId,
@@ -662,20 +666,6 @@ function TransactionsContent() {
     }
   };
 
-  const handleExportCSV = () => {
-    if (transactions.length === 0) return;
-    const headers = ['Date,Merchant,Description,Category,Amount,Currency,Account\n'];
-    const rows = transactions.map((t) =>
-      `"${t.date}","${(t.userDescription || t.merchantName || '').replace(/"/g, '""')}","${(t.description || '').replace(/"/g, '""')}","${t.category || ''}",${t.amount},${t.currency},"${t.accountDisplayName || t.bankCompany}"`
-    );
-    const blob = new Blob([headers.join('') + rows.join('\n')], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `fintrack-transactions-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-  };
-
   return (
     <div className="space-y-5">
       {/* Sticky Banner when in Linking Mode */}
@@ -729,6 +719,16 @@ function TransactionsContent() {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Add Wallet Transaction Button */}
+          <button
+            onClick={() => setWalletModalOpen(true)}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+            title="???? ????? ????? ?????"
+          >
+            <Wallet className="w-3.5 h-3.5" />
+            <span>????? ????</span>
+          </button>
+
           {/* Select Mode Toggle Button */}
           <button
             onClick={() => {
@@ -756,13 +756,14 @@ function TransactionsContent() {
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-brand-primary' : ''}`} />
           </button>
 
-          <button
-            onClick={handleExportCSV}
+          <Link
+            href="/settings?tab=data"
             className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface hover:bg-dark-surface-elevated light:hover:bg-light-surface-elevated text-dark-text light:text-light-text text-xs font-semibold shadow-sm transition-colors"
+            title="ייצוא נתונים מתקדם וייבוא בהגדרות"
           >
-            <Download className="w-3.5 h-3.5" />
+            <Download className="w-3.5 h-3.5 text-brand-primary" />
             <span>{t('exportCSV')}</span>
-          </button>
+          </Link>
         </div>
       </div>
 
@@ -1292,6 +1293,16 @@ function TransactionsContent() {
                         {tx.isIgnored && (
                           <span className="px-1.5 py-0.2 rounded bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text-muted light:text-light-text-muted text-[10px] font-medium border border-dark-border light:border-light-border shrink-0" title="הוחרגה מתקציבים ודוחות">
                             הוחרגה
+                          </span>
+                        )}
+                        {tx.isExcludedFromExpenses && !tx.isIgnored && (
+                          <span className="px-1.5 py-0.2 rounded bg-slate-500/10 text-slate-400 text-[10px] font-medium border border-slate-500/20 shrink-0" title="כרטיס זה אינו נכלל בחישוב ההוצאות">
+                            לא מחושב
+                          </span>
+                        )}
+                        {tx.memoParsed && (
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded bg-purple-500/15 text-purple-400 text-[10px] font-medium border border-purple-500/25 shrink-0" title="סכום חולץ משדה ה-Memo">
+                            חולץ מ-Memo
                           </span>
                         )}
                         {tx.status === 'pending' && (

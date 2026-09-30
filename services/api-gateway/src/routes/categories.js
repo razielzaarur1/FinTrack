@@ -422,27 +422,23 @@ ${currentSvg || 'עיצוב קודם'}
         ? `2. "color": חובה להשתמש בדיוק בצבע של קטגוריית האב: "${parentColor}".`
         : `2. "color": קוד צבע HEX מודרני והרמוני המתאים לאופי הקטגוריה (למשל: ירוק #10b981 למזון/מכולת, כתום #f59e0b לאוכל/מסעדות, כחול #3b82f6 לדיור, סגול #8b5cf6 לרכב/תחבורה, אדום #ef4444 לבריאות, ורוד #ec4899 לקניות, ציאן #06b6d4 לחינוך, וכו').`;
 
-      const prompt = `אתה מומחה UX/UI ומעצב אייקונים מקצועי עבור אפליקציית FinTrack.
-המשתמש מגדיר קטגוריה פיננסית חדשה בעברית: "${cleanName}".${variationNote}
+      const prompt = `אתה מומחה UX/UI ומנהל קטלוג האייקונים עבור אפליקציית FinTrack.
+המשתמש מגדיר קטגוריה פיננסית בעברית: "${cleanName}".${variationNote}
+
+עליך לבחור אייקון מוכן, תקני ואיכותי מתוך ספריית Lucide Icons המוכרת (מעל 1,400 אייקונים).
+חשוב מאוד: אל תמציא צורות לא קשורות (למשל: לתרומה, צדקה או מעשר אל תבחר מתנה, אלא HeartHandshake או HandHeart או Coins או Landmark; לכושר וספורט בחר Dumbbell או Activity או Footprints; ללימודים בחר GraduationCap או BookOpen; לדיור וחשבונות בחר Home או Zap או Droplet וכו').
 
 עליך לספק:
-1. "nameEn": שם קצר, נקי ומדויק באנגלית (1-3 מילים, Capitalized).
+1. "nameEn": שם קצר ונקי באנגלית (1-3 מילים, Capitalized).
 ${colorRequirement}
-3. "customSvg": קוד SVG מלא, נקי ותקני בסגנון Lucide Icons:
-   - קוד יחיד בפורמט: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">...</svg>
-   - אל תוסיף width או height (המערכת שולטת בגודל).
-   - אל תוסיף inline styles או <style>.
-   - אל תוסיף מלבני רקע (<rect width="100%").
-   - צייר אייקון וקטורי מינימליסטי, גיאומטרי, נקי ואלגנטי בסגנון Lucide Icons מדויק על רשת של 24x24 תוך שימוש באלמנטים וקטוריים פשוטים (<path>, <circle>, <line>, <polyline>, <polygon>, <rect>).
-   - חשוב ביותר: הימנע לחלוטין מציור איברי גוף מורכבים כמו ידיים, אצבעות, כפות רגליים או פנים שעלולים להיראות מעוותים או לא מקצועיים! במקום זאת, השתמש תמיד בצורות גיאומטריות אלגנטיות, סמלים מטאפוריים מוכרים (כגון: לב, קופסת מתנה, מטבע, כוכב, מגן, מאזניים, גביע, עץ, בית וכו'). למשל עבור 'תרומה' השתמש בלב או מתנה ולא בציור יד.
-   - וודא שכל הקווים מחוברים כראוי, ללא עיוותים או קווים שבורים.
-4. "designConcept": תיאור קצר בעברית של מה האייקון מייצג (למשל: "משקולת כושר", "נעל ריצה", "ספל קפה", "מתנה עם לב").
+3. "iconName": שם האייקון המדויק מתוך ספריית Lucide ב-PascalCase (למשל: HeartHandshake, HandHeart, Heart, Dumbbell, Activity, Utensils, Coffee, ShoppingCart, ShoppingBag, Home, Building, Car, Fuel, Plane, GraduationCap, Briefcase, Laptop, CreditCard, Wallet, PiggyBank, Landmark, ShieldCheck, Wrench, Baby, Dog, Gift, Smile, Stethoscope, Pill, Sparkles, Tag).
+4. "designConcept": תיאור קצר בעברית של מה האייקון שנבחר מייצג (למשל: "לחיצת יד עם לב לתרומות וחסד", "משקולת כושר", "כובע אקדמי ללימודים").
 
 החזר אך ורק תשובת JSON תקנית במבנה:
 {
   "nameEn": "...",
   "color": "#...",
-  "customSvg": "<svg viewBox=\\"0 0 24 24\\" fill=\\"none\\" stroke=\\"currentColor\\" stroke-width=\\"2\\" stroke-linecap=\\"round\\" stroke-linejoin=\\"round\\">...</svg>",
+  "iconName": "...",
   "designConcept": "..."
 }`;
 
@@ -460,7 +456,7 @@ ${colorRequirement}
             model: modelName,
             generationConfig: {
               responseMimeType: 'application/json',
-              temperature: isVariation ? 0.75 : 0.2,
+              temperature: isVariation ? 0.7 : 0.2,
             },
           });
 
@@ -468,24 +464,21 @@ ${colorRequirement}
           const text = result.response.text();
           const parsed = JSON.parse(text);
 
-          if (parsed && parsed.nameEn && parsed.customSvg) {
-            let svgCode = parsed.customSvg.trim();
-            const svgMatch = svgCode.match(/<svg[\s\S]*?<\/svg>/i);
-            if (svgMatch) {
-              svgCode = svgMatch[0];
-            }
-
+          if (parsed && (parsed.iconName || parsed.customSvg || parsed.nameEn)) {
             const effectiveColor = hasValidParentColor
               ? parentColor
               : (parsed.color || '#6366f1');
 
-            return reply.code(200).send({
+            return reply.send({
               success: true,
-              nameEn: parsed.nameEn,
-              color: effectiveColor,
-              customSvg: svgCode,
-              designConcept: parsed.designConcept || '',
-              modelUsed: modelName,
+              data: {
+                nameEn: parsed.nameEn || '',
+                color: effectiveColor,
+                iconName: parsed.iconName || 'Tag',
+                customSvg: parsed.customSvg || '',
+                designConcept: parsed.designConcept || '',
+                modelUsed: modelName,
+              },
             });
           }
         } catch (genErr) {

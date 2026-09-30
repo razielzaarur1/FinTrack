@@ -6,6 +6,7 @@ import { logger } from './logger.js';
 import { decryptCredentials } from './crypto.js';
 import { requestOtp } from './notifier-client.js';
 import { classifyScrapedTx, isCcBillingPattern } from './classifier.js';
+import { parseAmountFromMemo } from './memo-amount-parser.js';
 
 // Support both ESM and CJS exports from israeli-bank-scrapers
 const scrapersModule =
@@ -338,6 +339,14 @@ async function saveTransactionsList(client, accountId, transactions, userId = '0
       amount = chargedNum;
     } else if (!isNaN(origNum)) {
       amount = origNum;
+    }
+
+    // If amount is 0 or missing, check memo for amount
+    if (amount === 0 && tx.memo) {
+      const parsedFromMemo = parseAmountFromMemo(tx.memo);
+      if (parsedFromMemo && parsedFromMemo.amount) {
+        amount = parsedFromMemo.amount;
+      }
     }
     
     let merchantName = cleanSpacedHebrew((tx.description || tx.memo || '').trim()) || 'בית עסק';

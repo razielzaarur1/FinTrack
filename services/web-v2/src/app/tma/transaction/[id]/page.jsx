@@ -634,6 +634,12 @@ export default function TmaTransactionPage() {
     }
   };
 
+  const handleTabsWheel = (e) => {
+    if (e.deltaY !== 0) {
+      e.currentTarget.scrollBy({ left: -e.deltaY, behavior: 'auto' });
+    }
+  };
+
   const toggleTheme = () => {
     const next = !isLightMode;
     setIsLightMode(next);
@@ -801,7 +807,10 @@ export default function TmaTransactionPage() {
             </div>
 
             {/* Tab Selector Bar (All 7 TransactionDrawer tabs) */}
-            <div className="flex border-b border-dark-border light:border-light-border px-3 gap-1 text-xs font-medium overflow-x-auto no-scrollbar select-none sticky top-[73px] backdrop-blur-md z-10 transition-colors bg-dark-surface/95 light:bg-light-surface/95">
+            <div
+              onWheel={handleTabsWheel}
+              className="flex border-b border-dark-border light:border-light-border px-3 gap-1 text-xs font-medium overflow-x-auto no-scrollbar select-none sticky top-[73px] backdrop-blur-md z-10 transition-colors bg-dark-surface/95 light:bg-light-surface/95"
+            >
               <button
                 type="button"
                 onClick={() => setActiveTab('details')}

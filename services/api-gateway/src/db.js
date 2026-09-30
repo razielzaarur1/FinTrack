@@ -400,6 +400,14 @@ async function ensureSchema() {
 
           -- 12. Alterations & Migrations
           ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS billing_day INT DEFAULT 10;
+          ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS include_in_expenses BOOLEAN NOT NULL DEFAULT true;
+          ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS is_prepaid BOOLEAN NOT NULL DEFAULT false;
+          ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS prepaid_mode VARCHAR(50) NOT NULL DEFAULT 'link_offset';
+          ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS discount_percentage NUMERIC(6, 2) NOT NULL DEFAULT 0.00;
+          ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS show_balance BOOLEAN NOT NULL DEFAULT true;
+          ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS initial_balance NUMERIC(14, 2) NOT NULL DEFAULT 0.00;
+          ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS enable_memo_amount_parsing BOOLEAN DEFAULT NULL;
+          ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS memo_parsing_scope VARCHAR(50) DEFAULT NULL;
           ALTER TABLE transactions ADD COLUMN IF NOT EXISTS processed_date DATE;
           ALTER TABLE transactions ADD COLUMN IF NOT EXISTS is_manual_category BOOLEAN NOT NULL DEFAULT false;
           ALTER TABLE transactions ADD COLUMN IF NOT EXISTS is_reviewed BOOLEAN NOT NULL DEFAULT false;
