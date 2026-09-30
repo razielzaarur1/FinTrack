@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { pool } from '../db.js';
 import { saveUserRule, classifyTransaction } from '../services/classifier.js';
 import { classifyWithAi } from '../services/ai-classifier.js';
-import { verifyTmaToken, verifyTelegramWebAppData } from '../crypto.js';
+import { verifyTmaToken, verifyTelegramWebAppData, encryptCredentials } from '../crypto.js';
 import { analyzeReceiptFile, analyzeReceiptUrl } from '../services/ai-analyzer.js';
 import { calculateFxDetails } from '../services/exchange-rates.js';
 import {

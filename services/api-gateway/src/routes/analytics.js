@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { pool } from '../db.js';
-import { cleanSpacedHebrew } from './transactions-v2.js';
+import { cleanSpacedHebrew } from './transactions.js';
 import { 
   getSystemMonthStartDay, 
   getFinancialMonthBounds, 
