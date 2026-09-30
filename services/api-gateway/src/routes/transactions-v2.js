@@ -379,6 +379,16 @@ export default async function transactionsV2Routes(fastify, options) {
   autoLinkInstallmentTransactions(pool).catch(() => {});
   consolidatePendingTransactions(pool).catch(() => {});
 
+  // Run initial CC billing detection and auto-reconciliation in the background
+  (async () => {
+    try {
+      await detectAndTagCcBillings(pool, '00000000-0000-0000-0000-000000000001');
+      await runAutoReconciliation(pool, '00000000-0000-0000-0000-000000000001');
+    } catch (e) {
+      console.warn('[AutoReconcile Initial] Non-critical warning:', e.message);
+    }
+  })().catch(() => {});
+
   // GET /api/v2/transactions - Cursor-based Infinite Scroll Transactions with rich multi-filters
   fastify.get('/', async (request, reply) => {
     await preflightTxV2Check().catch(() => {});
@@ -1957,24 +1967,100 @@ async function ensureFeeColumnsExist(pool) {
     let minScore = request.query.minScore ? parseInt(request.query.minScore, 10) : undefined;
     const daysWindow = request.query.daysWindow ? parseInt(request.query.daysWindow, 10) : 45;
 
-    // Load minScore from settings if not explicitly passed
-    if (minScore === undefined || isNaN(minScore)) {
-      try {
-        const settingsRes = await pool.query(
-          `SELECT settings FROM system_settings WHERE user_id = '00000000-0000-0000-0000-000000000001'`
-        );
-        const settings = settingsRes.rows[0]?.settings || {};
+    let autoReconcileCcEnabled = true;
+    let ccAutoScoreThreshold = 85;
+
+    // Load minScore and autoReconcile settings
+    try {
+      const settingsRes = await pool.query(
+        `SELECT settings FROM system_settings WHERE user_id = '00000000-0000-0000-0000-000000000001'`
+      );
+      const settings = settingsRes.rows[0]?.settings || {};
+      if (minScore === undefined || isNaN(minScore)) {
         minScore = typeof settings.ccManualScoreThreshold === 'number' 
           ? settings.ccManualScoreThreshold 
           : (typeof settings.reconciliationMinScore === 'number' ? settings.reconciliationMinScore : 35);
-      } catch {
-        minScore = 35;
       }
+      if (settings.autoReconcileCcEnabled !== undefined) {
+        autoReconcileCcEnabled = Boolean(settings.autoReconcileCcEnabled);
+      }
+      if (typeof settings.ccAutoScoreThreshold === 'number') {
+        ccAutoScoreThreshold = settings.ccAutoScoreThreshold;
+      }
+    } catch {
+      if (minScore === undefined || isNaN(minScore)) minScore = 35;
     }
 
     try {
       const candidates = await findMatchesForTransaction(pool, id, { minScore, daysWindow });
-      return reply.code(200).send({ data: candidates, minScore });
+
+      let autoLinked = false;
+      let linkedCandidate = null;
+
+      // If auto-reconciliation is active, check if target transaction is currently unlinked
+      if (autoReconcileCcEnabled && candidates.length > 0) {
+        const linkCheck = await pool.query(
+          `SELECT 1 FROM transaction_links tl WHERE tl.transaction_id_a = $1 OR tl.transaction_id_b = $1`,
+          [id]
+        );
+
+        if (linkCheck.rows.length === 0) {
+          const eligibleMatches = candidates.filter(
+            (c) => c.eligibleForAutoLink && !c.isAlreadyLinked && c.score >= ccAutoScoreThreshold
+          );
+
+          if (eligibleMatches.length > 0) {
+            const best = eligibleMatches[0];
+            let isAmbiguous = false;
+            if (eligibleMatches.length > 1) {
+              const secondBest = eligibleMatches[1];
+              if (
+                Math.abs(best.score - secondBest.score) < 5 &&
+                Math.abs(parseFloat(best.amount) - parseFloat(secondBest.amount)) < 0.01
+              ) {
+                isAmbiguous = true;
+              }
+            }
+
+            if (!isAmbiguous) {
+              await pool.query(`
+                INSERT INTO transaction_links (transaction_id_a, transaction_id_b, link_type, note, created_at)
+                VALUES ($1, $2, 'cc_billing_match', $3, NOW())
+                ON CONFLICT (transaction_id_a, transaction_id_b) DO NOTHING
+              `, [id, best.candidate.id, `התאמה אוטומטית (${best.score}%)`]);
+
+              // Ensure CC billing on checking account side is marked is_cc_billing and is_ignored
+              const targetRes = await pool.query(
+                `SELECT t.id, t.merchant_name, t.description, b.bank_company 
+                 FROM transactions t 
+                 JOIN bank_accounts b ON t.account_id = b.id 
+                 WHERE t.id = $1`,
+                [id]
+              );
+              const targetRow = targetRes.rows[0];
+              if (targetRow && !['max', 'cal', 'isracard', 'amex'].includes(targetRow.bank_company?.toLowerCase())) {
+                await pool.query(`UPDATE transactions SET is_cc_billing = true, is_ignored = true WHERE id = $1`, [id]);
+              } else if (!['max', 'cal', 'isracard', 'amex'].includes(best.bankCompany?.toLowerCase())) {
+                await pool.query(`UPDATE transactions SET is_cc_billing = true, is_ignored = true WHERE id = $1`, [best.candidate.id]);
+              }
+
+              autoLinked = true;
+              linkedCandidate = best;
+            }
+          }
+        }
+      }
+
+      const returnedCandidates = autoLinked
+        ? candidates.filter((c) => (c.candidate?.id || c.id) !== linkedCandidate.candidate.id)
+        : candidates;
+
+      return reply.code(200).send({
+        data: returnedCandidates,
+        minScore,
+        autoLinked,
+        linkedCandidate,
+      });
     } catch (err) {
       fastify.log.error(err, 'Failed to find reconciliation candidates');
       return reply.code(500).send({ error: 'Database error' });

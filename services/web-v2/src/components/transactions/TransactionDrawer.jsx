@@ -149,6 +149,13 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
         setMinScoreThreshold(res.data.minScore);
       }
       setCandidates(list);
+      if (res.data?.autoLinked) {
+        fetchLinks(txId);
+        onUpdate?.();
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('fintrack_tx_updated'));
+        }
+      }
     } catch {
       setCandidates([]);
     } finally {
@@ -1095,9 +1102,19 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
                             <span className={`px-2 py-0.5 rounded-full font-medium text-[10px] ${
                               lnk.linkType === 'installment'
                                 ? 'bg-indigo-500/20 text-indigo-400 font-bold'
+                                : lnk.linkType === 'cc_billing_match'
+                                ? 'bg-emerald-500/20 text-emerald-400 font-bold'
                                 : 'bg-brand-primary/20 text-brand-primary'
                             }`}>
-                              {lnk.linkType === 'refund' ? 'זיכוי' : lnk.linkType === 'correction' ? 'תיקון' : lnk.linkType === 'installment' ? 'תשלום בעסקה 💳' : 'קשורה'}
+                              {lnk.linkType === 'refund'
+                                ? 'זיכוי'
+                                : lnk.linkType === 'correction'
+                                ? 'תיקון'
+                                : lnk.linkType === 'installment'
+                                ? 'תשלום בעסקה 💳'
+                                : lnk.linkType === 'cc_billing_match'
+                                ? 'חיוב אשראי 💳'
+                                : 'קשורה'}
                             </span>
                             <button
                               onClick={() => handleUnlink(lnk.linkId)}

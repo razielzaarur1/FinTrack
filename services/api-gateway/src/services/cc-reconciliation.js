@@ -32,6 +32,12 @@ export const KNOWN_CC_PATTERNS = [
   'חיוב מועדון',
   'חיוב חשבון כרטיס',
   'direct debit',
+  'כ.אשראי',
+  'הו"ק כ.אשראי',
+  'הוראת קבע כ.אשראי',
+  'חיוב כ.אשראי',
+  'ח-ן כרטיס',
+  'כרטיסי אשראי',
 ];
 
 /**
@@ -110,8 +116,19 @@ export function calculateReconciliationScore(bankTx, candTx) {
 
   // 2. Date Proximity Score (up to 20 points)
   // Identify bank billing transaction vs candidate card transaction
-  const aIsBilling = Boolean(bankTx.isCcBilling || bankTx.category === 'חיוב אשראי');
-  const bIsBilling = Boolean(candTx.isCcBilling || candTx.category === 'חיוב אשראי');
+  const aIsCardCompany = ['max', 'cal', 'isracard', 'amex'].includes(bankTx.bankCompany?.toLowerCase());
+  const bIsCardCompany = ['max', 'cal', 'isracard', 'amex'].includes(candTx.bankCompany?.toLowerCase());
+
+  const aIsBilling = Boolean(
+    bankTx.isCcBilling ||
+    bankTx.category === 'חיוב אשראי' ||
+    (!aIsCardCompany && isCcBillingPattern(`${bankTx.merchantName || ''} ${bankTx.description || ''}`))
+  );
+  const bIsBilling = Boolean(
+    candTx.isCcBilling ||
+    candTx.category === 'חיוב אשראי' ||
+    (!bIsCardCompany && isCcBillingPattern(`${candTx.merchantName || ''} ${candTx.description || ''}`))
+  );
 
   let bankDate, cardDate;
   if (aIsBilling && !bIsBilling) {
@@ -206,7 +223,11 @@ export async function findMatchesForTransaction(pool, txId, options = {}) {
            t.merchant_name AS "merchantName", t.description, t.category,
            t.user_description AS "userDescription",
            t.is_cc_billing AS "isCcBilling",
-           b.bank_company AS "bankCompany", b.display_name AS "accountDisplayName"
+           b.bank_company AS "bankCompany", b.display_name AS "accountDisplayName",
+           EXISTS (
+             SELECT 1 FROM transaction_links tl 
+             WHERE tl.transaction_id_a = t.id OR tl.transaction_id_b = t.id
+           ) AS "isAlreadyLinked"
     FROM transactions t
     JOIN bank_accounts b ON t.account_id = b.id
     WHERE t.id != $1
@@ -223,6 +244,7 @@ export async function findMatchesForTransaction(pool, txId, options = {}) {
   const candidates = [];
   for (const cand of candRes.rows) {
     const match = calculateReconciliationScore(target, cand);
+    const eligibleForAutoLink = match.eligibleForAutoLink && !cand.isAlreadyLinked;
     if (match.score >= minScore) {
       candidates.push({
         ...cand,
@@ -239,7 +261,8 @@ export async function findMatchesForTransaction(pool, txId, options = {}) {
         amountDiff: match.diffAmount,
         diffDays: match.diffDays,
         dateDiffDays: match.diffDays,
-        eligibleForAutoLink: match.eligibleForAutoLink,
+        isAlreadyLinked: Boolean(cand.isAlreadyLinked),
+        eligibleForAutoLink,
         candidate: cand,
       });
     }
@@ -257,10 +280,18 @@ export async function findMatchesForTransaction(pool, txId, options = {}) {
 export async function runAutoReconciliation(pool, userId, options = {}) {
   const threshold = options.autoThreshold ?? 85;
 
-  // 1. Fetch unlinked CC billing transactions
+  // 1. Ensure all CC billings on bank checking accounts are tagged first
+  try {
+    await detectAndTagCcBillings(pool, userId);
+  } catch (err) {
+    // Non-fatal
+  }
+
+  // 2. Fetch unlinked CC billing transactions
   const billingsRes = await pool.query(`
     SELECT t.id, t.account_id AS "accountId", t.date, t.amount, t.currency,
-           t.merchant_name AS "merchantName", t.description, t.category
+           t.merchant_name AS "merchantName", t.description, t.category,
+           b.bank_company AS "bankCompany"
     FROM transactions t
     JOIN bank_accounts b ON t.account_id = b.id
     WHERE b.user_id = $1
@@ -274,21 +305,52 @@ export async function runAutoReconciliation(pool, userId, options = {}) {
 
   let linkedCount = 0;
   const client = await pool.connect();
+  const linkedTxIds = new Set();
 
   try {
     for (const bTx of billingsRes.rows) {
+      if (linkedTxIds.has(bTx.id)) continue;
+
       const matches = await findMatchesForTransaction(pool, bTx.id, { minScore: threshold });
-      // Filter strictly for exact amount matches
-      const bestExact = matches.find((m) => m.eligibleForAutoLink);
-      if (bestExact) {
-        // Link them
-        await client.query(`
-          INSERT INTO transaction_links (transaction_id_a, transaction_id_b, link_type, note, created_at)
-          VALUES ($1, $2, 'cc_billing_match', $3, NOW())
-          ON CONFLICT (transaction_id_a, transaction_id_b) DO NOTHING
-        `, [bTx.id, bestExact.candidate.id, `התאמה אוטומטית בדיוק סכום (${bestExact.score}%)`]);
-        linkedCount++;
+      
+      // Filter strictly for exact amount matches that are not already linked in this or another link
+      const eligibleMatches = matches.filter(
+        (m) => m.eligibleForAutoLink && !m.isAlreadyLinked && !linkedTxIds.has(m.candidate.id)
+      );
+
+      if (eligibleMatches.length === 0) continue;
+
+      const best = eligibleMatches[0];
+
+      // Ambiguity check: if multiple candidates have the same exact amount and top score,
+      // do not arbitrarily link if they are equally good
+      if (eligibleMatches.length > 1) {
+        const secondBest = eligibleMatches[1];
+        if (
+          Math.abs(best.score - secondBest.score) < 5 &&
+          Math.abs(parseFloat(best.amount) - parseFloat(secondBest.amount)) < 0.01
+        ) {
+          continue; // ambiguous, leave for manual confirmation
+        }
       }
+
+      // Link them
+      await client.query(`
+        INSERT INTO transaction_links (transaction_id_a, transaction_id_b, link_type, note, created_at)
+        VALUES ($1, $2, 'cc_billing_match', $3, NOW())
+        ON CONFLICT (transaction_id_a, transaction_id_b) DO NOTHING
+      `, [bTx.id, best.candidate.id, `התאמה אוטומטית (${best.score}%)`]);
+
+      // Ensure bank billing transaction is marked as is_cc_billing and is_ignored
+      await client.query(`
+        UPDATE transactions
+        SET is_cc_billing = true, is_ignored = true
+        WHERE id = $1
+      `, [bTx.id]);
+
+      linkedTxIds.add(bTx.id);
+      linkedTxIds.add(best.candidate.id);
+      linkedCount++;
     }
   } finally {
     client.release();
@@ -304,6 +366,22 @@ export async function runAutoReconciliation(pool, userId, options = {}) {
 export async function detectAndTagCcBillings(pool, userId, userPatterns = []) {
   const client = await pool.connect();
   try {
+    let patterns = Array.isArray(userPatterns) ? [...userPatterns] : [];
+    if (patterns.length === 0) {
+      try {
+        const settingsRes = await client.query(
+          `SELECT settings FROM system_settings WHERE user_id = $1`,
+          [userId]
+        );
+        const settings = settingsRes.rows[0]?.settings || {};
+        if (Array.isArray(settings.ccBillingPatterns)) {
+          patterns = settings.ccBillingPatterns;
+        }
+      } catch {
+        // Ignore settings query error
+      }
+    }
+
     // 1. Find potential CC billings in bank checking accounts
     const candidatesRes = await client.query(`
       SELECT t.id, t.merchant_name, t.description, t.amount, t.is_ignored, t.category, b.bank_company
@@ -316,7 +394,7 @@ export async function detectAndTagCcBillings(pool, userId, userPatterns = []) {
 
     let taggedCount = 0;
     for (const tx of candidatesRes.rows) {
-      const match = isCcBillingPattern(`${tx.merchant_name || ''} ${tx.description || ''}`, userPatterns);
+      const match = isCcBillingPattern(`${tx.merchant_name || ''} ${tx.description || ''}`, patterns);
       if (match) {
         await client.query(`
           UPDATE transactions

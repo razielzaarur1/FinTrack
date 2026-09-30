@@ -5,7 +5,7 @@ import israeliBankScrapersPkg from 'israeli-bank-scrapers';
 import { logger } from './logger.js';
 import { decryptCredentials } from './crypto.js';
 import { requestOtp } from './notifier-client.js';
-import { classifyScrapedTx } from './classifier.js';
+import { classifyScrapedTx, isCcBillingPattern } from './classifier.js';
 
 // Support both ESM and CJS exports from israeli-bank-scrapers
 const scrapersModule =
@@ -298,10 +298,12 @@ export function generateTransactionExternalId(accountId, tx, occurrenceIndex = 0
   return `tx_${dateStr}_${hash}`;
 }
 
-async function saveTransactionsList(client, accountId, transactions, userId = '00000000-0000-0000-0000-000000000001') {
+async function saveTransactionsList(client, accountId, transactions, userId = '00000000-0000-0000-0000-000000000001', bankCompany = '') {
   if (!transactions || transactions.length === 0) {
     return { inserted: 0, total: 0 };
   }
+
+  const isBankChecking = !['max', 'cal', 'isracard', 'amex'].includes(bankCompany?.toLowerCase());
 
   // Sort transactions deterministically so occurrence indices for same-day duplicates are stable across scrapes
   const sortedTransactions = [...transactions].sort((a, b) => {
@@ -353,13 +355,17 @@ async function saveTransactionsList(client, accountId, transactions, userId = '0
 
     const externalId = generateTransactionExternalId(accountId, tx, occIndex);
 
+    const isCcBilling = Boolean(isBankChecking && isCcBillingPattern(`${merchantName} ${description}`));
+    const isIgnored = isCcBilling;
+
     // Auto-classify using the 3-tier hierarchy: User rules -> Scraper Category -> Israeli Merchant KB
-    const category = await classifyScrapedTx(client, {
+    const category = isCcBilling ? 'חיוב אשראי' : await classifyScrapedTx(client, {
       userId,
       merchantName,
       description,
       rawCategory: tx.category,
       amount,
+      isBankChecking,
     });
 
     const status = tx.status || 'completed';
@@ -507,7 +513,9 @@ async function saveTransactionsList(client, accountId, transactions, userId = '0
                 ELSE $8 
               END,
               category = COALESCE(transactions.category, $9),
-              raw_data = $10
+              raw_data = $10,
+              is_cc_billing = CASE WHEN $12 = true THEN true ELSE transactions.is_cc_billing END,
+              is_ignored = CASE WHEN $12 = true THEN true ELSE transactions.is_ignored END
             WHERE id = $11
             RETURNING id;
           `;
@@ -523,6 +531,7 @@ async function saveTransactionsList(client, accountId, transactions, userId = '0
             category,
             rawData,
             matchedPendingId,
+            isCcBilling,
           ]);
 
           if (updateRes.rowCount > 0) {
@@ -547,8 +556,8 @@ async function saveTransactionsList(client, accountId, transactions, userId = '0
     const insertQuery = `
       INSERT INTO transactions (
         account_id, external_id, date, processed_date, amount, currency, description,
-        merchant_name, category, status, raw_data, is_notified, created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, false, NOW())
+        merchant_name, category, status, raw_data, is_notified, is_cc_billing, is_ignored, created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, false, $12, $13, NOW())
       ON CONFLICT (account_id, external_id) DO UPDATE SET
         amount = CASE WHEN transactions.amount = 0 OR transactions.amount IS NULL THEN EXCLUDED.amount ELSE transactions.amount END,
         date = EXCLUDED.date,
@@ -557,7 +566,9 @@ async function saveTransactionsList(client, accountId, transactions, userId = '0
         category = COALESCE(transactions.category, EXCLUDED.category),
         status = EXCLUDED.status,
         processed_date = COALESCE(EXCLUDED.processed_date, transactions.processed_date),
-        raw_data = EXCLUDED.raw_data
+        raw_data = EXCLUDED.raw_data,
+        is_cc_billing = CASE WHEN EXCLUDED.is_cc_billing = true THEN true ELSE transactions.is_cc_billing END,
+        is_ignored = CASE WHEN EXCLUDED.is_cc_billing = true THEN true ELSE transactions.is_ignored END
       RETURNING id;
     `;
 
@@ -573,6 +584,8 @@ async function saveTransactionsList(client, accountId, transactions, userId = '0
       category,
       status,
       rawData,
+      isCcBilling,
+      isIgnored,
     ]);
 
     if (res.rowCount > 0) {
@@ -706,7 +719,7 @@ async function persistScrapedAccounts(pool, primaryAccountId, scrapedAccounts, t
       );
 
       // Save transactions for targetDbAccountId with auto-classification
-      const saveRes = await saveTransactionsList(client, targetDbAccountId, cardTxns, user_id);
+      const saveRes = await saveTransactionsList(client, targetDbAccountId, cardTxns, user_id, targetBank || bank_company);
 
       // Deduplicate any exact identical transactions in this account that might have been created by older versions
       await client.query(

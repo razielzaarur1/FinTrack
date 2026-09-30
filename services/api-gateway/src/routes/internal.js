@@ -1,6 +1,7 @@
 import { pool, getAccountsForScraping } from '../db.js';
 import { processPendingNotifications } from '../services/notifications.js';
 import { consolidatePendingTransactions } from '../services/transactions-consolidator.js';
+import { detectAndTagCcBillings, runAutoReconciliation } from '../services/cc-reconciliation.js';
 
 const DEFAULT_USER_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -73,9 +74,39 @@ export default async function internalRoutes(fastify, options) {
         fastify.log.info(`[Consolidator] Auto-merged ${mergeStats.mergedCount} pending duplicates into completed transactions.`);
       }
 
+      // Automatically detect and tag credit card billings on bank accounts
+      fastify.log.info('[Reconciliation] Detecting CC billings...');
+      let tagStats = { taggedCount: 0 };
+      try {
+        tagStats = await detectAndTagCcBillings(pool, DEFAULT_USER_ID);
+        fastify.log.info(`[Reconciliation] Tagged ${tagStats.taggedCount} CC billing transactions.`);
+      } catch (tagErr) {
+        fastify.log.warn({ err: tagErr.message }, '[Reconciliation] Failed to tag CC billings');
+      }
+
+      // Automatically run auto-reconciliation for exact matches
+      let reconcileStats = { linkedCount: 0 };
+      try {
+        const settingsRes = await pool.query(
+          `SELECT settings FROM system_settings WHERE user_id = $1`,
+          [DEFAULT_USER_ID]
+        );
+        const settings = settingsRes.rows[0]?.settings || {};
+        const autoReconcileEnabled = settings.autoReconcileCcEnabled !== false;
+        const autoThreshold = settings.ccAutoScoreThreshold || 85;
+
+        if (autoReconcileEnabled) {
+          fastify.log.info(`[Reconciliation] Running auto-reconciliation (threshold ${autoThreshold}%)...`);
+          reconcileStats = await runAutoReconciliation(pool, DEFAULT_USER_ID, { autoThreshold });
+          fastify.log.info(`[Reconciliation] Auto-linked ${reconcileStats.linkedCount} transactions.`);
+        }
+      } catch (recErr) {
+        fastify.log.warn({ err: recErr.message }, '[Reconciliation] Failed to run auto-reconciliation');
+      }
+
       fastify.log.info('Triggering real-time notification engine...');
       const result = await processPendingNotifications(fastify.log);
-      return reply.code(200).send({ success: true, mergeStats, result });
+      return reply.code(200).send({ success: true, mergeStats, tagStats, reconcileStats, result });
     } catch (err) {
       fastify.log.error(err, 'Failed to process post-scrape tasks');
       return reply.code(500).send({ error: 'Internal Server Error' });

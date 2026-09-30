@@ -48,6 +48,47 @@ export const ISRAELI_MERCHANTS_KB = [
   { regex: /(ביט|bit|פייבוקס|paybox|pepper|פפר)/i, main: 'שירותים פיננסיים', sub: 'עמלות' },
 ];
 
+export const KNOWN_CC_PATTERNS = [
+  'ישראכרט',
+  'כרטיסי אשראי לישראל',
+  'כאל',
+  'cal',
+  'מקס',
+  'max',
+  'לאומי קארד',
+  'ויזה',
+  'אמריקן אקספרס',
+  'דיינרס',
+  'isracard',
+  'american express',
+  'diners',
+  'חיוב כרטיס',
+  'הוראת קבע כרטיס',
+  'חיוב כרטיסי אשראי',
+  'כרטיס חיוב',
+  'הו"ק כרטיס',
+  'מקס איט פיננסים',
+  'cal - כרטיסי אשראי',
+  'חיוב מועדון',
+  'חיוב חשבון כרטיס',
+  'direct debit',
+  'כ.אשראי',
+  'הו"ק כ.אשראי',
+  'הוראת קבע כ.אשראי',
+  'חיוב כ.אשראי',
+  'ח-ן כרטיס',
+  'כרטיסי אשראי',
+];
+
+export function isCcBillingPattern(text) {
+  if (!text || typeof text !== 'string') return false;
+  const clean = text.trim().toLowerCase();
+  for (const p of KNOWN_CC_PATTERNS) {
+    if (clean.includes(p.toLowerCase())) return true;
+  }
+  return false;
+}
+
 export function isCashWithdrawal(merchantName = '', description = '') {
   const text = `${merchantName} ${description}`.toLowerCase();
   // Protect credit card charges, wire transfers, bank debits and fees from cash withdrawal detection
@@ -80,10 +121,16 @@ export async function classifyScrapedTx(client, {
   description = '',
   rawCategory = '',
   amount = 0,
+  isBankChecking = false,
 }) {
   const cleanMerchant = (merchantName || '').trim();
   const cleanDesc = (description || '').trim();
   const searchString = `${cleanMerchant} ${cleanDesc}`.trim();
+
+  // Bank account credit card debits (e.g. "מקס איט פיננסים", "ישראכרט") -> 'חיוב אשראי'
+  if (isBankChecking && isCcBillingPattern(searchString)) {
+    return 'חיוב אשראי';
+  }
 
   if (isCashWithdrawal(cleanMerchant, cleanDesc)) {
     return 'משיכת מזומן';
