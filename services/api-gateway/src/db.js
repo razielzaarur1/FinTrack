@@ -235,6 +235,83 @@ export async function seedCategories(dbClient, userId = '00000000-0000-0000-0000
 }
 
 /**
+ * Ensures category 'שונות' and subcategories 'חיוב אשראי' and 'ללא סיווג'
+ * are always present, active, and visible in user's category tree and selectors.
+ */
+export async function ensureVisibleMiscCategory(dbClient, userId = '00000000-0000-0000-0000-000000000001') {
+  try {
+    // 1. Ensure root category 'שונות'
+    let rootRes = await dbClient.query(
+      `SELECT id, is_active FROM categories 
+       WHERE user_id = $1 AND name = 'שונות' AND parent_id IS NULL 
+       LIMIT 1`,
+      [userId]
+    );
+
+    let rootId;
+    if (rootRes.rows.length === 0) {
+      const insRes = await dbClient.query(
+        `INSERT INTO categories (
+           user_id, name, name_en, type, color, icon, is_system, is_active, sort_order
+         ) VALUES ($1, 'שונות', 'Misc', 'expense', '#64748b', 'MoreHorizontal', true, true, 99)
+         ON CONFLICT (user_id, name) DO UPDATE SET is_active = true
+         RETURNING id`,
+        [userId]
+      );
+      rootId = insRes.rows[0]?.id;
+    } else {
+      rootId = rootRes.rows[0].id;
+      if (!rootRes.rows[0].is_active) {
+        await dbClient.query(`UPDATE categories SET is_active = true WHERE id = $1`, [rootId]);
+      }
+    }
+
+    if (!rootId) return;
+
+    // 2. Ensure subcategory 'חיוב אשראי'
+    const ccSub = await dbClient.query(
+      `SELECT id, is_active FROM categories 
+       WHERE user_id = $1 AND parent_id = $2 AND name = 'חיוב אשראי' 
+       LIMIT 1`,
+      [userId, rootId]
+    );
+    if (ccSub.rows.length === 0) {
+      await dbClient.query(
+        `INSERT INTO categories (
+           user_id, name, name_en, parent_id, type, color, icon, is_system, is_active, sort_order
+         ) VALUES ($1, 'חיוב אשראי', 'Credit Card Settlement', $2, 'expense', '#64748b', 'CreditCard', true, true, 1)
+         ON CONFLICT (user_id, name) DO UPDATE SET parent_id = $2, is_active = true`,
+        [userId, rootId]
+      );
+    } else if (!ccSub.rows[0].is_active) {
+      await dbClient.query(`UPDATE categories SET is_active = true WHERE id = $1`, [ccSub.rows[0].id]);
+    }
+
+    // 3. Ensure subcategory 'ללא סיווג'
+    const uncatSub = await dbClient.query(
+      `SELECT id, is_active FROM categories 
+       WHERE user_id = $1 AND parent_id = $2 AND name = 'ללא סיווג' 
+       LIMIT 1`,
+      [userId, rootId]
+    );
+    if (uncatSub.rows.length === 0) {
+      await dbClient.query(
+        `INSERT INTO categories (
+           user_id, name, name_en, parent_id, type, color, icon, is_system, is_active, sort_order
+         ) VALUES ($1, 'ללא סיווג', 'Uncategorized', $2, 'expense', '#64748b', 'HelpCircle', true, true, 2)
+         ON CONFLICT (user_id, name) DO UPDATE SET parent_id = $2, is_active = true`,
+        [userId, rootId]
+      );
+    } else if (!uncatSub.rows[0].is_active) {
+      await dbClient.query(`UPDATE categories SET is_active = true WHERE id = $1`, [uncatSub.rows[0].id]);
+    }
+  } catch (err) {
+    console.warn('[Categories] ensureVisibleMiscCategory notice:', err.message);
+  }
+}
+
+
+/**
  * Ensures all required tables and seed records exist.
  * Runs automatically on startup with retry logic.
  */
@@ -398,7 +475,31 @@ async function ensureSchema() {
               CONSTRAINT uq_user_merchant_pattern UNIQUE (user_id, merchant_pattern)
           );
 
+          -- 11b. Category Suggestions (AI Recommendations & History)
+          CREATE TABLE IF NOT EXISTS category_suggestions (
+              id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+              user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              name VARCHAR(100) NOT NULL,
+              name_en VARCHAR(100),
+              parent_id UUID REFERENCES categories(id) ON DELETE SET NULL,
+              type VARCHAR(10) NOT NULL DEFAULT 'expense',
+              color VARCHAR(7) DEFAULT '#6366f1',
+              icon VARCHAR(50) DEFAULT 'tag',
+              reason TEXT,
+              sample_transaction_ids JSONB DEFAULT '[]',
+              sample_merchants JSONB DEFAULT '[]',
+              status VARCHAR(20) NOT NULL DEFAULT 'pending',
+              created_at TIMESTAMPTZ DEFAULT NOW(),
+              updated_at TIMESTAMPTZ DEFAULT NOW()
+          );
+
           -- 12. Alterations & Migrations
+          ALTER TABLE user_category_rules ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true;
+          ALTER TABLE user_category_rules ADD COLUMN IF NOT EXISTS context_conditions JSONB DEFAULT '{}';
+          ALTER TABLE user_category_rules ADD COLUMN IF NOT EXISTS description_he TEXT;
+          ALTER TABLE user_category_rules ADD COLUMN IF NOT EXISTS source VARCHAR(50) DEFAULT 'manual';
+          ALTER TABLE user_category_rules ADD COLUMN IF NOT EXISTS evidence_count INT DEFAULT 1;
+
           ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS billing_day INT DEFAULT 10;
           ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS include_in_expenses BOOLEAN NOT NULL DEFAULT true;
           ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS is_prepaid BOOLEAN NOT NULL DEFAULT false;
@@ -425,6 +526,18 @@ async function ensureSchema() {
           CREATE INDEX IF NOT EXISTS idx_transactions_reviewed ON transactions(is_reviewed);
           CREATE INDEX IF NOT EXISTS idx_transactions_cc_billing ON transactions(is_cc_billing);
           CREATE INDEX IF NOT EXISTS idx_user_category_rules_user_pattern ON user_category_rules(user_id, merchant_pattern);
+          CREATE INDEX IF NOT EXISTS idx_cat_suggestions_user_status ON category_suggestions(user_id, status);
+
+          -- Clean up poisoned/corrupted user category rules for credit card settlements and transfers
+          DELETE FROM user_category_rules 
+          WHERE merchant_pattern ILIKE '%חיוב כרטיס%' 
+             OR merchant_pattern ILIKE '%כרטיסי אשראי%' 
+             OR merchant_pattern ILIKE '%ישראכרט%' 
+             OR merchant_pattern ILIKE '%ויזה כאל%' 
+             OR merchant_pattern ILIKE '%ויזה%' 
+             OR merchant_pattern ILIKE '%מקס%' 
+             OR merchant_pattern ILIKE '%דיינרס%'
+             OR merchant_pattern ILIKE '%סך חיוב%';
 
           -- Clean up old legacy flat categories and migrate any transactions
           UPDATE transactions SET category = 'סופר ומכולת' WHERE category IN ('מכולת', 'food', 'groceries');
@@ -506,6 +619,8 @@ async function ensureSchema() {
         `);
         // ── Seed MoneyApp Categories Hierarchy (if 0 categories exist) ──
         await seedCategories(client, '00000000-0000-0000-0000-000000000001', false);
+        // ── Ensure 'שונות' category and its subs 'חיוב אשראי' and 'ללא סיווג' are active and visible ──
+        await ensureVisibleMiscCategory(client, '00000000-0000-0000-0000-000000000001');
 
           // ── Auto-split multiple cards under the same login in transactions ──
           const accountsWithCards = await client.query(`

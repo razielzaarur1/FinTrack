@@ -41,6 +41,8 @@ import CategoryBadge from '@/components/common/CategoryBadge';
 import IconPickerModal from '@/components/common/IconPickerModal';
 import CsvImportWizard from '@/components/transactions/CsvImportWizard';
 import CardsSettingsTab from '@/components/settings/CardsSettingsTab';
+import LearnedRulesSection from '@/components/settings/LearnedRulesSection';
+import CategorySuggestionsSection from '@/components/settings/CategorySuggestionsSection';
 import { CATEGORIES_DATA, setDynamicCategories } from '@/lib/categories';
 import { generateDesignSystemPrompt } from '@/lib/designSystemPrompt';
 import { normalizeCategorySvg, getIconSvgMarkup } from '@/lib/svg-normalizer';
@@ -51,6 +53,11 @@ export default function SettingsPage() {
   const { lang, t, theme, toggleTheme, toggleLanguage, setMonthStartDay: contextSetMonthStartDay } = useApp();
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  // Smart Re-classification State
+  const [reclassifying, setReclassifying] = useState(false);
+  const [reclassifyResult, setReclassifyResult] = useState(null);
+  const [reclassifyError, setReclassifyError] = useState('');
 
   // Reset Categories to Factory Default State
   const [showResetModal, setShowResetModal] = useState(false);
@@ -171,8 +178,6 @@ export default function SettingsPage() {
   const [aiDesignConcept, setAiDesignConcept] = useState('');
   const [aiAttemptIndex, setAiAttemptIndex] = useState(0);
   const [aiError, setAiError] = useState('');
-  const [reclassifying, setReclassifying] = useState(false);
-  const [reclassifyResult, setReclassifyResult] = useState(null);
 
   // Data Import & Export State
   const [isCsvImportOpen, setIsCsvImportOpen] = useState(false);
@@ -741,6 +746,28 @@ export default function SettingsPage() {
       setResetLoading(false);
     }
   };
+
+  // Run Smart Neural Reclassification on all unreviewed transactions
+  const handleReclassifyUnreviewed = async () => {
+    setReclassifying(true);
+    setReclassifyError('');
+    setReclassifyResult(null);
+    try {
+      const res = await api.reclassifyUnreviewedTransactions();
+      if (res && res.success) {
+        setReclassifyResult(res);
+        window.dispatchEvent(new CustomEvent('fintrack_transactions_updated'));
+      } else {
+        throw new Error(res.error || 'שגיאה בביצוע הסיווג מחדש');
+      }
+    } catch (err) {
+      console.error('Reclassify error:', err);
+      setReclassifyError(err.message || 'שגיאה בביצוע הסיווג מחדש');
+    } finally {
+      setReclassifying(false);
+    }
+  };
+
 
   // Handle SVG file upload
   const handleSvgFileUpload = (e) => {
@@ -1734,8 +1761,112 @@ export default function SettingsPage() {
           })}
         </div>
       </div>
+
+      {/* Section 2: Smart Neural Re-Classifier */}
+      <div className="p-6 rounded-2xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface space-y-5 shadow-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-purple-500/10 text-purple-400 border border-purple-500/20">
+              <Sparkles className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="font-bold text-base text-dark-text light:text-light-text flex items-center gap-2">
+                <span>סיווג מחדש חכם (Neural Re-Classifier)</span>
+                <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                  מוגן מ-Rate Limits
+                </span>
+              </h3>
+              <p className="text-xs text-dark-text-muted light:text-light-text-muted mt-0.5">
+                מריץ את מנוע ה-LLM והסיווג המשודרג על כל התנועות האוטומטיות בעץ הקטגוריות שלך. עריכות ידניות שביצעת מוגנות ב-100% ולא יידרסו!
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleReclassifyUnreviewed}
+            disabled={reclassifying}
+            className="px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs flex items-center gap-2 shadow-sm transition-all disabled:opacity-50 shrink-0"
+          >
+            {reclassifying ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>מעבד תנועות באצוות...</span>
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-4 h-4" />
+                <span>הפעל סיווג מחדש חכם ✨</span>
+              </>
+            )}
+          </button>
+        </div>
+
+        {reclassifyError && (
+          <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-xs text-red-400 flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            <span>{reclassifyError}</span>
+          </div>
+        )}
+
+        {reclassifyResult && (
+          <div className="p-4 bg-purple-500/5 border border-purple-500/20 rounded-xl space-y-3 animate-in fade-in">
+            <div className="flex items-center justify-between text-xs flex-wrap gap-2">
+              <span className="font-bold text-purple-300">
+                סיכום הרצת סיווג מחדש:
+              </span>
+              <div className="flex items-center gap-3">
+                <span className="text-slate-400">
+                  נסרקו: <strong className="text-white">{reclassifyResult.scanned}</strong>
+                </span>
+                <span className="text-emerald-400">
+                  עודכנו בהצלחה: <strong className="text-emerald-300">{reclassifyResult.updated}</strong>
+                </span>
+                <span className="text-slate-400">
+                  ללא שינוי: <strong className="text-white">{reclassifyResult.unchanged}</strong>
+                </span>
+              </div>
+            </div>
+
+            {reclassifyResult.sampleChanges?.length > 0 && (
+              <div className="mt-3 border-t border-purple-500/20 pt-3">
+                <span className="text-[11px] font-semibold text-slate-400 block mb-2">
+                  דוגמאות לשינויי סיווג שבוצעו:
+                </span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                  {reclassifyResult.sampleChanges.map((change, idx) => (
+                    <div
+                      key={idx}
+                      className="p-2.5 bg-slate-900/60 border border-slate-800 rounded-lg text-xs space-y-1"
+                    >
+                      <div className="font-bold text-white truncate" title={change.merchant}>
+                        {change.merchant}
+                      </div>
+                      <div className="flex items-center gap-1.5 text-[11px]">
+                        <span className="text-slate-500 line-through truncate max-w-[90px]">{change.oldCategory}</span>
+                        <span className="text-purple-400">←</span>
+                        <span className="text-emerald-400 font-semibold truncate max-w-[120px]">{change.newCategory}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Section 3: AI Category Suggestions */}
+      <CategorySuggestionsSection
+        categories={categories}
+        onCategoryCreated={loadCategories}
+      />
+
+      {/* Section 4: Learned Rules & Sentiments */}
+      <LearnedRulesSection />
     </div>
   )}
+
 
       {/* Tab: Data Import & Export */}
       {activeSettingsTab === 'data' && (

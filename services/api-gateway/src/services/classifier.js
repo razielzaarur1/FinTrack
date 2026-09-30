@@ -1,74 +1,30 @@
 import { pool } from '../db.js';
-import { classifyWithAi } from './ai-classifier.js';
+import {
+  getUserCategoryHierarchy,
+  cleanIsraeliMerchantName,
+  classifyWithAi,
+  classifyBatchWithAi,
+} from './ai-classifier.js';
 
 /**
- * 2. Credit Card / Scraper Hebrew Category Mapping
+ * Checks if text matches a credit card billing / settlement pattern in bank statements.
  */
-export const CREDIT_CARD_CATEGORY_MAP = [
-  // Supermarkets & Groceries
-  { match: /(מזון|רשתות שיווק|סופרמרקט|מרכול|מכולת|פירות וירקות)/i, main: 'עושים קניות', sub: 'סופר ומכולת' },
-  // Dining & Restaurants
-  { match: /(מסעדות|מזון מהיר|בתי קפה|פאבים|ברים|מזנונים)/i, main: 'אוכלים בחוץ', sub: 'מסעדות ופאבים' },
-  // Fuel & Transport
-  { match: /(דלק|תחנות דלק|תחבורה|הסעות|מוניות|רכבת)/i, main: 'רכב ותחבורה', sub: 'דלק וטעינה' },
-  { match: /(חניה|חניונים)/i, main: 'רכב ותחבורה', sub: 'חנייה' },
-  { match: /(כבישי אגרה|אגרה)/i, main: 'רכב ותחבורה', sub: 'כבישי אגרה' },
-  // Clothing & Shopping
-  { match: /(הלבשה|הנעלה|אופנה|ביגוד|טקסטיל)/i, main: 'עושים קניות', sub: 'בגדים והנעלה' },
-  { match: /(אלקטרוניקה|חשמל|מחשבים|תקשורת וסלולר)/i, main: 'עושים קניות', sub: 'אלקטרוניקה' },
-  { match: /(ריהוט|עיצוב הבית|עשה זאת בעצמך|חומרי בניין)/i, main: 'עושים קניות', sub: 'ריהוט לבית' },
-  // Health & Pharma
-  { match: /(פארם|בתי מרקחת|רפואה|רופאים|מרפאות|אופטיקה|שיניים)/i, main: 'בריאות וטיפוח', sub: 'בתי מרקחת' },
-  { match: /(קוסמטיקה|יופי|מספרות|ספא)/i, main: 'בריאות וטיפוח', sub: 'טיפולי יופי' },
-  { match: /(כושר|ספורט|מכוני כושר)/i, main: 'בריאות וטיפוח', sub: 'כושר' },
-  // Utilities & Housing
-  { match: /(תקשורת|טלפוניה|אינטרנט|טלוויזיה|כבלים|לוויין)/i, main: 'משק בית', sub: 'טלפון ואינטרנט' },
-  { match: /(חשמל|גז|מים|ארנונה|עיריות)/i, main: 'משק בית', sub: 'חשמל' },
-  { match: /(ביטוח|סוכנויות ביטוח)/i, main: 'בריאות וטיפוח', sub: 'ביטוחי בריאות' },
-  // Leisure & Travel
-  { match: /(פנאי|בידור|קולנוע|כרטיסים|מופעים|תיאטרון)/i, main: 'פנאי ותרבות', sub: 'הופעות וקולנוע' },
-  { match: /(תיירות|מלונות|נופש|טיסות|סוכנויות נסיעות)/i, main: 'חופשות וטיולים', sub: 'טיסות' },
-  // Financial
-  { match: /(בנקים|עמלות|הלוואות|ריבית)/i, main: 'שירותים פיננסיים', sub: 'עמלות' },
-  // Income
-  { match: /(משכורת|שכר|העברת שכר)/i, main: 'משכורת', sub: 'משכורת' },
-  { match: /(קצבה|ביטוח לאומי|מלגה)/i, main: 'קצבה או מלגה', sub: 'קצבה או מלגה' },
-];
-
-/**
- * 3. Broad Israeli Merchant Knowledge Base & Keyword Rules
- */
-export const ISRAELI_MERCHANTS_KB = [
-  // Supermarkets & Groceries
-  { regex: /(שופרסל|רמי לוי|יוחננוף|טיב טעם|ויקטורי|יינות ביתן|מחסני השוק|קרפור|קינג סטור|פרשמרקט|am:pm|am-pm|מעדניית|מינימרקט|סופר |צרכניית|shufersal|rami levy|carrefour)/i, main: 'עושים קניות', sub: 'סופר ומכולת' },
-  // Food & Dining / Delivery
-  { regex: /(wolt|וולט|מקדונלד|מקדונלדס|mcdonald|ארומה|aroma|גולדה|golda|פיצה|pizza|בורגר|burger|bbd|ראנץ|גרג|rebar|ריבר|לנדוור|קפה|גלידה|סושי|sushi|חומוס|פלאפל|falafel|שווארמה|שיפודי|קונדיטוריה|מאפיית|טאבון|מסעדת|ברקוד|פאב|ביסטרו|דומינוס)/i, main: 'אוכלים בחוץ', sub: 'מסעדות ופאבים' },
-  // Fuel, Parking & Transport
-  { regex: /(פז|yellow|יילו|סונול|sonol|דור אלון|dor alon|דור-אלון|דלק|delek|טן|ten|סדש|מיקה|תחנת דלק|סונול|פזומט|דלקן)/i, main: 'רכב ותחבורה', sub: 'דלק וטעינה' },
-  { regex: /(פנגו|pango|סלופארק|cellopark|חניון|חניוני|מנאייק)/i, main: 'רכב ותחבורה', sub: 'חנייה' },
-  { regex: /(כביש 6|כביש שש|דרך ארץ|fastlane|נתיב מהיר|מנהרות הכרמל|חוצה צפון)/i, main: 'רכב ותחבורה', sub: 'כבישי אגרה' },
-  { regex: /(רב קו|רב-קו|rav kav|אגד|דן|רכבת ישראל|קווים|מטרופולין|סופרבוס|אלקטרה אפיקים)/i, main: 'רכב ותחבורה', sub: 'תחבורה ציבורית' },
-  { regex: /(מוסך|צמיגי|טסט|רישוי|אוטו דיפו|שטיפת רכב)/i, main: 'רכב ותחבורה', sub: 'מוסך ואחזקה' },
-  // Health & Pharma
-  { regex: /(סופר פארם|סופר-פארם|סופרפארם|super pharm|super-pharm|be פארם|ניו פארם|בית מרקחת|מכבי|כללית|מאוחדת|לאומית|קופת חולים|אסותא)/i, main: 'בריאות וטיפוח', sub: 'בתי מרקחת' },
-  { regex: /(אופטיקה|הלפרין|קרולינה למקה|אופטיקנה|אפולו)/i, main: 'בריאות וטיפוח', sub: 'אופטיקה' },
-  { regex: /(הולמס פלייס|קאנטרי|גרייט שייפ|ספייס|חדר כושר|מכון כושר|יוגה|פילאטיס)/i, main: 'בריאות וטיפוח', sub: 'כושר' },
-  // Clothing & Footwear
-  { regex: /(זארה|zara|קסטרו|castro|פוקס|fox|h&m|pull&bear|pull and bear|bershka|ברשקה|mango|מנגו|רנואר|renuar|טרמינל x|terminal x|שיאין|shein|אסוס|asos|נייקי|nike|אדידס|adidas|פוט לוקר|foot locker|דלתא|delta|הודיס|hoodies|עדיקה|טוונטי פור סבן|קסטרו)/i, main: 'עושים קניות', sub: 'בגדים והנעלה' },
-  // Electronics & Gadgets
-  { regex: /(ksp|קיי אס פי|קיי.אס.פי|איבורי|אייבורי|ivory|באג|bug|מחסני חשמל|שקם אלקטריק|איידיגיטל|idigital|אפל|apple|סמסונג|samsung|עולם הקולנוע)/i, main: 'עושים קניות', sub: 'אלקטרוניקה' },
-  // Household, Telecom & Utilities
-  { regex: /(איקאה|ikea|הום סנטר|אייס|ace|כתר|טמבור|שזף)/i, main: 'עושים קניות', sub: 'ריהוט לבית' },
-  { regex: /(סלקום|cellcom|פרטנר|partner|בזק|bezeq|בזק בינלאומי|הוט|hot|יס|yes|סטינג|sting|נקסט|next tv|wecom|019|012|גולן טלקום|golan)/i, main: 'משק בית', sub: 'טלפון ואינטרנט' },
-  { regex: /(חברת החשמל|חשמל ישיר|חח\"י|מי אביבים|הגיחון|מי כרמל|מי תמר|מי שבע|מי שיקמה|ארנונה|עיריית|מועצה אזורית|מועצה מקומית)/i, main: 'משק בית', sub: 'חשמל' },
-  { regex: /(פזגז|אמישראגז|סופרגז|דורגז)/i, main: 'משק בית', sub: 'גז והסקה' },
-  // Entertainment & Streaming
-  { regex: /(נטפליקס|netflix|ספוטיפיי|spotify|סינמה סיטי|cinema city|יס פלאנט|yes planet|הוט סינמה|לב תל אביב|זאפה|בראבו|אירוע|כרטיסים|ticket)/i, main: 'פנאי ותרבות', sub: 'הופעות וקולנוע' },
-  // Travel & Hotels
-  { regex: /(אל על|el al|ארקיע|ישראייר|ryanair|wizz|booking|בוקינג|airbnb|פתאל|ישרוטל|דן מלונות|אטלס מלונות)/i, main: 'חופשות וטיולים', sub: 'טיסות' },
-  // Finance & Transfers
-  { regex: /(ביט|bit|פייבוקס|paybox|pepper|פפר)/i, main: 'שירותים פיננסיים', sub: 'עמלות' },
-];
+export function isCcBillingPattern(text = '') {
+  if (!text || typeof text !== 'string') return false;
+  const lower = text.toLowerCase();
+  return (
+    lower.includes('חיוב כרטיס') ||
+    lower.includes('כרטיסי אשראי') ||
+    lower.includes('חיוב כרטיסי') ||
+    lower.includes('סך חיוב') ||
+    lower.includes('העב. לכרטיס') ||
+    lower.includes('העברה לכרטיס') ||
+    lower.includes('ישראכרט') ||
+    lower.includes('ויזה כאל') ||
+    lower.includes('כרטיס מקס') ||
+    lower.includes('דיינרס')
+  );
+}
 
 /**
  * Checks if a transaction represents an ATM / Cash withdrawal
@@ -77,9 +33,7 @@ export function isCashWithdrawalTransaction(merchantName = '', description = '')
   const text = `${merchantName} ${description}`.toLowerCase();
   // Protect credit card charges, wire transfers, bank debits and fees from cash withdrawal detection
   if (
-    text.includes('כרטיס אשראי') ||
-    text.includes('חיוב כרטיס') ||
-    text.includes('חיוב כרטיסי') ||
+    isCcBillingPattern(text) ||
     text.includes('העברה') ||
     text.includes('העב.') ||
     text.includes('הוראת קבע') ||
@@ -100,16 +54,14 @@ export function isCashWithdrawalTransaction(merchantName = '', description = '')
 }
 
 /**
- * Hierarchical Smart Classifier Engine:
- * 1. User manual classification & explicit rules (ABSOLUTE HIGHEST PRIORITY)
- *    - Explicit rules from user_category_rules
- *    - User's previous manual classifications on transactions (is_manual_category = true)
- * 2. Smart AI Classifier (Gemini)
- *    - Cleans and identifies the actual merchant / business name
- *    - Selects the best category from user's tree, taking into account user's historical habits
- * 3. Credit Card / Bank scraped category mapping
- * 4. Israeli Merchant Knowledge Base & Keyword matching
- * 5. Fallback default
+ * Hierarchical Smart Neural Classifier Engine:
+ * 1. Hard Structural Guards:
+ *    - Bank CC billing settlements -> strictly 'שונות' -> 'חיוב אשראי' (no rule pollution)
+ *    - ATM cash withdrawals -> strictly 'משיכת מזומן'
+ * 2. Active User Category Rules & Habits (with context support: DOW, amount)
+ * 3. User Manual Classification History (excluding CC settlements and generic transfers)
+ * 4. Neural LLM Classifier (Gemini) with full dossier and live user category tree
+ * 5. Deterministic fallback to user's real database categories
  */
 export async function classifyTransaction({
   userId = '00000000-0000-0000-0000-000000000001',
@@ -117,18 +69,96 @@ export async function classifyTransaction({
   description = '',
   rawCategory = '',
   amount = 0,
+  isCcBilling = false,
+  transactionType = '',
   receiptVendor = '',
   receiptItems = [],
+  hierarchy = null,
 }) {
   const cleanMerchant = (merchantName || '').trim();
   const cleanDesc = (description || '').trim();
   const searchString = `${cleanMerchant} ${cleanDesc}`.trim();
 
-  // Special check: Cash Withdrawal (strictly protected against debits)
-  if (isCashWithdrawalTransaction(cleanMerchant, cleanDesc)) {
+  // Load user's live category hierarchy if not provided
+  const catHierarchy = hierarchy || (await getUserCategoryHierarchy(userId));
+
+  // Helper to find category & subcategory IDs in user's tree
+  const resolveInHierarchy = (catName, subName) => {
+    let category = catName;
+    let subCategory = subName || catName;
+    let categoryId = null;
+    let subCategoryId = null;
+
+    if (subName) {
+      const subMatch = catHierarchy.subLookup.get(subName.trim().toLowerCase());
+      if (subMatch) {
+        category = subMatch.parentName;
+        subCategory = subMatch.subName;
+        categoryId = subMatch.parentId;
+        subCategoryId = subMatch.subId;
+        return { category, subCategory, categoryId, subCategoryId };
+      }
+    }
+
+    if (catName) {
+      const rootMatch = catHierarchy.rootLookup.get(catName.trim().toLowerCase());
+      if (rootMatch) {
+        category = rootMatch.rootName;
+        categoryId = rootMatch.rootId;
+        const rootObj = catHierarchy.rootMap.get(rootMatch.rootId);
+        const subObj = rootObj?.subs?.find(
+          (s) => s.name.trim().toLowerCase() === (subName || '').trim().toLowerCase()
+        ) || rootObj?.subs?.[0];
+        if (subObj) {
+          subCategory = subObj.name;
+          subCategoryId = subObj.id;
+        }
+        return { category, subCategory, categoryId, subCategoryId };
+      }
+    }
+
+    // Fallback to 'שונות' -> 'ללא סיווג'
+    const misc = catHierarchy.rootLookup.get('שונות');
+    if (misc) {
+      category = misc.rootName;
+      categoryId = misc.rootId;
+      const miscObj = catHierarchy.rootMap.get(misc.rootId);
+      const uncat = miscObj?.subs?.find((s) => s.name === 'ללא סיווג');
+      subCategory = uncat ? uncat.name : 'ללא סיווג';
+      subCategoryId = uncat ? uncat.id : null;
+    } else {
+      category = 'ללא סיווג';
+      subCategory = 'ללא סיווג';
+    }
+
+    return { category, subCategory, categoryId, subCategoryId };
+  };
+
+  // =========================================================================
+  // --- TIER 0: HARD GUARDS
+  // =========================================================================
+
+  // 0A. Credit Card Billing & Bank Settlements (Strict immunity against rule poisoning)
+  if (isCcBilling || isCcBillingPattern(cleanMerchant) || isCcBillingPattern(cleanDesc)) {
+    const resolved = resolveInHierarchy('שונות', 'חיוב אשראי');
     return {
-      category: 'משיכת מזומן',
-      subCategory: 'משיכת מזומן',
+      category: resolved.category,
+      subCategory: resolved.subCategory,
+      categoryId: resolved.categoryId,
+      subCategoryId: resolved.subCategoryId,
+      source: 'cc_billing_guard',
+      isCashWithdrawal: false,
+    };
+  }
+
+  // 0B. ATM Cash Withdrawal
+  if (isCashWithdrawalTransaction(cleanMerchant, cleanDesc)) {
+    const resolved = resolveInHierarchy('משק בית', 'משיכת מזומן');
+    return {
+      category: resolved.category || 'משיכת מזומן',
+      subCategory: resolved.subCategory || 'משיכת מזומן',
+      categoryId: resolved.categoryId,
+      subCategoryId: resolved.subCategoryId,
       source: 'cash_withdrawal_detector',
       isCashWithdrawal: true,
       needsAction: true,
@@ -136,43 +166,50 @@ export async function classifyTransaction({
   }
 
   // =========================================================================
-  // --- TIER 1: USER RULES & MANUAL CLASSIFICATION HISTORY (HIGHEST PRIORITY)
+  // --- TIER 1: ACTIVE USER RULES & HABITS (ONLY IF ACTIVE)
   // =========================================================================
-
-  // 1A. Check user explicit rules table
   if (cleanMerchant) {
     try {
+      // 1A. Exact pattern match
       const exactRuleRes = await pool.query(
-        `SELECT category, sub_category AS "subCategory"
+        `SELECT category, sub_category AS "subCategory", context_conditions AS "context"
          FROM user_category_rules
-         WHERE user_id = $1 AND LOWER(merchant_pattern) = LOWER($2)
+         WHERE user_id = $1 AND LOWER(merchant_pattern) = LOWER($2) AND is_active = true
          ORDER BY updated_at DESC
          LIMIT 1`,
         [userId, cleanMerchant]
       );
 
       if (exactRuleRes.rows.length > 0) {
+        const r = exactRuleRes.rows[0];
+        const resolved = resolveInHierarchy(r.category, r.subCategory);
         return {
-          category: exactRuleRes.rows[0].category,
-          subCategory: exactRuleRes.rows[0].subCategory || exactRuleRes.rows[0].category,
+          category: resolved.category,
+          subCategory: resolved.subCategory,
+          categoryId: resolved.categoryId,
+          subCategoryId: resolved.subCategoryId,
           source: 'user_rule_exact',
           isCashWithdrawal: false,
         };
       }
 
+      // 1B. Contains pattern match
       const containsRuleRes = await pool.query(
-        `SELECT category, sub_category AS "subCategory", merchant_pattern
+        `SELECT category, sub_category AS "subCategory", merchant_pattern, context_conditions AS "context"
          FROM user_category_rules
-         WHERE user_id = $1 AND match_type = 'contains'
+         WHERE user_id = $1 AND match_type = 'contains' AND is_active = true
          ORDER BY LENGTH(merchant_pattern) DESC, updated_at DESC`,
         [userId]
       );
 
       for (const rule of containsRuleRes.rows) {
         if (cleanMerchant.toLowerCase().includes(rule.merchant_pattern.toLowerCase())) {
+          const resolved = resolveInHierarchy(rule.category, rule.subCategory);
           return {
-            category: rule.category,
-            subCategory: rule.subCategory || rule.category,
+            category: resolved.category,
+            subCategory: resolved.subCategory,
+            categoryId: resolved.categoryId,
+            subCategoryId: resolved.subCategoryId,
             source: 'user_rule_contains',
             isCashWithdrawal: false,
           };
@@ -183,17 +220,20 @@ export async function classifyTransaction({
     }
   }
 
-  // 1B. Check user's past manual classifications for this merchant or description
+  // 1C. User's past manual classifications (strictly excluding settlements)
   if (cleanMerchant || cleanDesc) {
     try {
       const manualHistoryRes = await pool.query(
-        `SELECT t.category, t.merchant_name
+        `SELECT t.category, t.sub_category, t.merchant_name
          FROM transactions t
          JOIN bank_accounts b ON t.account_id = b.id
          WHERE b.user_id = $1
            AND t.is_manual_category = true
            AND t.category IS NOT NULL
-           AND t.category != 'ללא סיווג'
+           AND t.category NOT IN ('ללא סיווג', 'שונות')
+           AND t.is_cc_billing = false
+           AND t.merchant_name NOT ILIKE '%חיוב כרטיס%'
+           AND t.merchant_name NOT ILIKE '%סך חיוב%'
            AND (
              (NULLIF($2, '') IS NOT NULL AND (
                LOWER(TRIM(t.merchant_name)) = LOWER(TRIM($2))
@@ -210,10 +250,13 @@ export async function classifyTransaction({
       );
 
       if (manualHistoryRes.rows.length > 0) {
-        const foundCategory = manualHistoryRes.rows[0].category;
+        const row = manualHistoryRes.rows[0];
+        const resolved = resolveInHierarchy(row.category, row.sub_category);
         return {
-          category: foundCategory,
-          subCategory: foundCategory,
+          category: resolved.category,
+          subCategory: resolved.subCategory,
+          categoryId: resolved.categoryId,
+          subCategoryId: resolved.subCategoryId,
           source: 'user_manual_history',
           isCashWithdrawal: false,
         };
@@ -224,7 +267,7 @@ export async function classifyTransaction({
   }
 
   // =========================================================================
-  // --- TIER 2: SMART AI CLASSIFIER (Gemini with user historical context)
+  // --- TIER 2: SMART NEURAL LLM CLASSIFIER (Gemini with dynamic tree)
   // =========================================================================
   try {
     const aiResult = await classifyWithAi({
@@ -235,16 +278,22 @@ export async function classifyTransaction({
       receiptVendor,
       receiptItems,
       userId,
+      hierarchy: catHierarchy,
     });
 
     if (aiResult && aiResult.success && aiResult.category) {
+      const resolved = resolveInHierarchy(aiResult.category, aiResult.subCategory);
       return {
-        category: aiResult.category,
-        subCategory: aiResult.category,
-        cleanMerchant: aiResult.cleanMerchant || cleanMerchant,
+        category: resolved.category,
+        subCategory: resolved.subCategory,
+        categoryId: resolved.categoryId,
+        subCategoryId: resolved.subCategoryId,
+        cleanMerchant: aiResult.cleanMerchant || cleanIsraeliMerchantName(cleanMerchant),
         source: 'ai_gemini',
         rationale: aiResult.rationale,
         confidence: aiResult.confidence,
+        fitLevel: aiResult.fitLevel,
+        suggestedSubcategory: aiResult.suggestedSubcategory,
         isCashWithdrawal: false,
       };
     }
@@ -253,56 +302,36 @@ export async function classifyTransaction({
   }
 
   // =========================================================================
-  // --- TIER 3: KNOWLEDGE BASE & CARD CATEGORY FALLBACK
+  // --- TIER 3: DETERMINISTIC DB FALLBACK
   // =========================================================================
-
-  // 3A. Credit Card / Scraper category mapping
-  if (rawCategory && typeof rawCategory === 'string' && rawCategory.trim()) {
-    const cleanRaw = rawCategory.trim();
-    for (const mapping of CREDIT_CARD_CATEGORY_MAP) {
-      if (mapping.match.test(cleanRaw)) {
-        return {
-          category: mapping.main,
-          subCategory: mapping.sub,
-          source: 'card_category_mapping',
-          isCashWithdrawal: false,
-        };
-      }
-    }
-  }
-
-  // 3B. Israeli Merchant Knowledge Base
-  for (const entry of ISRAELI_MERCHANTS_KB) {
-    if (entry.regex.test(searchString)) {
+  if (amount > 0) {
+    const salaryMatch = resolveInHierarchy('משכורת', 'משכורת');
+    if (salaryMatch.categoryId) {
       return {
-        category: entry.main,
-        subCategory: entry.sub,
-        source: 'merchant_kb',
+        category: salaryMatch.category,
+        subCategory: salaryMatch.subCategory,
+        categoryId: salaryMatch.categoryId,
+        subCategoryId: salaryMatch.subCategoryId,
+        source: 'default_income',
         isCashWithdrawal: false,
       };
     }
   }
 
-  // 3C. Default fallback
-  if (amount > 0) {
-    return {
-      category: 'משכורת',
-      subCategory: 'הכנסות שונות',
-      source: 'default_income',
-      isCashWithdrawal: false,
-    };
-  }
-
+  const uncatMatch = resolveInHierarchy('שונות', 'ללא סיווג');
   return {
-    category: 'שונות',
-    subCategory: 'ללא סיווג',
-    source: 'default_expense',
+    category: uncatMatch.category,
+    subCategory: uncatMatch.subCategory,
+    categoryId: uncatMatch.categoryId,
+    subCategoryId: uncatMatch.subCategoryId,
+    source: 'default_uncategorized',
     isCashWithdrawal: false,
   };
 }
 
 /**
  * Saves or updates a user learning classification rule.
+ * Strongly protected against credit card billing / bank settlement poisoning.
  */
 export async function saveUserRule({
   userId = '00000000-0000-0000-0000-000000000001',
@@ -310,10 +339,24 @@ export async function saveUserRule({
   category,
   subCategory = null,
   matchType = 'exact',
+  contextConditions = {},
+  descriptionHe = null,
+  isActive = true,
 }) {
   if (!merchantPattern || !category) return null;
   const cleanPattern = merchantPattern.trim();
   const lowerPattern = cleanPattern.toLowerCase();
+
+  // Guard: CC settlements, card debits, wire transfers must NEVER create category rules
+  if (
+    isCcBillingPattern(lowerPattern) ||
+    lowerPattern.includes('חיוב כרטיס') ||
+    lowerPattern.includes('כרטיס אשראי') ||
+    lowerPattern.includes('העברה בנקאית') ||
+    lowerPattern.includes('סך חיוב')
+  ) {
+    return null;
+  }
 
   // Guard: generic bank debit/transfer patterns must NEVER be saved as cash withdrawal
   if (
@@ -327,106 +370,225 @@ export async function saveUserRule({
     return null;
   }
 
-  // Check confidence of this pattern across existing transactions
-  try {
-    const distRes = await pool.query(
-      `SELECT category, COUNT(*)::INT as cnt
-       FROM transactions
-       WHERE (LOWER(merchant_name) = LOWER($1) OR LOWER(description) = LOWER($1))
-         AND category IS NOT NULL
-         AND category != 'ללא סיווג'
-       GROUP BY category
-       ORDER BY cnt DESC`,
-      [cleanPattern]
-    );
-
-    const totalCategorized = distRes.rows.reduce((sum, r) => sum + r.cnt, 0);
-    if (totalCategorized >= 2) {
-      const dominantCount = distRes.rows[0].cnt;
-      const confidence = dominantCount / totalCategorized;
-      if (confidence < 0.85) {
-        // If confidence is below 85%, remove any rigid user rule for this pattern
-        await pool.query(
-          `DELETE FROM user_category_rules WHERE user_id = $1 AND LOWER(merchant_pattern) = LOWER($2)`,
-          [userId, cleanPattern]
-        );
-        return null;
-      }
-    }
-  } catch (err) {
-    console.warn('[Classifier] Confidence check warning in saveUserRule:', err.message);
-  }
-
   const query = `
-    INSERT INTO user_category_rules (user_id, merchant_pattern, category, sub_category, match_type, updated_at)
-    VALUES ($1, $2, $3, $4, $5, NOW())
+    INSERT INTO user_category_rules (
+      user_id, merchant_pattern, category, sub_category, match_type, 
+      context_conditions, description_he, is_active, updated_at
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
     ON CONFLICT (user_id, merchant_pattern)
     DO UPDATE SET 
       category = EXCLUDED.category,
       sub_category = EXCLUDED.sub_category,
       match_type = EXCLUDED.match_type,
+      context_conditions = EXCLUDED.context_conditions,
+      description_he = COALESCE(EXCLUDED.description_he, user_category_rules.description_he),
+      is_active = EXCLUDED.is_active,
       updated_at = NOW()
-    RETURNING id, user_id, merchant_pattern AS "merchantPattern", category, sub_category AS "subCategory", match_type AS "matchType";
+    RETURNING 
+      id, user_id, merchant_pattern AS "merchantPattern", 
+      category, sub_category AS "subCategory", match_type AS "matchType",
+      context_conditions AS "contextConditions", description_he AS "descriptionHe",
+      is_active AS "isActive", updated_at AS "updatedAt";
   `;
 
-  const res = await pool.query(query, [userId, cleanPattern, category, subCategory || category, matchType]);
+  const res = await pool.query(query, [
+    userId,
+    cleanPattern,
+    category,
+    subCategory || category,
+    matchType,
+    JSON.stringify(contextConditions || {}),
+    descriptionHe,
+    isActive,
+  ]);
   return res.rows[0];
 }
 
 /**
- * Cleans up corrupted rules that map credit card or debit patterns to cash withdrawal.
+ * Reclassifies all unreviewed transactions using signature clustering & batch AI.
+ * Strictly preserves all transactions where is_manual_category = true.
  */
-export async function cleanupCorruptedRules() {
-  try {
-    await pool.query(`
-      DELETE FROM user_category_rules
-      WHERE (LOWER(merchant_pattern) LIKE '%כרטיס%' OR LOWER(merchant_pattern) LIKE '%חיוב%')
-        AND category = 'משיכת מזומן'
-    `);
-  } catch (e) {
-    console.warn('[Classifier] Cleanup corrupted rules error:', e.message);
+export async function reclassifyUnreviewedTransactions(userId = '00000000-0000-0000-0000-000000000001') {
+  const catHierarchy = await getUserCategoryHierarchy(userId);
+
+  // 1. Fetch transactions where is_manual_category = false
+  const txRes = await pool.query(
+    `SELECT t.id, t.merchant_name, t.description, t.amount, t.category, t.sub_category,
+            t.is_cc_billing, t.raw_data->>'category' AS raw_category
+     FROM transactions t
+     JOIN bank_accounts a ON t.account_id = a.id
+     WHERE a.user_id = $1 AND (t.is_manual_category = false OR t.is_manual_category IS NULL)
+     ORDER BY t.date DESC`,
+    [userId]
+  );
+
+  const transactions = txRes.rows;
+  if (transactions.length === 0) {
+    return { total: 0, scanned: 0, updated: 0, unchanged: 0, sampleChanges: [] };
   }
-}
 
-/**
- * Reclassifies all past transactions according to current rules and knowledge base.
- */
-export async function reclassifyAllTransactions(userId = '00000000-0000-0000-0000-000000000001') {
-  const txQuery = `
-    SELECT t.id, t.merchant_name, t.description, t.amount, t.raw_data->>'category' AS raw_category
-    FROM transactions t
-    JOIN bank_accounts a ON t.account_id = a.id
-    WHERE a.user_id = $1 AND t.is_manual_category = false
-  `;
-  const result = await pool.query(txQuery, [userId]);
-  let updatedCount = 0;
+  // 2. Separate into immediately resolvable vs AI batch candidates
+  const signatureMap = new Map(); // sigKey -> { dossier, txIds: [] }
+  const immediateUpdates = []; // { txId, category, subCategory, categoryId, subCategoryId, cleanMerchant }
+  const sampleChanges = [];
 
-  for (const tx of result.rows) {
-    const classification = await classifyTransaction({
-      userId,
-      merchantName: tx.merchant_name,
-      description: tx.description,
-      rawCategory: tx.raw_category,
-      amount: parseFloat(tx.amount),
-    });
+  for (const tx of transactions) {
+    const cleanMerchant = (tx.merchant_name || '').trim();
+    const cleanDesc = (tx.description || '').trim();
+    const amount = parseFloat(tx.amount || 0);
 
-    if (classification.category) {
-      const chosenCat = classification.subCategory || classification.category;
-      const cleanMerchant = classification.cleanMerchant;
-      if (cleanMerchant && (!tx.merchant_name || tx.merchant_name === 'בית עסק')) {
-        await pool.query(
-          `UPDATE transactions SET category = $1, merchant_name = $2 WHERE id = $3`,
-          [chosenCat, cleanMerchant, tx.id]
-        );
-      } else {
-        await pool.query(
-          `UPDATE transactions SET category = $1 WHERE id = $2`,
-          [chosenCat, tx.id]
-        );
+    // Hard check: CC billing
+    if (tx.is_cc_billing || isCcBillingPattern(cleanMerchant) || isCcBillingPattern(cleanDesc)) {
+      const misc = catHierarchy.rootLookup.get('שונות');
+      const ccSub = misc ? catHierarchy.rootMap.get(misc.rootId)?.subs?.find((s) => s.name === 'חיוב אשראי') : null;
+      immediateUpdates.push({
+        txId: tx.id,
+        category: 'שונות',
+        subCategory: 'חיוב אשראי',
+        categoryId: ccSub ? ccSub.id : misc?.rootId,
+        cleanMerchant: cleanMerchant || 'חיוב כרטיס אשראי',
+        oldCat: tx.category,
+      });
+      continue;
+    }
+
+    // Hard check: Cash withdrawal
+    if (isCashWithdrawalTransaction(cleanMerchant, cleanDesc)) {
+      const house = catHierarchy.rootLookup.get('משק בית');
+      const cashSub = house ? catHierarchy.rootMap.get(house.rootId)?.subs?.find((s) => s.name === 'משיכת מזומן') : null;
+      immediateUpdates.push({
+        txId: tx.id,
+        category: 'משק בית',
+        subCategory: 'משיכת מזומן',
+        categoryId: cashSub ? cashSub.id : house?.rootId,
+        cleanMerchant: cleanMerchant || 'משיכת מזומן',
+        oldCat: tx.category,
+      });
+      continue;
+    }
+
+    // Cluster by signature key: cleanMerchant + direction + rawCategory
+    const direction = amount < 0 ? 'expense' : 'income';
+    const sigKey = `${cleanIsraeliMerchantName(cleanMerchant)}:::${cleanDesc.slice(0, 30)}:::${direction}:::${tx.raw_category || ''}`;
+
+    if (!signatureMap.has(sigKey)) {
+      signatureMap.set(sigKey, {
+        id: `sig_${signatureMap.size}`,
+        merchantName: cleanMerchant,
+        description: cleanDesc,
+        amount,
+        rawCategory: tx.raw_category,
+        transactionType: direction,
+        txIds: [],
+        oldCategory: tx.category,
+      });
+    }
+    signatureMap.get(sigKey).txIds.push(tx.id);
+  }
+
+  // 3. Process AI batches in chunks of 20 unique signatures
+  const uniqueDossiers = Array.from(signatureMap.values());
+  const batchSize = 20;
+  const resolvedSignatures = new Map();
+
+  for (let i = 0; i < uniqueDossiers.length; i += batchSize) {
+    const chunk = uniqueDossiers.slice(i, i + batchSize);
+    try {
+      const batchResult = await classifyBatchWithAi(chunk, { userId, hierarchy: catHierarchy });
+      if (batchResult && batchResult.success && Array.isArray(batchResult.results)) {
+        for (const res of batchResult.results) {
+          resolvedSignatures.set(res.id, res);
+        }
       }
-      updatedCount++;
+    } catch (batchErr) {
+      console.warn(`[Classifier] Batch ${i / batchSize + 1} error:`, batchErr.message);
+    }
+    // Delay 400ms between batches to prevent 429 rate limit
+    if (i + batchSize < uniqueDossiers.length) {
+      await new Promise((r) => setTimeout(r, 400));
     }
   }
 
-  return { total: result.rows.length, updated: updatedCount };
+  // 4. Apply bulk updates to database
+  let updatedCount = 0;
+  let unchangedCount = 0;
+
+  // Apply immediate updates (CC and Cash)
+  for (const item of immediateUpdates) {
+    await pool.query(
+      `UPDATE transactions 
+       SET category = $1, sub_category = $2, category_id = $3
+       WHERE id = $4`,
+      [item.category, item.subCategory, item.categoryId, item.txId]
+    );
+    if (item.oldCat !== item.category) {
+      updatedCount++;
+      if (sampleChanges.length < 15) {
+        sampleChanges.push({
+          merchant: item.cleanMerchant,
+          oldCategory: item.oldCat || 'ללא סיווג',
+          newCategory: `${item.category} / ${item.subCategory}`,
+          confidence: 1.0,
+        });
+      }
+    } else {
+      unchangedCount++;
+    }
+  }
+
+  // Apply AI resolved signatures
+  for (const dossier of uniqueDossiers) {
+    const resolution = resolvedSignatures.get(dossier.id);
+    if (!resolution) {
+      unchangedCount += dossier.txIds.length;
+      continue;
+    }
+
+    const { category, subCategory, subCategoryId, categoryId, cleanMerchant, confidence } = resolution;
+    const finalCatId = subCategoryId || categoryId;
+
+    await pool.query(
+      `UPDATE transactions 
+       SET category = $1, 
+           sub_category = $2, 
+           category_id = $3,
+           merchant_name = CASE 
+             WHEN merchant_name IS NULL OR merchant_name IN ('', 'בית עסק') THEN $4 
+             ELSE merchant_name 
+           END
+       WHERE id = ANY($5::uuid[])`,
+      [category, subCategory, finalCatId, cleanMerchant, dossier.txIds]
+    );
+
+    if (dossier.oldCategory !== category) {
+      updatedCount += dossier.txIds.length;
+      if (sampleChanges.length < 15) {
+        sampleChanges.push({
+          merchant: cleanMerchant || dossier.merchantName,
+          oldCategory: dossier.oldCategory || 'ללא סיווג',
+          newCategory: `${category} / ${subCategory}`,
+          confidence: confidence || 0.9,
+          count: dossier.txIds.length,
+        });
+      }
+    } else {
+      unchangedCount += dossier.txIds.length;
+    }
+  }
+
+  return {
+    total: transactions.length,
+    scanned: transactions.length,
+    updated: updatedCount,
+    unchanged: unchangedCount,
+    sampleChanges,
+  };
+}
+
+/**
+ * Backward compatibility alias for reclassifying all unreviewed transactions.
+ */
+export async function reclassifyAllTransactions(userId = '00000000-0000-0000-0000-000000000001') {
+  return reclassifyUnreviewedTransactions(userId);
 }

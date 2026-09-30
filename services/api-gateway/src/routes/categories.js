@@ -6,7 +6,14 @@ import {
   classifyTransaction,
   saveUserRule,
   reclassifyAllTransactions,
+  reclassifyUnreviewedTransactions,
 } from '../services/classifier.js';
+import {
+  scanAndSuggestCategories,
+  getCategorySuggestions,
+  approveCategorySuggestion,
+  dismissCategorySuggestion,
+} from '../services/category-suggester.js';
 
 const DEFAULT_USER_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -346,11 +353,22 @@ export default async function categoriesRoutes(fastify, options) {
     }
   });
 
-  // GET /api/categories/rules - List user classification rules
+  // GET /api/categories/rules - List user classification rules & learned habits
   fastify.get('/rules', async (request, reply) => {
     try {
       const res = await pool.query(
-        `SELECT id, merchant_pattern AS "merchantPattern", category, sub_category AS "subCategory", match_type AS "matchType", created_at AS "createdAt", updated_at AS "updatedAt"
+        `SELECT id, 
+                merchant_pattern AS "merchantPattern", 
+                category, 
+                sub_category AS "subCategory", 
+                match_type AS "matchType",
+                is_active AS "isActive",
+                context_conditions AS "contextConditions",
+                description_he AS "descriptionHe",
+                evidence_count AS "evidenceCount",
+                source,
+                created_at AS "createdAt", 
+                updated_at AS "updatedAt"
          FROM user_category_rules
          WHERE user_id = $1
          ORDER BY updated_at DESC`,
@@ -358,6 +376,7 @@ export default async function categoriesRoutes(fastify, options) {
       );
       return reply.code(200).send({ data: res.rows });
     } catch (err) {
+      fastify.log.error(err, 'Failed to fetch category rules');
       return reply.code(500).send({ error: 'Database error' });
     }
   });
@@ -381,16 +400,151 @@ export default async function categoriesRoutes(fastify, options) {
     }
   });
 
-  // POST /api/categories/reclassify-all - Re-run classification on all transactions
+  // PATCH /api/categories/rules/:id - Toggle rule active state or update rule
+  fastify.patch('/rules/:id', async (request, reply) => {
+    const { id } = request.params;
+    const { isActive, category, subCategory, descriptionHe, contextConditions } = request.body || {};
+
+    try {
+      const updates = [];
+      const values = [id, DEFAULT_USER_ID];
+
+      if (typeof isActive === 'boolean') {
+        values.push(isActive);
+        updates.push(`is_active = $${values.length}`);
+      }
+      if (category) {
+        values.push(category);
+        updates.push(`category = $${values.length}`);
+      }
+      if (subCategory !== undefined) {
+        values.push(subCategory);
+        updates.push(`sub_category = $${values.length}`);
+      }
+      if (descriptionHe !== undefined) {
+        values.push(descriptionHe);
+        updates.push(`description_he = $${values.length}`);
+      }
+      if (contextConditions !== undefined) {
+        values.push(JSON.stringify(contextConditions));
+        updates.push(`context_conditions = $${values.length}`);
+      }
+
+      if (updates.length === 0) {
+        return reply.code(400).send({ error: 'No fields to update' });
+      }
+
+      updates.push('updated_at = NOW()');
+
+      const query = `
+        UPDATE user_category_rules 
+        SET ${updates.join(', ')}
+        WHERE id = $1 AND user_id = $2
+        RETURNING id, merchant_pattern AS "merchantPattern", category, sub_category AS "subCategory", 
+                  is_active AS "isActive", context_conditions AS "contextConditions", 
+                  description_he AS "descriptionHe", updated_at AS "updatedAt"
+      `;
+
+      const res = await pool.query(query, values);
+      if (res.rows.length === 0) {
+        return reply.code(404).send({ error: 'Rule not found' });
+      }
+
+      return reply.code(200).send({ success: true, data: res.rows[0] });
+    } catch (err) {
+      fastify.log.error(err, 'Failed to update rule');
+      return reply.code(500).send({ error: 'Database error' });
+    }
+  });
+
+  // DELETE /api/categories/rules/:id - Delete / forget a learned rule
+  fastify.delete('/rules/:id', async (request, reply) => {
+    const { id } = request.params;
+    try {
+      const res = await pool.query(
+        `DELETE FROM user_category_rules WHERE id = $1 AND user_id = $2 RETURNING id`,
+        [id, DEFAULT_USER_ID]
+      );
+      if (res.rows.length === 0) {
+        return reply.code(404).send({ error: 'Rule not found' });
+      }
+      return reply.code(200).send({ success: true, id });
+    } catch (err) {
+      fastify.log.error(err, 'Failed to delete rule');
+      return reply.code(500).send({ error: 'Database error' });
+    }
+  });
+
+  // POST /api/categories/reclassify-unreviewed - Reclassify all unreviewed/automatic transactions
+  fastify.post('/reclassify-unreviewed', async (request, reply) => {
+    try {
+      const result = await reclassifyUnreviewedTransactions(DEFAULT_USER_ID);
+      return reply.code(200).send({ success: true, ...result });
+    } catch (err) {
+      fastify.log.error(err, 'Failed to reclassify transactions');
+      return reply.code(500).send({ error: 'Classifier error: ' + err.message });
+    }
+  });
+
+  // POST /api/categories/reclassify-all - Re-run classification (alias)
   fastify.post('/reclassify-all', async (request, reply) => {
     try {
-      const result = await reclassifyAllTransactions(DEFAULT_USER_ID);
+      const result = await reclassifyUnreviewedTransactions(DEFAULT_USER_ID);
       return reply.code(200).send({ success: true, ...result });
     } catch (err) {
       fastify.log.error(err, 'Failed to reclassify transactions');
       return reply.code(500).send({ error: 'Database error' });
     }
   });
+
+  // ── Category Suggestions Routes ──────────────────────────────────────────
+
+  // GET /api/categories/suggestions - List pending and history suggestions
+  fastify.get('/suggestions', async (request, reply) => {
+    try {
+      const data = await getCategorySuggestions(DEFAULT_USER_ID);
+      return reply.code(200).send({ success: true, data });
+    } catch (err) {
+      fastify.log.error(err, 'Failed to fetch category suggestions');
+      return reply.code(500).send({ error: 'Database error' });
+    }
+  });
+
+  // POST /api/categories/suggestions/scan - Trigger AI scan for missing categories
+  fastify.post('/suggestions/scan', async (request, reply) => {
+    try {
+      const result = await scanAndSuggestCategories(DEFAULT_USER_ID);
+      return reply.code(200).send({ success: true, ...result });
+    } catch (err) {
+      fastify.log.error(err, 'Failed to scan for category suggestions');
+      return reply.code(500).send({ error: 'Scanner error: ' + err.message });
+    }
+  });
+
+  // POST /api/categories/suggestions/:id/approve - Approve and apply suggestion
+  fastify.post('/suggestions/:id/approve', async (request, reply) => {
+    const { id } = request.params;
+    try {
+      const result = await approveCategorySuggestion(DEFAULT_USER_ID, id, request.body || {});
+      return reply.code(200).send({ success: true, ...result });
+    } catch (err) {
+      fastify.log.error(err, 'Failed to approve category suggestion');
+      return reply.code(500).send({ error: err.message });
+    }
+  });
+
+  // POST /api/categories/suggestions/:id/dismiss - Dismiss suggestion
+  fastify.post('/suggestions/:id/dismiss', async (request, reply) => {
+    const { id } = request.params;
+    try {
+      const result = await dismissCategorySuggestion(DEFAULT_USER_ID, id);
+      return reply.code(200).send({ success: true, ...result });
+    } catch (err) {
+      fastify.log.error(err, 'Failed to dismiss category suggestion');
+      return reply.code(500).send({ error: err.message });
+    }
+  });
+
 
   // POST /api/categories/ai-suggest - Complete English name, color & generate SVG icon with Gemini AI
   fastify.post('/ai-suggest', async (request, reply) => {
