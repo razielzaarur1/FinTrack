@@ -1003,11 +1003,24 @@ export default async function transactionsV2Routes(fastify, options) {
       const currencies = {};
       currencyCountsRes.rows.forEach((r) => { currencies[r.curr] = r.count; });
 
+      // 5. Date boundaries (min and max transaction date in the system)
+      const dateBoundsRes = await pool.query(`
+        SELECT 
+          MIN(COALESCE(effective_date, date)) AS "minDate",
+          MAX(COALESCE(effective_date, date)) AS "maxDate"
+        FROM transactions
+      `);
+      const { minDate, maxDate } = dateBoundsRes.rows[0] || {};
+
       return reply.code(200).send({
         accounts,
         categories,
         specials,
         currencies,
+        dateBounds: {
+          minDate: minDate ? String(minDate).slice(0, 10) : null,
+          maxDate: maxDate ? String(maxDate).slice(0, 10) : null,
+        },
       });
     } catch (err) {
       fastify.log.error(err, 'Failed to calculate filter counts');

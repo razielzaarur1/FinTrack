@@ -41,8 +41,9 @@ import InstitutionLogo from '@/components/common/InstitutionLogo';
 import MultiSelectDropdown from '@/components/common/MultiSelectDropdown';
 import TransactionDrawer from '@/components/transactions/TransactionDrawer';
 import AddWalletTransactionModal from '@/components/transactions/AddWalletTransactionModal';
+import InteractiveMonthPicker from '@/components/transactions/InteractiveMonthPicker';
 import { CATEGORIES_DATA, getCategoryDetails } from '@/lib/categories';
-import { getFinancialMonthRange, getCurrentFinancialMonth, getPreviousFinancialMonth } from '@/lib/date-utils';
+import { getFinancialMonthRange, getCurrentFinancialMonth, getPreviousFinancialMonth, getFinancialMonthsBetween } from '@/lib/date-utils';
 
 function formatLocalDate(d) {
   const y = d.getFullYear();
@@ -201,6 +202,7 @@ function TransactionsContent() {
           categories: res.data.categories || {},
           specials: res.data.specials || {},
           currencies: res.data.currencies || {},
+          dateBounds: res.data.dateBounds || null,
         });
       }
     }).catch(() => {});
@@ -303,6 +305,7 @@ function TransactionsContent() {
             categories: res.data.categories || {},
             specials: res.data.specials || {},
             currencies: res.data.currencies || {},
+            dateBounds: res.data.dateBounds || null,
           });
         }
       }).catch(() => {});
@@ -472,18 +475,39 @@ function TransactionsContent() {
     return list;
   }, [filterCounts, availableCurrencies]);
 
-  // Quick month selector helper options (last 24 financial months)
+  // Dynamic financial month options tailored to actual transactions in the DB
+  const dynamicFinancialMonths = useMemo(() => {
+    const minDate = filterCounts.dateBounds?.minDate;
+    const maxDate = filterCounts.dateBounds?.maxDate || new Date();
+    if (minDate) {
+      const generated = getFinancialMonthsBetween(minDate, maxDate, monthStartDay);
+      if (generated.length > 0) return generated;
+    }
+    return pastFinancialMonths || [];
+  }, [filterCounts.dateBounds, monthStartDay, pastFinancialMonths]);
+
   const monthOptions = useMemo(() => {
-    return (pastFinancialMonths || []).map((m) => ({
+    return dynamicFinancialMonths.map((m) => ({
       value: m.monthKey,
       label: m.label,
       start: m.startDate,
       end: m.endDate,
+      year: m.year,
+      month: m.month,
+      displayRange: m.displayRange,
     }));
-  }, [pastFinancialMonths]);
+  }, [dynamicFinancialMonths]);
 
   const selectedMonthValue = useMemo(() => {
     if (datePreset === 'all' && !startDate && !endDate) return 'all';
+    // Check if entire year is selected
+    if (startDate && endDate && startDate.endsWith('-01') && (endDate.endsWith('-31') || endDate.endsWith('-30') || endDate.endsWith('-28') || endDate.endsWith('-29'))) {
+      const startYear = startDate.slice(0, 4);
+      const endYear = endDate.slice(0, 4);
+      if (startYear === endYear && startDate === `${startYear}-01-01`) {
+        return `year_${startYear}`;
+      }
+    }
     // Match against monthOptions by exact startDate and endDate
     if (startDate && endDate) {
       const match = monthOptions.find((opt) => opt.start === startDate && opt.end === endDate);
@@ -503,6 +527,11 @@ function TransactionsContent() {
       setDatePreset('all');
       setStartDate('');
       setEndDate('');
+    } else if (val.startsWith('year_')) {
+      const y = parseInt(val.replace('year_', ''), 10);
+      setDatePreset('custom');
+      setStartDate(`${y}-01-01`);
+      setEndDate(`${y}-12-31`);
     } else {
       const match = monthOptions.find((opt) => opt.value === val);
       if (match) {
@@ -793,20 +822,12 @@ function TransactionsContent() {
 
           {/* Action Row on Mobile / Inline on Desktop */}
           <div className="flex items-center gap-2 w-full sm:w-auto shrink-0 flex-wrap">
-            {/* Quick Month Selector Dropdown */}
-            <select
-              value={selectedMonthValue}
-              onChange={(e) => handleQuickMonthChange(e.target.value)}
-              className="px-3 py-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated text-dark-text light:text-light-text text-xs font-semibold focus:outline-none focus:border-brand-primary cursor-pointer shadow-2xs"
-              title="סינון מהיר לפי חודש"
-            >
-              <option value="all">כל החודשים</option>
-              {monthOptions.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
+            {/* Interactive Dynamic Month & Year Picker */}
+            <InteractiveMonthPicker
+              allMonths={monthOptions}
+              selectedMonthValue={selectedMonthValue}
+              onChange={handleQuickMonthChange}
+            />
 
             {/* Type Toggle Buttons */}
             <div className="flex-1 sm:flex-initial flex rounded-xl border border-dark-border light:border-light-border bg-dark-surface-elevated light:bg-light-surface-elevated p-1 text-xs justify-center">
@@ -1100,8 +1121,10 @@ function TransactionsContent() {
                     : datePreset === 'last_90'
                     ? '90 ימים אחרונים'
                     : datePreset === 'custom'
-                    ? (monthOptions.find((o) => o.start === startDate && o.end === endDate)?.label ||
-                       `תאריכים: ${startDate || ''} עד ${endDate || ''}`)
+                    ? (startDate?.slice(0, 4) === endDate?.slice(0, 4) && startDate?.endsWith('-01-01') && (endDate?.endsWith('-12-31') || endDate?.endsWith('-12-30'))
+                        ? `שנת ${startDate.slice(0, 4)}`
+                        : (monthOptions.find((o) => o.start === startDate && o.end === endDate)?.label ||
+                           `תאריכים: ${startDate || ''} עד ${endDate || ''}`))
                     : `תקופה: ${datePreset}`}
                 </span>
                 <button

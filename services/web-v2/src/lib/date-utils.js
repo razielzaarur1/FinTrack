@@ -156,6 +156,44 @@ export function getFinancialMonthKey(dateInput, startDay = 1) {
 }
 
 /**
+ * Generate a list of financial months between two dates (inclusive)
+ * @param {string|Date} minDate - Earliest date
+ * @param {string|Date} maxDate - Latest date (defaults to current date)
+ * @param {number} startDay - Financial month start day (1 to 31)
+ */
+export function getFinancialMonthsBetween(minDate, maxDate = new Date(), startDay = 1) {
+  if (!minDate) return [];
+  const sDay = Math.min(31, Math.max(1, parseInt(startDay, 10) || 1));
+  const endD = maxDate instanceof Date ? maxDate : new Date(maxDate);
+  const startD = minDate instanceof Date ? minDate : new Date(minDate);
+
+  if (isNaN(startD.getTime()) || isNaN(endD.getTime())) return [];
+
+  const endMonthKey = getFinancialMonthKey(endD, sDay);
+  const startMonthKey = getFinancialMonthKey(startD, sDay);
+
+  if (!endMonthKey || !startMonthKey) return [];
+
+  const [endY, endM] = endMonthKey.split('-').map(Number);
+  const [startY, startM] = startMonthKey.split('-').map(Number);
+
+  const result = [];
+  let curY = endY;
+  let curM = endM;
+
+  while (curY > startY || (curY === startY && curM >= startM)) {
+    result.push(getFinancialMonthRange(curY, curM, sDay));
+    curM -= 1;
+    if (curM < 1) {
+      curM = 12;
+      curY -= 1;
+    }
+  }
+
+  return result;
+}
+
+/**
  * Generate a list of past N financial months (e.g. for dropdowns and trend charts)
  */
 export function getPastFinancialMonths(count = 12, startDay = 1, refDate = new Date()) {
