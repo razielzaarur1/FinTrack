@@ -63,6 +63,60 @@ export function isCashWithdrawalTransaction(merchantName = '', description = '')
  * 4. Neural LLM Classifier (Gemini) with full dossier and live user category tree
  * 5. Deterministic fallback to user's real database categories
  */
+/**
+ * Helper to find category & subcategory IDs in user's tree
+ */
+export function resolveCategoryInHierarchy(catHierarchy, catName, subName) {
+  let category = catName;
+  let subCategory = subName || catName;
+  let categoryId = null;
+  let subCategoryId = null;
+
+  if (subName) {
+    const subMatch = catHierarchy?.subLookup?.get(subName.trim().toLowerCase());
+    if (subMatch) {
+      category = subMatch.parentName;
+      subCategory = subMatch.subName;
+      categoryId = subMatch.parentId;
+      subCategoryId = subMatch.subId;
+      return { category, subCategory, categoryId, subCategoryId };
+    }
+  }
+
+  if (catName) {
+    const rootMatch = catHierarchy?.rootLookup?.get(catName.trim().toLowerCase());
+    if (rootMatch) {
+      category = rootMatch.rootName;
+      categoryId = rootMatch.rootId;
+      const rootObj = catHierarchy?.rootMap?.get(rootMatch.rootId);
+      const subObj = rootObj?.subs?.find(
+        (s) => s.name.trim().toLowerCase() === (subName || '').trim().toLowerCase()
+      ) || rootObj?.subs?.[0];
+      if (subObj) {
+        subCategory = subObj.name;
+        subCategoryId = subObj.id;
+      }
+      return { category, subCategory, categoryId, subCategoryId };
+    }
+  }
+
+  // Fallback to 'שונות' -> 'ללא סיווג'
+  const misc = catHierarchy?.rootLookup?.get('שונות');
+  if (misc) {
+    category = misc.rootName;
+    categoryId = misc.rootId;
+    const miscObj = catHierarchy?.rootMap?.get(misc.rootId);
+    const uncat = miscObj?.subs?.find((s) => s.name === 'ללא סיווג');
+    subCategory = uncat ? uncat.name : 'ללא סיווג';
+    subCategoryId = uncat ? uncat.id : null;
+  } else {
+    category = 'ללא סיווג';
+    subCategory = 'ללא סיווג';
+  }
+
+  return { category, subCategory, categoryId, subCategoryId };
+}
+
 export async function classifyTransaction({
   userId = '00000000-0000-0000-0000-000000000001',
   merchantName = '',
@@ -83,56 +137,7 @@ export async function classifyTransaction({
   const catHierarchy = hierarchy || (await getUserCategoryHierarchy(userId));
 
   // Helper to find category & subcategory IDs in user's tree
-  const resolveInHierarchy = (catName, subName) => {
-    let category = catName;
-    let subCategory = subName || catName;
-    let categoryId = null;
-    let subCategoryId = null;
-
-    if (subName) {
-      const subMatch = catHierarchy.subLookup.get(subName.trim().toLowerCase());
-      if (subMatch) {
-        category = subMatch.parentName;
-        subCategory = subMatch.subName;
-        categoryId = subMatch.parentId;
-        subCategoryId = subMatch.subId;
-        return { category, subCategory, categoryId, subCategoryId };
-      }
-    }
-
-    if (catName) {
-      const rootMatch = catHierarchy.rootLookup.get(catName.trim().toLowerCase());
-      if (rootMatch) {
-        category = rootMatch.rootName;
-        categoryId = rootMatch.rootId;
-        const rootObj = catHierarchy.rootMap.get(rootMatch.rootId);
-        const subObj = rootObj?.subs?.find(
-          (s) => s.name.trim().toLowerCase() === (subName || '').trim().toLowerCase()
-        ) || rootObj?.subs?.[0];
-        if (subObj) {
-          subCategory = subObj.name;
-          subCategoryId = subObj.id;
-        }
-        return { category, subCategory, categoryId, subCategoryId };
-      }
-    }
-
-    // Fallback to 'שונות' -> 'ללא סיווג'
-    const misc = catHierarchy.rootLookup.get('שונות');
-    if (misc) {
-      category = misc.rootName;
-      categoryId = misc.rootId;
-      const miscObj = catHierarchy.rootMap.get(misc.rootId);
-      const uncat = miscObj?.subs?.find((s) => s.name === 'ללא סיווג');
-      subCategory = uncat ? uncat.name : 'ללא סיווג';
-      subCategoryId = uncat ? uncat.id : null;
-    } else {
-      category = 'ללא סיווג';
-      subCategory = 'ללא סיווג';
-    }
-
-    return { category, subCategory, categoryId, subCategoryId };
-  };
+  const resolveInHierarchy = (catName, subName) => resolveCategoryInHierarchy(catHierarchy, catName, subName);
 
   // =========================================================================
   // --- TIER 0: HARD GUARDS
@@ -411,6 +416,7 @@ export async function saveUserRule({
  */
 export async function reclassifyUnreviewedTransactions(userId = '00000000-0000-0000-0000-000000000001') {
   const catHierarchy = await getUserCategoryHierarchy(userId);
+  const resolveInHierarchy = (catName, subName) => resolveCategoryInHierarchy(catHierarchy, catName, subName);
 
   // 1. Fetch user active rules
   let activeRules = [];
