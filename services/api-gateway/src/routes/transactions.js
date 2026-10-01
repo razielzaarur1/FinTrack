@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import { z } from 'zod';
 import { pool } from '../db.js';
 import { saveUserRule, classifyTransaction } from '../services/classifier.js';
-import { classifyWithAi } from '../services/ai-classifier.js';
+import { classifyWithAi, cleanIsraeliMerchantName } from '../services/ai-classifier.js';
 import { verifyTmaToken, verifyTelegramWebAppData, encryptCredentials } from '../crypto.js';
 import { analyzeReceiptFile, analyzeReceiptUrl } from '../services/ai-analyzer.js';
 import { calculateFxDetails } from '../services/exchange-rates.js';
@@ -71,6 +71,8 @@ const updateTransactionSchema = z.object({
   description: z.string().optional().nullable(),
   amount: z.coerce.number().optional(),
   date: z.string().optional(),
+  effectiveDate: z.string().optional().nullable(),
+  amortizationMonths: z.coerce.number().int().min(1).max(60).optional(),
   isIgnored: z.boolean().optional(),
   isCcBilling: z.boolean().optional(),
   applyToSimilar: z.boolean().optional(),
@@ -446,14 +448,14 @@ export default async function transactionsV2Routes(fastify, options) {
       conditions.push(`t.is_ignored = $${values.length}`);
     }
 
-    // Date filters
+    // Date filters (respects user-assigned effective_date if set)
     if (startDate) {
       values.push(startDate);
-      conditions.push(`t.date >= $${values.length}`);
+      conditions.push(`COALESCE(t.effective_date, t.date) >= $${values.length}`);
     }
     if (endDate) {
       values.push(endDate);
-      conditions.push(`t.date <= $${values.length}`);
+      conditions.push(`COALESCE(t.effective_date, t.date) <= $${values.length}`);
     }
 
     // Account / Accounts (multi-select support)
@@ -674,6 +676,8 @@ export default async function transactionsV2Routes(fastify, options) {
         b.memo_parsing_scope AS "accountMemoScope",
         t.external_id AS "externalId",
         t.date,
+        t.effective_date AS "effectiveDate",
+        COALESCE(t.amortization_months, 1) AS "amortizationMonths",
         t.processed_date AS "processedDate",
         COALESCE(
           NULLIF(t.amount, 0),
@@ -1044,6 +1048,8 @@ export default async function transactionsV2Routes(fastify, options) {
           t.user_description AS "userDescription",
           t.category,
           t.date,
+          t.effective_date AS "effectiveDate",
+          COALESCE(t.amortization_months, 1) AS "amortizationMonths",
           t.processed_date AS "processedDate",
           t.raw_data->>'memo' AS "memo",
           t.raw_data AS "rawData",
@@ -1172,7 +1178,7 @@ export default async function transactionsV2Routes(fastify, options) {
       return reply.code(400).send({ error: 'Validation Error', details: parseResult.error.issues });
     }
 
-    const { category, userDescription, merchantName, description, amount, date, isIgnored, applyToSimilar } = parseResult.data;
+    const { category, userDescription, merchantName, description, amount, date, effectiveDate, amortizationMonths, isIgnored, applyToSimilar } = parseResult.data;
     const setClauses = [];
     const values = [];
 
@@ -1193,6 +1199,14 @@ export default async function transactionsV2Routes(fastify, options) {
     if (description !== undefined) {
       values.push(description);
       setClauses.push(`description = $${values.length}`);
+    }
+    if (effectiveDate !== undefined) {
+      values.push(effectiveDate || null);
+      setClauses.push(`effective_date = $${values.length}`);
+    }
+    if (amortizationMonths !== undefined) {
+      values.push(Math.max(1, parseInt(amortizationMonths, 10) || 1));
+      setClauses.push(`amortization_months = $${values.length}`);
     }
     if (amount !== undefined) {
       // Check if wallet transaction, compute balance delta
@@ -1328,7 +1342,9 @@ export default async function transactionsV2Routes(fastify, options) {
         UPDATE transactions 
         SET ${setClauses.join(', ')} 
         WHERE id = $${values.length}
-        RETURNING id, category, merchant_name AS "merchantName", description, amount, date, user_description AS "userDescription", is_ignored AS "isIgnored"
+        RETURNING id, category, merchant_name AS "merchantName", description, amount, date, 
+                  effective_date AS "effectiveDate", amortization_months AS "amortizationMonths",
+                  user_description AS "userDescription", is_ignored AS "isIgnored"
       `;
 
       const result = await pool.query(query, values);
@@ -1586,10 +1602,12 @@ export default async function transactionsV2Routes(fastify, options) {
       }
 
       // Non-BIT normal merchant lookup
-      const searchMerchant = (m && m !== 'בית עסק') ? m : (d && d !== '' ? d : null);
-      if (!searchMerchant) {
+      const baseMerchant = (m && m !== 'בית עסק') ? m : (d && d !== '' ? d : null);
+      if (!baseMerchant) {
         return reply.code(200).send({ data: [], total: 0 });
       }
+
+      const cleaned = cleanIsraeliMerchantName(baseMerchant);
 
       const res = await pool.query(
         `SELECT t.id, t.date, t.amount, t.category, t.merchant_name AS "merchantName", t.description, t.user_description AS "userDescription",
@@ -1599,11 +1617,15 @@ export default async function transactionsV2Routes(fastify, options) {
          WHERE t.id != $1
            AND (
              TRIM(t.merchant_name) = TRIM($2)
-             OR (t.merchant_name IS NOT NULL AND TRIM(t.merchant_name) != 'בית עסק' AND TRIM(t.merchant_name) != '' AND TRIM(t.merchant_name) ILIKE TRIM($2))
+             OR (t.merchant_name IS NOT NULL AND TRIM(t.merchant_name) != 'בית עסק' AND TRIM(t.merchant_name) != '' AND (
+               TRIM(t.merchant_name) ILIKE TRIM($2)
+               OR ($3 != '' AND TRIM(t.merchant_name) ILIKE '%' || $3 || '%')
+               OR ($3 != '' AND TRIM(t.description) ILIKE '%' || $3 || '%')
+             ))
            )
          ORDER BY t.date DESC
-         LIMIT 50`,
-        [id, searchMerchant]
+         LIMIT 500`,
+        [id, baseMerchant, cleaned || baseMerchant]
       );
 
       const data = res.rows.map((r) => ({

@@ -113,7 +113,7 @@ export function AppProvider({ children }) {
   }, [monthStartDay]);
 
   const pastFinancialMonths = useMemo(() => {
-    return getPastFinancialMonths(24, monthStartDay);
+    return getPastFinancialMonths(72, monthStartDay);
   }, [monthStartDay]);
 
   // Security & Authentication State

@@ -77,19 +77,27 @@ export default async function dashboardRoutes(fastify, options) {
       const cycleBounds = getCurrentFinancialMonthBounds(startDay);
       const { startDate, endDate, monthKey } = cycleBounds;
 
-      // 2. Fetch current financial month income & expenses
-      // Ignore ignored transactions AND CC billing debits from bank (to prevent double-counting)
+      // 2. Fetch current financial month income & expenses with amortization support
       const monthlyRes = await pool.query(
-        `SELECT
-           COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0) AS monthly_income,
-           COALESCE(SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END), 0) AS monthly_expenses
-         FROM transactions t
-         JOIN bank_accounts a ON t.account_id = a.id
+        `WITH expanded AS (
+           SELECT 
+             t.id,
+             (t.amount / GREATEST(COALESCE(t.amortization_months, 1), 1)) AS effective_amount,
+             COALESCE(t.effective_date, t.date) + (s.month_offset || ' month')::interval AS ref_date,
+             t.account_id
+           FROM transactions t
+           CROSS JOIN LATERAL generate_series(0, GREATEST(COALESCE(t.amortization_months, 1) - 1, 0)) AS s(month_offset)
+           WHERE t.is_ignored = false
+             AND (t.is_cc_billing = false OR t.is_cc_billing IS NULL)
+         )
+         SELECT
+           COALESCE(SUM(CASE WHEN e.effective_amount > 0 THEN e.effective_amount ELSE 0 END), 0) AS monthly_income,
+           COALESCE(SUM(CASE WHEN e.effective_amount < 0 THEN ABS(e.effective_amount) ELSE 0 END), 0) AS monthly_expenses
+         FROM expanded e
+         JOIN bank_accounts a ON e.account_id = a.id
          WHERE a.user_id = $1
            AND a.is_active = true
-           AND t.is_ignored = false
-           AND (t.is_cc_billing = false OR t.is_cc_billing IS NULL)
-           AND t.date >= $2 AND t.date <= $3`,
+           AND e.ref_date >= $2::date AND e.ref_date <= $3::date`,
         [DEFAULT_USER_ID, startDate, endDate]
       );
 
@@ -99,20 +107,29 @@ export default async function dashboardRoutes(fastify, options) {
         ? Math.max(0, Math.round(((monthlyIncome - monthlyExpenses) / monthlyIncome) * 100))
         : 0;
 
-      // 3. Category Breakdown for current financial month (expenses only)
+      // 3. Category Breakdown for current financial month (expenses only) with amortization
       const catRes = await pool.query(
-        `SELECT
-           COALESCE(category, 'שונות') AS name,
-           SUM(ABS(amount)) AS amount
-         FROM transactions t
-         JOIN bank_accounts a ON t.account_id = a.id
+        `WITH expanded AS (
+           SELECT 
+             COALESCE(t.category, 'שונות') AS name,
+             (t.amount / GREATEST(COALESCE(t.amortization_months, 1), 1)) AS effective_amount,
+             COALESCE(t.effective_date, t.date) + (s.month_offset || ' month')::interval AS ref_date,
+             t.account_id
+           FROM transactions t
+           CROSS JOIN LATERAL generate_series(0, GREATEST(COALESCE(t.amortization_months, 1) - 1, 0)) AS s(month_offset)
+           WHERE t.is_ignored = false
+             AND (t.is_cc_billing = false OR t.is_cc_billing IS NULL)
+             AND t.amount < 0
+         )
+         SELECT
+           e.name,
+           SUM(ABS(e.effective_amount)) AS amount
+         FROM expanded e
+         JOIN bank_accounts a ON e.account_id = a.id
          WHERE a.user_id = $1
            AND a.is_active = true
-           AND t.is_ignored = false
-           AND (t.is_cc_billing = false OR t.is_cc_billing IS NULL)
-           AND t.amount < 0
-           AND t.date >= $2 AND t.date <= $3
-         GROUP BY COALESCE(category, 'שונות')
+           AND e.ref_date >= $2::date AND e.ref_date <= $3::date
+         GROUP BY e.name
          ORDER BY amount DESC`,
         [DEFAULT_USER_ID, startDate, endDate]
       );

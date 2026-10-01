@@ -509,6 +509,8 @@ async function ensureSchema() {
           ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS initial_balance NUMERIC(14, 2) NOT NULL DEFAULT 0.00;
           ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS enable_memo_amount_parsing BOOLEAN DEFAULT NULL;
           ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS memo_parsing_scope VARCHAR(50) DEFAULT NULL;
+          ALTER TABLE transactions ADD COLUMN IF NOT EXISTS effective_date DATE;
+          ALTER TABLE transactions ADD COLUMN IF NOT EXISTS amortization_months INT DEFAULT 1;
           ALTER TABLE transactions ADD COLUMN IF NOT EXISTS processed_date DATE;
           ALTER TABLE transactions ADD COLUMN IF NOT EXISTS is_manual_category BOOLEAN NOT NULL DEFAULT false;
           ALTER TABLE transactions ADD COLUMN IF NOT EXISTS is_reviewed BOOLEAN NOT NULL DEFAULT false;

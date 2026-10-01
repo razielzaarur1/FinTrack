@@ -51,6 +51,8 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
   const [receiptsCount, setReceiptsCount] = useState(tx?.receiptsCount || (tx?.hasReceipts ? 1 : 0));
   const [category, setCategory] = useState(tx?.category || '');
   const [userDesc, setUserDesc] = useState(tx?.userDescription || '');
+  const [effectiveDate, setEffectiveDate] = useState(tx?.effectiveDate ? tx.effectiveDate.slice(0, 10) : '');
+  const [amortizationMonths, setAmortizationMonths] = useState(tx?.amortizationMonths || 1);
   const [isIgnored, setIsIgnored] = useState(tx?.isIgnored || false);
   const [applyToSimilar, setApplyToSimilar] = useState(false);
   const [similarTxs, setSimilarTxs] = useState([]);
@@ -200,6 +202,8 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
 
     setCategory(activeTx.category || '');
     setUserDesc(activeTx.userDescription || '');
+    setEffectiveDate(activeTx.effectiveDate ? activeTx.effectiveDate.slice(0, 10) : '');
+    setAmortizationMonths(activeTx.amortizationMonths || 1);
     setIsIgnored(activeTx.isIgnored || false);
     setApplyToSimilar(false);
 
@@ -311,6 +315,8 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
       const payload = {
         category,
         userDescription: userDesc.trim(),
+        effectiveDate: effectiveDate || null,
+        amortizationMonths: Math.max(1, parseInt(amortizationMonths, 10) || 1),
         isIgnored,
         applyToSimilar,
       };
@@ -983,6 +989,76 @@ export default function TransactionDrawer({ tx, onClose, onUpdate, onStartLinkin
                     <span>{aiFeedback}</span>
                   </div>
                 )}
+              </div>
+
+              {/* Effective Budget Date & Monthly Amortization (Spread across months) */}
+              <div className="p-3.5 rounded-2xl border border-dark-border/80 light:border-light-border/80 bg-dark-surface-elevated/40 light:bg-light-surface-elevated/40 space-y-3">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-dark-text light:text-light-text">
+                  <Calendar className="w-4 h-4 text-sky-400" />
+                  <span>ייחוס תקציבי וחלוקה על פני חודשים</span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {/* Effective / Budget Reference Date */}
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-semibold text-dark-text-muted light:text-light-text-muted flex items-center justify-between">
+                      <span>תאריך ייחוס לתקציב / חודש</span>
+                      {effectiveDate && (
+                        <button
+                          type="button"
+                          onClick={() => setEffectiveDate('')}
+                          className="text-[10px] text-brand-primary hover:underline font-normal cursor-pointer"
+                        >
+                          איפוס למקור ({formatDate(activeTx.date, lang)})
+                        </button>
+                      )}
+                    </label>
+                    <input
+                      type="date"
+                      value={effectiveDate || (activeTx.date ? activeTx.date.slice(0, 10) : '')}
+                      onChange={(e) => setEffectiveDate(e.target.value)}
+                      className="w-full p-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text text-xs focus:outline-none focus:border-brand-primary"
+                    />
+                    <div className="text-[10px] text-dark-text-muted light:text-light-text-muted">
+                      {effectiveDate && effectiveDate !== activeTx.date?.slice(0, 10)
+                        ? 'תנועה זו תחושב בתקציב ובדוחות של תאריך זה במקום תאריך החיוב המקורי'
+                        : 'ברירת מחדל: מחושב לפי תאריך העסקה המקורי'}
+                    </div>
+                  </div>
+
+                  {/* Monthly Amortization (חלוקה על פני חודשים) */}
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-semibold text-dark-text-muted light:text-light-text-muted flex items-center justify-between">
+                      <span>חלוקה על פני מספר חודשים</span>
+                      {amortizationMonths > 1 && (
+                        <span className="text-[10px] text-emerald-400 font-bold font-mono">
+                          {formatILS((Math.abs(parseFloat(activeTx.amount) || 0) / amortizationMonths).toFixed(2))} לחודש
+                        </span>
+                      )}
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={amortizationMonths}
+                        onChange={(e) => setAmortizationMonths(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                        className="w-full p-2 rounded-xl border border-dark-border light:border-light-border bg-dark-surface light:bg-light-surface text-dark-text light:text-light-text text-xs font-semibold focus:outline-none focus:border-brand-primary cursor-pointer"
+                      >
+                        <option value="1">חודש 1 (ללא חלוקה)</option>
+                        <option value="2">2 חודשים</option>
+                        <option value="3">3 חודשים (למשל: דמי לידה / רבעון)</option>
+                        <option value="4">4 חודשים</option>
+                        <option value="6">6 חודשים (חצי שנה)</option>
+                        <option value="12">12 חודשים (שנה מלאה)</option>
+                        <option value="24">24 חודשים (שנתיים)</option>
+                        <option value="36">36 חודשים (3 שנים)</option>
+                      </select>
+                    </div>
+                    <div className="text-[10px] text-dark-text-muted light:text-light-text-muted">
+                      {amortizationMonths > 1
+                        ? `הסכום (${formatILS(activeTx.amount)}) יתפרס שווה בשווה על פני ${amortizationMonths} חודשים החל מחודש הייחוס`
+                        : 'הסכום מחושב במלואו בחודש אחד'}
+                    </div>
+                  </div>
+                </div>
               </div>
 
               {/* Compact Checkboxes: Ignore & ApplyToSimilar */}

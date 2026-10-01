@@ -33,7 +33,8 @@ import {
   RotateCcw,
   Calendar,
   Loader2,
-  FileSpreadsheet
+  FileSpreadsheet,
+  BarChart3
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useApp } from '@/lib/app-context';
@@ -41,6 +42,7 @@ import CategoryBadge from '@/components/common/CategoryBadge';
 import IconPickerModal from '@/components/common/IconPickerModal';
 import CsvImportWizard from '@/components/transactions/CsvImportWizard';
 import CardsSettingsTab from '@/components/settings/CardsSettingsTab';
+import AnalyticsSettingsTab from '@/components/settings/AnalyticsSettingsTab';
 import LearnedRulesSection from '@/components/settings/LearnedRulesSection';
 import CategorySuggestionsSection from '@/components/settings/CategorySuggestionsSection';
 import { CATEGORIES_DATA, setDynamicCategories } from '@/lib/categories';
@@ -143,8 +145,8 @@ export default function SettingsPage() {
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const tabParam = new URLSearchParams(window.location.search).get('tab');
-      if (tabParam && ['general', 'cards', 'categories', 'data', 'reconciliation', 'telegram', 'ai', 'danger'].includes(tabParam)) {
-        setActiveSettingsTab(tabParam);
+      if (tabParam && ['general', 'cards', 'analytics', 'statistics', 'categories', 'data', 'reconciliation', 'telegram', 'ai', 'danger'].includes(tabParam)) {
+        setActiveSettingsTab(tabParam === 'statistics' ? 'analytics' : tabParam);
       }
     }
   }, []);
@@ -1069,6 +1071,7 @@ export default function SettingsPage() {
         {[
           { id: 'general', label: lang === 'he' ? 'כללי ומערכת' : 'General', icon: SettingsIcon },
           { id: 'cards', label: lang === 'he' ? 'כרטיסים וחשבונות' : 'Cards & Accounts', icon: CreditCard },
+          { id: 'analytics', label: lang === 'he' ? 'סטטיסטיקות ותובנות' : 'Analytics & Stats', icon: BarChart3 },
           { id: 'categories', label: lang === 'he' ? 'ניהול קטגוריות' : 'Categories', icon: Tag },
           { id: 'data', label: lang === 'he' ? 'ייבוא וייצוא נתונים' : 'Data Import & Export', icon: Download },
           { id: 'reconciliation', label: lang === 'he' ? 'התאמת אשראי' : 'Credit Card Match', icon: Layers },
@@ -1423,6 +1426,11 @@ export default function SettingsPage() {
       {/* Tab: Cards & Accounts */}
       {activeSettingsTab === 'cards' && (
         <CardsSettingsTab />
+      )}
+
+      {/* Tab: Analytics & Statistics Settings */}
+      {activeSettingsTab === 'analytics' && (
+        <AnalyticsSettingsTab />
       )}
 
       {/* Tab 2: Categories */}

@@ -1305,6 +1305,11 @@ function TransactionsContent() {
                             חולץ מ-Memo
                           </span>
                         )}
+                        {tx.amortizationMonths > 1 && (
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded bg-emerald-500/15 text-emerald-400 text-[10px] font-semibold border border-emerald-500/25 shrink-0" title={`מחולק על פני ${tx.amortizationMonths} חודשים`}>
+                            <span>חלוקה ({tx.amortizationMonths} חודשים)</span>
+                          </span>
+                        )}
                         {tx.status === 'pending' && (
                           <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-500 text-[10px] font-medium shrink-0">
                             <Clock className="w-2.5 h-2.5" />
@@ -1313,9 +1318,16 @@ function TransactionsContent() {
                         )}
                       </div>
 
-                      {/* Subtitle: Date • Account • Parent > Subcategory */}
+                      {/* Subtitle: Date (or Effective Date) • Account • Parent > Subcategory */}
                       <div className="text-[11px] text-dark-text-muted light:text-light-text-muted flex items-center gap-1.5 flex-wrap">
-                        <span className="shrink-0">{formatDate(tx.date, lang)}</span>
+                        <span className="shrink-0">
+                          {formatDate(tx.effectiveDate || tx.date, lang)}
+                          {tx.effectiveDate && tx.effectiveDate.slice(0, 10) !== tx.date.slice(0, 10) && (
+                            <span className="text-[10px] text-sky-400 mr-1 font-semibold" title={`תאריך מקורי: ${formatDate(tx.date, lang)}`}>
+                              (תאריך תקציבי)
+                            </span>
+                          )}
+                        </span>
                         <span>•</span>
                         <span className="font-mono text-dark-text-muted shrink-0">{accountText}</span>
                         <span>•</span>

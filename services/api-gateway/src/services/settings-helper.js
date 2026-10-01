@@ -111,7 +111,7 @@ export function getCurrentFinancialMonthBounds(startDay = 1, refDate = new Date(
  * @param {string} dateColumn
  * @returns {string}
  */
-export function getFinancialMonthSqlExpression(startDay = 1, dateColumn = 't.date') {
+export function getFinancialMonthSqlExpression(startDay = 1, dateColumn = 'COALESCE(t.effective_date, t.date)') {
   const sDay = Math.min(31, Math.max(1, parseInt(startDay, 10) || 1));
   if (sDay === 1) {
     return `TO_CHAR(${dateColumn}, 'YYYY-MM')`;

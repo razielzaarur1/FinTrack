@@ -216,11 +216,37 @@ export const api = {
     if (opts.accountIds) q.append('accountIds', Array.isArray(opts.accountIds) ? opts.accountIds.join(',') : opts.accountIds);
     return request(`/api/analytics/category-breakdown?${q.toString()}`);
   },
-  getCategoryAverages: (startDay) => {
+  getCategoryAverages: (arg1, months, categories) => {
+    let opts = {};
+    if (typeof arg1 === 'object' && arg1 !== null) {
+      opts = arg1;
+    } else {
+      opts = { startDay: arg1, months, categories };
+    }
     const q = new URLSearchParams();
-    if (startDay) q.append('startDay', startDay);
+    if (opts.startDay) q.append('startDay', opts.startDay);
+    if (opts.months) q.append('months', opts.months);
+    if (opts.categories) {
+      q.append('categories', Array.isArray(opts.categories) ? JSON.stringify(opts.categories) : String(opts.categories));
+    }
     return request(`/api/analytics/category-averages${q.toString() ? `?${q.toString()}` : ''}`);
   },
+  getHistoricalBalanceSummary: (arg1) => {
+    let opts = typeof arg1 === 'object' && arg1 !== null ? arg1 : { months: arg1 };
+    const q = new URLSearchParams();
+    if (opts.months) q.append('months', opts.months);
+    if (opts.startDay) q.append('startDay', opts.startDay);
+    return request(`/api/analytics/historical-balance-summary${q.toString() ? `?${q.toString()}` : ''}`);
+  },
+  getDeepStats: (arg1) => {
+    let opts = typeof arg1 === 'object' && arg1 !== null ? arg1 : {};
+    const q = new URLSearchParams();
+    if (opts.startDate) q.append('startDate', opts.startDate);
+    if (opts.endDate) q.append('endDate', opts.endDate);
+    if (opts.startDay) q.append('startDay', opts.startDay);
+    return request(`/api/analytics/deep-stats${q.toString() ? `?${q.toString()}` : ''}`);
+  },
+  generateAiWidget: (data) => request('/api/analytics/ai-widget', { method: 'POST', body: JSON.stringify(data || {}) }),
   getTopExpenses: (arg1, month, limit = 5, startDay) => {
     let opts = {};
     if (typeof arg1 === 'object' && arg1 !== null) {

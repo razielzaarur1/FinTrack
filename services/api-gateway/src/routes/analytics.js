@@ -7,6 +7,7 @@ import {
   getCurrentFinancialMonthBounds, 
   getFinancialMonthSqlExpression 
 } from '../services/settings-helper.js';
+import { generateAiWidgetData } from '../services/ai-widget-service.js';
 
 export default async function analyticsRoutes(fastify, options) {
   // GET /api/analytics/overview - Overall KPI summaries for current month or selected date range
@@ -37,27 +38,38 @@ export default async function analyticsRoutes(fastify, options) {
 
     try {
       // Monthly income & expense from non-ignored transactions (accurately differentiating refunds from income, excluding CC billing payments)
+      // Monthly income & expense with amortization support (spreading over N months starting from effective_date || date)
       const txQuery = `
+        WITH expanded AS (
+          SELECT 
+            t.id,
+            t.category,
+            COALESCE(t.effective_date, t.date) + (s.month_offset || ' month')::interval AS ref_date,
+            (t.amount / GREATEST(COALESCE(t.amortization_months, 1), 1)) AS effective_amount,
+            t.account_id
+          FROM transactions t
+          CROSS JOIN LATERAL generate_series(0, GREATEST(COALESCE(t.amortization_months, 1) - 1, 0)) AS s(month_offset)
+          WHERE t.is_ignored = false
+            AND (t.is_cc_billing = false OR t.is_cc_billing IS NULL)
+        )
         SELECT 
           COALESCE(SUM(CASE 
-            WHEN (c.type = 'income' OR (c.type IS NULL AND t.category IN ('משכורת', 'הכנסה', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות', 'הכנסות'))) AND t.amount > 0 
-            THEN t.amount 
+            WHEN (c.type = 'income' OR (c.type IS NULL AND e.category IN ('משכורת', 'הכנסה', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות', 'הכנסות'))) AND e.effective_amount > 0 
+            THEN e.effective_amount 
             ELSE 0 
           END), 0) AS "totalIncome",
           COALESCE(SUM(CASE 
             WHEN c.type = 'income' THEN 0
-            WHEN t.amount < 0 THEN ABS(t.amount)
-            WHEN t.amount > 0 AND (c.type = 'expense' OR t.category NOT IN ('משכורת', 'הכנסה', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות', 'הכנסות'))
-            THEN -t.amount
+            WHEN e.effective_amount < 0 THEN ABS(e.effective_amount)
+            WHEN e.effective_amount > 0 AND (c.type = 'expense' OR e.category NOT IN ('משכורת', 'הכנסה', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות', 'הכנסות'))
+            THEN -e.effective_amount
             ELSE 0 
           END), 0) AS "totalExpense",
           COUNT(*) AS "transactionCount"
-        FROM transactions t
-        JOIN bank_accounts a ON t.account_id = a.id
-        LEFT JOIN categories c ON (t.category = c.name OR t.category = c.name_en)
-        WHERE t.date >= $1 AND t.date <= $2 
-          AND t.is_ignored = false
-          AND (t.is_cc_billing = false OR t.is_cc_billing IS NULL)
+        FROM expanded e
+        JOIN bank_accounts a ON e.account_id = a.id
+        LEFT JOIN categories c ON (e.category = c.name OR e.category = c.name_en)
+        WHERE e.ref_date >= $1::date AND e.ref_date <= $2::date
           AND (a.include_in_expenses IS NOT FALSE)
           AND (a.is_prepaid = false OR a.prepaid_mode != 'ignore_all' OR a.prepaid_mode IS NULL)
       `;
@@ -91,9 +103,9 @@ export default async function analyticsRoutes(fastify, options) {
     }
   });
 
-  // GET /api/analytics/monthly-trend - Income, expense and savings trend across N months
+  // GET /api/analytics/monthly-trend - Income, expense and savings trend across N months (up to 60)
   fastify.get('/monthly-trend', async (request, reply) => {
-    const monthsCount = Math.min(parseInt(request.query.months, 10) || 12, 24);
+    const monthsCount = Math.min(parseInt(request.query.months, 10) || 12, 60);
     const { accountId, startDay: queryStartDay, monthStartDay } = request.query;
     const startDay = (queryStartDay || monthStartDay)
       ? Math.min(31, Math.max(1, parseInt(queryStartDay || monthStartDay, 10) || 10))
@@ -206,25 +218,42 @@ export default async function analyticsRoutes(fastify, options) {
     const whereClause = conditions.join(' AND ');
 
     const query = `
-      WITH itemized AS (
-        -- 1. Standard non-split transactions
+      WITH expanded AS (
         SELECT 
           t.id,
           t.category,
-          ABS(t.amount) AS amount
+          (t.amount / GREATEST(COALESCE(t.amortization_months, 1), 1)) AS effective_amount,
+          COALESCE(t.effective_date, t.date) + (s.month_offset || ' month')::interval AS ref_date,
+          t.is_split,
+          t.account_id
         FROM transactions t
-        WHERE ${whereClause} AND (t.is_split = false OR t.is_split IS NULL)
+        CROSS JOIN LATERAL generate_series(0, GREATEST(COALESCE(t.amortization_months, 1) - 1, 0)) AS s(month_offset)
+        WHERE t.is_ignored = false
+          AND (t.is_cc_billing = false OR t.is_cc_billing IS NULL)
+          AND (COALESCE(t.effective_date, t.date) + (s.month_offset || ' month')::interval) >= $1::date
+          AND (COALESCE(t.effective_date, t.date) + (s.month_offset || ' month')::interval) <= $2::date
+          ${accountIds ? `AND t.account_id = ANY($3::uuid[])` : accountId ? `AND t.account_id = $3` : ''}
+          ${type === 'income' ? 'AND t.amount > 0' : 'AND (t.amount < 0 OR (t.amount > 0 AND COALESCE(t.category, \'\') NOT IN (\'משכורת\', \'הכנסה\', \'קצבה או מלגה\', \'הכנסה מנכס\', \'הכנסה מעסק\', \'דיווידנדים ורווחים\', \'הכנסות שונות\', \'הכנסות\', \'Salary\', \'Income\')))'}
+      ),
+      itemized AS (
+        -- 1. Standard non-split transactions (or amortized non-split)
+        SELECT 
+          e.id,
+          e.category,
+          ABS(e.effective_amount) AS amount
+        FROM expanded e
+        WHERE (e.is_split = false OR e.is_split IS NULL)
 
         UNION ALL
 
         -- 2. Split transaction itemized rows
         SELECT 
-          t.id,
+          e.id,
           ts.category,
-          ABS(ts.amount) AS amount
+          (ABS(ts.amount) / GREATEST(COALESCE((SELECT t2.amortization_months FROM transactions t2 WHERE t2.id = e.id), 1), 1)) AS amount
         FROM transaction_splits ts
-        JOIN transactions t ON ts.transaction_id = t.id
-        WHERE ${whereClause} AND t.is_split = true
+        JOIN expanded e ON ts.transaction_id = e.id
+        WHERE e.is_split = true
       )
       SELECT 
         COALESCE(c.name, i.category, 'שונות') AS "name",
@@ -408,22 +437,57 @@ export default async function analyticsRoutes(fastify, options) {
     }
   });
 
-  // GET /api/analytics/category-averages - Monthly average spending per specific relevant category (strictly 12 months)
+  // GET /api/analytics/category-averages - Monthly average spending per category with configurable lookback & custom categories
   fastify.get('/category-averages', async (request, reply) => {
     try {
-      const { startDay: queryStartDay, monthStartDay } = request.query;
+      const { startDay: queryStartDay, monthStartDay, months: queryMonths, categories: queryCategories } = request.query;
       const startDay = (queryStartDay || monthStartDay)
         ? Math.min(31, Math.max(1, parseInt(queryStartDay || monthStartDay, 10) || 10))
         : await getSystemMonthStartDay(pool);
 
-      // Build exactly 12 financial month keys from 11 cycles ago to current cycle
+      // Load user settings if any custom averages or lookback period are saved
+      let customAverages = null;
+      let configuredLookback = parseInt(queryMonths, 10);
+      try {
+        const settingsRes = await pool.query(
+          `SELECT settings FROM system_settings WHERE user_id = '00000000-0000-0000-0000-000000000001'`
+        );
+        if (settingsRes.rows.length > 0 && settingsRes.rows[0].settings) {
+          const s = settingsRes.rows[0].settings;
+          if (!configuredLookback && s.analyticsAveragesLookbackMonths) {
+            configuredLookback = parseInt(s.analyticsAveragesLookbackMonths, 10);
+          }
+          if (Array.isArray(s.analyticsCustomAverages) && s.analyticsCustomAverages.length > 0) {
+            customAverages = s.analyticsCustomAverages;
+          }
+        }
+      } catch (err) {
+        console.warn('Could not read user settings for averages:', err.message);
+      }
+
+      // Check query param override for categories
+      if (queryCategories) {
+        try {
+          if (queryCategories.startsWith('[')) {
+            customAverages = JSON.parse(queryCategories);
+          } else {
+            customAverages = queryCategories.split(',').map((c) => ({ name: c.trim(), key: c.trim() })).filter(c => c.name);
+          }
+        } catch (e) {
+          customAverages = queryCategories.split(',').map((c) => ({ name: c.trim(), key: c.trim() })).filter(c => c.name);
+        }
+      }
+
+      const lookbackMonths = Math.min(Math.max(configuredLookback || 12, 1), 60);
+
+      // Build exact financial month keys from past cycles to current cycle
       const monthLabels = [];
       const heMonths = ['ינו׳', 'פבר׳', 'מרץ', 'אפר׳', 'מאי', 'יוני', 'יולי', 'אוג׳', 'ספט׳', 'אוק׳', 'נוב׳', 'דצמ׳'];
       const currentBounds = getCurrentFinancialMonthBounds(startDay);
       let curYear = currentBounds.year;
       let curMonth = currentBounds.month;
 
-      for (let i = 0; i < 12; i++) {
+      for (let i = 0; i < lookbackMonths; i++) {
         const bounds = getFinancialMonthBounds(curYear, curMonth, startDay);
         monthLabels.unshift({
           key: bounds.monthKey,
@@ -440,8 +504,8 @@ export default async function analyticsRoutes(fastify, options) {
         }
       }
 
-      // Define focused, highly relevant everyday spending categories
-      const FOCUSED_CATEGORIES = [
+      // Default categories if user hasn't customized
+      const DEFAULT_FOCUSED_CATEGORIES = [
         {
           key: 'dining',
           name: 'אוכל בחוץ',
@@ -493,10 +557,28 @@ export default async function analyticsRoutes(fastify, options) {
         },
       ];
 
+      // Prepare target categories list
+      const targetCategoryDefs = (customAverages && customAverages.length > 0)
+        ? customAverages.map((c, i) => {
+            const name = c.name || c.category || c.title || 'קטגוריה';
+            // Find if matching predefined exists for rich match terms
+            const existingPredefined = DEFAULT_FOCUSED_CATEGORIES.find(
+              (p) => p.name === name || p.key === c.key
+            );
+            return {
+              key: c.key || `custom_${i}`,
+              name,
+              title: name,
+              icon: c.icon || existingPredefined?.icon || 'Tag',
+              color: c.color || existingPredefined?.color || '#6366f1',
+              matchTerms: c.matchTerms || existingPredefined?.matchTerms || [name, ...(c.keywords || [])],
+            };
+          })
+        : DEFAULT_FOCUSED_CATEGORIES;
+
       const monthSql = getFinancialMonthSqlExpression(startDay, 't.date');
 
-      // Query historical transactions in the last 12-13 months (non-ignored expenses, capturing both positive & negative amount expense records)
-      // Including split transactions itemized by split category & split amount
+      // Query historical transactions
       const historicalRes = await pool.query(`
         WITH itemized AS (
           SELECT 
@@ -523,7 +605,7 @@ export default async function analyticsRoutes(fastify, options) {
                 AND COALESCE(t.category, '') NOT IN ('משכורת', 'הכנסה', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות', 'הכנסות', 'Salary', 'Income')
               )
             )
-            AND t.date >= (CURRENT_DATE - INTERVAL '14 months')
+            AND t.date >= (CURRENT_DATE - INTERVAL '${lookbackMonths + 2} months')
 
           UNION ALL
 
@@ -552,7 +634,7 @@ export default async function analyticsRoutes(fastify, options) {
                 AND COALESCE(ts.category, '') NOT IN ('משכורת', 'הכנסה', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות', 'הכנסות', 'Salary', 'Income')
               )
             )
-            AND t.date >= (CURRENT_DATE - INTERVAL '14 months')
+            AND t.date >= (CURRENT_DATE - INTERVAL '${lookbackMonths + 2} months')
         )
         SELECT * FROM itemized
         ORDER BY date DESC
@@ -560,7 +642,7 @@ export default async function analyticsRoutes(fastify, options) {
 
       const currentMonthKey = monthLabels[monthLabels.length - 1].key;
 
-      const results = FOCUSED_CATEGORIES.map((catDef) => {
+      const results = targetCategoryDefs.map((catDef) => {
         const matchesItem = (row) => {
           const cleanDesc = cleanSpacedHebrew(row.description);
           const cleanMerchant = cleanSpacedHebrew(row.merchantName);
@@ -585,7 +667,7 @@ export default async function analyticsRoutes(fastify, options) {
           totalHistorical += absAmount;
         }
 
-        // Build 12-month distribution curve data
+        // Build distribution curve data
         const distribution = monthLabels.map((m) => {
           const spend = Math.round((monthSpendMap[m.key] || 0) * 100) / 100;
           return {
@@ -596,8 +678,8 @@ export default async function analyticsRoutes(fastify, options) {
           };
         });
 
-        // 12-month average strictly divided by 12
-        const monthlyAvg = Math.round((totalHistorical / 12) * 100) / 100;
+        // Monthly average strictly divided by selected lookbackMonths
+        const monthlyAvg = Math.round((totalHistorical / lookbackMonths) * 100) / 100;
         const currentMonthSpend = Math.round((monthSpendMap[currentMonthKey] || 0) * 100) / 100;
         const diffPercent = monthlyAvg > 0 ? Math.round(((currentMonthSpend - monthlyAvg) / monthlyAvg) * 100) : 0;
 
@@ -632,7 +714,7 @@ export default async function analyticsRoutes(fastify, options) {
       });
 
       return reply.code(200).send({
-        distinctMonths: 12,
+        distinctMonths: lookbackMonths,
         data: results,
       });
     } catch (err) {
@@ -701,6 +783,347 @@ export default async function analyticsRoutes(fastify, options) {
       });
     } catch (err) {
       return reply.code(500).send({ error: 'Database error' });
+    }
+  });
+
+  // GET /api/analytics/historical-balance-summary - Monthly averages & Income/Expense balance over customizable period with drilldown
+  fastify.get('/historical-balance-summary', async (request, reply) => {
+    try {
+      const { startDay: queryStartDay, monthStartDay, months: queryMonths } = request.query;
+      const startDay = (queryStartDay || monthStartDay)
+        ? Math.min(31, Math.max(1, parseInt(queryStartDay || monthStartDay, 10) || 10))
+        : await getSystemMonthStartDay(pool);
+
+      let lookbackMonths = parseInt(queryMonths, 10);
+      if (!lookbackMonths) {
+        try {
+          const settingsRes = await pool.query(
+            `SELECT settings FROM system_settings WHERE user_id = '00000000-0000-0000-0000-000000000001'`
+          );
+          if (settingsRes.rows.length > 0 && settingsRes.rows[0].settings?.analyticsAveragesLookbackMonths) {
+            lookbackMonths = parseInt(settingsRes.rows[0].settings.analyticsAveragesLookbackMonths, 10);
+          }
+        } catch (e) {}
+      }
+      lookbackMonths = Math.min(Math.max(lookbackMonths || 12, 1), 60);
+
+      const monthSql = getFinancialMonthSqlExpression(startDay, 't.date');
+
+      // Build array of month labels for lookback
+      const monthLabels = [];
+      const heMonths = ['ינו׳', 'פבר׳', 'מרץ', 'אפר׳', 'מאי', 'יוני', 'יולי', 'אוג׳', 'ספט׳', 'אוק׳', 'נוב׳', 'דצמ׳'];
+      const currentBounds = getCurrentFinancialMonthBounds(startDay);
+      let curYear = currentBounds.year;
+      let curMonth = currentBounds.month;
+
+      for (let i = 0; i < lookbackMonths; i++) {
+        const bounds = getFinancialMonthBounds(curYear, curMonth, startDay);
+        monthLabels.unshift({
+          key: bounds.monthKey,
+          label: `${heMonths[bounds.month - 1]} ${String(bounds.year).slice(2)}`,
+          year: bounds.year,
+          month: bounds.month,
+          startDate: bounds.startDate,
+          endDate: bounds.endDate,
+        });
+        curMonth -= 1;
+        if (curMonth < 1) {
+          curMonth = 12;
+          curYear -= 1;
+        }
+      }
+
+      const query = `
+        SELECT 
+          ${monthSql} AS "monthKey",
+          COALESCE(SUM(CASE 
+            WHEN (c.type = 'income' OR (c.type IS NULL AND t.category IN ('משכורת', 'הכנסה', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות', 'הכנסות'))) AND t.amount > 0 
+            THEN t.amount 
+            ELSE 0 
+          END), 0) AS "income",
+          COALESCE(SUM(CASE 
+            WHEN c.type = 'income' THEN 0
+            WHEN t.amount < 0 THEN ABS(t.amount)
+            WHEN t.amount > 0 AND (c.type = 'expense' OR t.category NOT IN ('משכורת', 'הכנסה', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות', 'הכנסות'))
+            THEN -t.amount
+            ELSE 0 
+          END), 0) AS "expenses",
+          COUNT(*) AS "txCount"
+        FROM transactions t
+        JOIN bank_accounts a ON t.account_id = a.id
+        LEFT JOIN categories c ON (t.category = c.name OR t.category = c.name_en)
+        WHERE t.is_ignored = false
+          AND (t.is_cc_billing = false OR t.is_cc_billing IS NULL)
+          AND (a.include_in_expenses IS NOT FALSE)
+          AND (a.is_prepaid = false OR a.prepaid_mode != 'ignore_all' OR a.prepaid_mode IS NULL)
+          AND t.date >= (CURRENT_DATE - INTERVAL '${lookbackMonths + 2} months')
+        GROUP BY ${monthSql}
+        ORDER BY "monthKey" ASC
+      `;
+
+      const res = await pool.query(query);
+      const rowMap = new Map();
+      for (const r of res.rows) {
+        rowMap.set(r.monthKey, {
+          income: parseFloat(r.income) || 0,
+          expenses: Math.max(0, parseFloat(r.expenses) || 0),
+          txCount: parseInt(r.txCount, 10) || 0,
+        });
+      }
+
+      let totalIncome = 0;
+      let totalExpenses = 0;
+
+      const monthlyData = monthLabels.map((m) => {
+        const item = rowMap.get(m.key) || { income: 0, expenses: 0, txCount: 0 };
+        const inc = Math.round(item.income * 100) / 100;
+        const exp = Math.round(item.expenses * 100) / 100;
+        const balance = Math.round((inc - exp) * 100) / 100;
+        const savingsRate = inc > 0 ? Math.round(((inc - exp) / inc) * 100) : (exp > 0 ? -100 : 0);
+
+        totalIncome += inc;
+        totalExpenses += exp;
+
+        return {
+          monthKey: m.key,
+          label: m.label,
+          year: m.year,
+          month: m.month,
+          startDate: m.startDate,
+          endDate: m.endDate,
+          income: inc,
+          expenses: exp,
+          balance,
+          savingsRate,
+          txCount: item.txCount,
+          status: balance > 0 ? 'surplus' : balance < 0 ? 'deficit' : 'balanced',
+        };
+      });
+
+      const totalBalance = Math.round((totalIncome - totalExpenses) * 100) / 100;
+      const avgIncome = Math.round((totalIncome / lookbackMonths) * 100) / 100;
+      const avgExpenses = Math.round((totalExpenses / lookbackMonths) * 100) / 100;
+      const avgBalance = Math.round((totalBalance / lookbackMonths) * 100) / 100;
+      const overallSavingsRate = totalIncome > 0 ? Math.round((totalBalance / totalIncome) * 100) : 0;
+
+      // Find notable months
+      const monthsWithData = monthlyData.filter(m => m.income > 0 || m.expenses > 0);
+      const bestMonth = monthsWithData.length > 0 
+        ? [...monthsWithData].sort((a, b) => b.balance - a.balance)[0]
+        : null;
+      const worstMonth = monthsWithData.length > 0 
+        ? [...monthsWithData].sort((a, b) => a.balance - b.balance)[0]
+        : null;
+      const highestExpenseMonth = monthsWithData.length > 0 
+        ? [...monthsWithData].sort((a, b) => b.expenses - a.expenses)[0]
+        : null;
+      const highestIncomeMonth = monthsWithData.length > 0 
+        ? [...monthsWithData].sort((a, b) => b.income - a.income)[0]
+        : null;
+
+      return reply.code(200).send({
+        lookbackMonths,
+        startDay,
+        summary: {
+          totalIncome: Math.round(totalIncome * 100) / 100,
+          totalExpenses: Math.round(totalExpenses * 100) / 100,
+          totalBalance,
+          monthlyAverageIncome: avgIncome,
+          monthlyAverageExpenses: avgExpenses,
+          monthlyAverageBalance: avgBalance,
+          overallSavingsRate,
+          bestMonth,
+          worstMonth,
+          highestExpenseMonth,
+          highestIncomeMonth,
+        },
+        months: monthlyData,
+      });
+    } catch (err) {
+      fastify.log.error(err, 'Failed to fetch historical balance summary');
+      return reply.code(500).send({ error: 'Database error' });
+    }
+  });
+
+  // GET /api/analytics/deep-stats - Rich financial stats: Fixed vs Variable, Day-of-Week, Burn Rate, Spikes & Account mix
+  fastify.get('/deep-stats', async (request, reply) => {
+    try {
+      const { startDate: queryStartDate, endDate: queryEndDate, startDay: queryStartDay, monthStartDay } = request.query;
+      const startDay = (queryStartDay || monthStartDay)
+        ? Math.min(31, Math.max(1, parseInt(queryStartDay || monthStartDay, 10) || 10))
+        : await getSystemMonthStartDay(pool);
+
+      const currentBounds = getCurrentFinancialMonthBounds(startDay);
+      const startDate = queryStartDate || currentBounds.startDate;
+      const endDate = queryEndDate || currentBounds.endDate;
+
+      // 1. Fixed vs. Variable Expenses classification
+      const FIXED_CATEGORY_KEYWORDS = [
+        'משק בית', 'חשבונות', 'חשמל', 'מים', 'ארנונה', 'אינטרנט', 'תקשורת', 'טלפון',
+        'שכר דירה', 'משכנתא', 'ביטוח', 'ביטוחים', 'הוראת קבע', 'מינוי', 'מנוי', 'ועד בית',
+        'שכר לימוד', 'חינוך', 'גן ילדים', 'מעון', 'הלוואה', 'הלוואות'
+      ];
+
+      const fixedQuery = `
+        SELECT 
+          t.id,
+          t.date,
+          ABS(t.amount) AS amount,
+          COALESCE(t.category, 'שונות') AS category,
+          COALESCE(NULLIF(t.merchant_name, ''), t.description, 'עסקה') AS merchant,
+          a.display_name AS account_name,
+          a.bank_company
+        FROM transactions t
+        JOIN bank_accounts a ON t.account_id = a.id
+        LEFT JOIN categories c ON (t.category = c.name OR t.category = c.name_en)
+        WHERE t.date >= $1 AND t.date <= $2
+          AND t.is_ignored = false
+          AND (t.is_cc_billing = false OR t.is_cc_billing IS NULL)
+          AND (a.include_in_expenses IS NOT FALSE)
+          AND (a.is_prepaid = false OR a.prepaid_mode != 'ignore_all' OR a.prepaid_mode IS NULL)
+          AND (
+            t.amount < 0 
+            OR (
+              t.amount > 0 
+              AND COALESCE(t.category, '') NOT IN ('משכורת', 'הכנסה', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות', 'הכנסות', 'Salary', 'Income')
+            )
+          )
+      `;
+
+      const txResult = await pool.query(fixedQuery, [startDate, endDate]);
+      const txRows = txResult.rows;
+
+      let fixedTotal = 0;
+      let variableTotal = 0;
+      const fixedItems = [];
+      const variableItems = [];
+
+      for (const row of txRows) {
+        const amt = parseFloat(row.amount) || 0;
+        const text = `${row.category} ${row.merchant}`.toLowerCase();
+        const isFixed = FIXED_CATEGORY_KEYWORDS.some(kw => text.includes(kw));
+
+        if (isFixed) {
+          fixedTotal += amt;
+          fixedItems.push(row);
+        } else {
+          variableTotal += amt;
+          variableItems.push(row);
+        }
+      }
+
+      const totalExpenses = fixedTotal + variableTotal;
+      const fixedPercent = totalExpenses > 0 ? Math.round((fixedTotal / totalExpenses) * 100) : 0;
+      const variablePercent = totalExpenses > 0 ? 100 - fixedPercent : 0;
+
+      // 2. Day of Week Spending Breakdown (DOW 0=Sunday to 6=Saturday)
+      const dayOfWeekMap = {
+        0: { dayNum: 0, name: 'יום ראשון', short: 'א׳', amount: 0, count: 0 },
+        1: { dayNum: 1, name: 'יום שני', short: 'ב׳', amount: 0, count: 0 },
+        2: { dayNum: 2, name: 'יום שלישי', short: 'ג׳', amount: 0, count: 0 },
+        3: { dayNum: 3, name: 'יום רביעי', short: 'ד׳', amount: 0, count: 0 },
+        4: { dayNum: 4, name: 'יום חמישי', short: 'ה׳', amount: 0, count: 0 },
+        5: { dayNum: 5, name: 'יום שישי', short: 'ו׳', amount: 0, count: 0 },
+        6: { dayNum: 6, name: 'שבת', short: 'שבת', amount: 0, count: 0 },
+      };
+
+      for (const row of txRows) {
+        const amt = parseFloat(row.amount) || 0;
+        const d = new Date(row.date);
+        const dow = d.getDay();
+        if (dayOfWeekMap[dow]) {
+          dayOfWeekMap[dow].amount += amt;
+          dayOfWeekMap[dow].count += 1;
+        }
+      }
+
+      const daysList = Object.values(dayOfWeekMap).map(d => ({
+        ...d,
+        amount: Math.round(d.amount * 100) / 100,
+        averagePerTx: d.count > 0 ? Math.round((d.amount / d.count) * 100) / 100 : 0,
+      }));
+
+      const weekdayTotal = Math.round(([0, 1, 2, 3, 4].reduce((acc, i) => acc + dayOfWeekMap[i].amount, 0)) * 100) / 100;
+      const weekendTotal = Math.round(([5, 6].reduce((acc, i) => acc + dayOfWeekMap[i].amount, 0)) * 100) / 100;
+
+      // 3. Burn Rate & Cycle Projection
+      const today = new Date();
+      const startD = new Date(startDate);
+      const endD = new Date(endDate);
+      const totalCycleDays = Math.max(1, Math.round((endD - startD) / (1000 * 60 * 60 * 24)) + 1);
+      
+      let daysElapsed = Math.max(1, Math.round((today - startD) / (1000 * 60 * 60 * 24)) + 1);
+      daysElapsed = Math.min(daysElapsed, totalCycleDays);
+      const daysRemaining = Math.max(0, totalCycleDays - daysElapsed);
+
+      const dailyBurnRate = Math.round((totalExpenses / daysElapsed) * 100) / 100;
+      const projectedMonthEndSpend = Math.round((dailyBurnRate * totalCycleDays) * 100) / 100;
+
+      // 4. Account Distribution
+      const accountMap = {};
+      for (const row of txRows) {
+        const name = row.account_name || row.bank_company || 'כללי';
+        accountMap[name] = (accountMap[name] || 0) + (parseFloat(row.amount) || 0);
+      }
+      const accountBreakdown = Object.entries(accountMap)
+        .map(([name, amount]) => ({
+          name,
+          amount: Math.round(amount * 100) / 100,
+          percentage: totalExpenses > 0 ? Math.round((amount / totalExpenses) * 100) : 0,
+        }))
+        .sort((a, b) => b.amount - a.amount);
+
+      return reply.code(200).send({
+        period: { startDate, endDate, startDay },
+        fixedVsVariable: {
+          fixedTotal: Math.round(fixedTotal * 100) / 100,
+          variableTotal: Math.round(variableTotal * 100) / 100,
+          fixedPercent,
+          variablePercent,
+          totalExpenses: Math.round(totalExpenses * 100) / 100,
+          fixedCount: fixedItems.length,
+          variableCount: variableItems.length,
+        },
+        dayOfWeekSpending: {
+          days: daysList,
+          weekdayTotal,
+          weekendTotal,
+          weekendPercent: totalExpenses > 0 ? Math.round((weekendTotal / totalExpenses) * 100) : 0,
+        },
+        burnRate: {
+          daysElapsed,
+          daysRemaining,
+          totalCycleDays,
+          currentCycleSpend: Math.round(totalExpenses * 100) / 100,
+          dailyBurnRate,
+          projectedMonthEndSpend,
+          cycleProgressPercent: Math.round((daysElapsed / totalCycleDays) * 100),
+        },
+        accountBreakdown,
+      });
+    } catch (err) {
+      fastify.log.error(err, 'Failed to fetch deep stats');
+      return reply.code(500).send({ error: 'Database error' });
+    }
+  });
+
+  // POST /api/analytics/ai-widget - Live prompt-to-widget dynamic generation
+  fastify.post('/ai-widget', async (request, reply) => {
+    const { prompt, context, existingWidget } = request.body || {};
+    if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
+      return reply.code(400).send({ error: 'Prompt is required' });
+    }
+
+    try {
+      const widget = await generateAiWidgetData({
+        prompt: prompt.trim(),
+        context,
+        existingWidget,
+      });
+      return reply.code(200).send({ success: true, widget });
+    } catch (err) {
+      fastify.log.error(err, 'Failed to generate AI widget');
+      return reply.code(500).send({ error: err.message || 'Failed to generate AI widget' });
     }
   });
 }
