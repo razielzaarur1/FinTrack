@@ -293,7 +293,6 @@ export function generateTransactionExternalId(accountId, tx, occurrenceIndex = 0
   }
 
   // Priority 2: Deterministic SHA-256 composite hash
-  const occPart = occurrenceIndex > 0 ? `_#${occurrenceIndex}` : '';
   const hashPayload = `${accountId}_${dateStr}_${Number(amount).toFixed(2)}_${merchantName}_${description}${occPart}`;
   const hash = crypto.createHash('sha256').update(hashPayload).digest('hex').slice(0, 24);
   return `tx_${dateStr}_${hash}`;

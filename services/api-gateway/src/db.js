@@ -279,12 +279,31 @@ export async function ensureVisibleMiscCategory(dbClient, userId = '00000000-000
       await dbClient.query(
         `INSERT INTO categories (
            user_id, name, name_en, parent_id, type, color, icon, is_system, is_active, sort_order
-         ) VALUES ($1, 'חיוב אשראי', 'Credit Card Settlement', $2, 'expense', '#64748b', 'CreditCard', true, true, 1)
-         ON CONFLICT (user_id, name) DO UPDATE SET parent_id = $2, is_active = true`,
+         ) VALUES ($1, 'חיוב אשראי', 'Credit Card Settlement', $2, 'both', '#64748b', 'CreditCard', true, true, 1)
+         ON CONFLICT (user_id, name) DO UPDATE SET parent_id = $2, is_active = true, type = 'both'`,
         [userId, rootId]
       );
-    } else if (!ccSub.rows[0].is_active) {
-      await dbClient.query(`UPDATE categories SET is_active = true WHERE id = $1`, [ccSub.rows[0].id]);
+    } else {
+      await dbClient.query(`UPDATE categories SET is_active = true, type = 'both' WHERE id = $1`, [ccSub.rows[0].id]);
+    }
+
+    // 2b. Ensure subcategory 'העברה בין חשבונות'
+    const transferSub = await dbClient.query(
+      `SELECT id, is_active FROM categories 
+       WHERE user_id = $1 AND parent_id = $2 AND name = 'העברה בין חשבונות' 
+       LIMIT 1`,
+      [userId, rootId]
+    );
+    if (transferSub.rows.length === 0) {
+      await dbClient.query(
+        `INSERT INTO categories (
+           user_id, name, name_en, parent_id, type, color, icon, is_system, is_active, sort_order
+         ) VALUES ($1, 'העברה בין חשבונות', 'Internal Transfer', $2, 'both', '#64748b', 'ArrowLeftRight', true, true, 2)
+         ON CONFLICT (user_id, name) DO UPDATE SET parent_id = $2, is_active = true, type = 'both'`,
+        [userId, rootId]
+      );
+    } else {
+      await dbClient.query(`UPDATE categories SET is_active = true, type = 'both' WHERE id = $1`, [transferSub.rows[0].id]);
     }
 
     // 3. Ensure subcategory 'ללא סיווג'
@@ -686,6 +705,33 @@ async function ensureSchema() {
               }
             }
           }
+
+          // ── Re-tag CC billings on checking accounts & fix categories type to prevent double-counting in expenses ──
+          await client.query(`
+            UPDATE transactions
+            SET is_cc_billing = true,
+                is_ignored = true,
+                category = 'חיוב אשראי'
+            WHERE (is_cc_billing = false OR is_cc_billing IS NULL OR is_ignored = false)
+              AND (
+                category = 'חיוב אשראי'
+                OR (
+                  account_id IN (
+                    SELECT id FROM bank_accounts 
+                    WHERE bank_company NOT IN ('max', 'cal', 'visaCal', 'isracard', 'amex', 'wallet')
+                  )
+                  AND (
+                    LOWER(merchant_name) ~* '(חיוב כרטיס|כרטיסי אשראי|חיוב כרטיסי|כרטיס חיוב|הו"?ק כרטיס|הוק כרטיס|חיוב כ\\.אשראי|הו"?ק כ\\.אשראי|סך חיוב|סך חיוב כרטיס|ויזה כאל|כרטיסי אשראי לישראל|מקס איט|מקס פיננסים|ישראכרט|דיינרס|אמריקן אקספרס|לאומי קארד)'
+                    OR LOWER(description) ~* '(חיוב כרטיס|כרטיסי אשראי|חיוב כרטיסי|כרטיס חיוב|הו"?ק כרטיס|הוק כרטיס|חיוב כ\\.אשראי|הו"?ק כ\\.אשראי|סך חיוב|סך חיוב כרטיס|ויזה כאל|כרטיסי אשראי לישראל|מקס איט|מקס פיננסים|ישראכרט|דיינרס|אמריקן אקספרס|לאומי קארד)'
+                    OR LOWER(COALESCE(raw_data->>'memo', '')) ~* '(חיוב כרטיס|כרטיסי אשראי|חיוב כרטיסי|כרטיס חיוב|הו"?ק כרטיס|הוק כרטיס|חיוב כ\\.אשראי|הו"?ק כ\\.אשראי|סך חיוב|סך חיוב כרטיס|ויזה כאל|כרטיסי אשראי לישראל|מקס איט|מקס פיננסים|ישראכרט|דיינרס|אמריקן אקספרס|לאומי קארד)'
+                  )
+                )
+              );
+
+            UPDATE categories 
+            SET type = 'both' 
+            WHERE name IN ('חיוב אשראי', 'העברה בין חשבונות') AND type = 'expense';
+          `);
 
         console.log('[PostgreSQL] Database schema verified and ready.');
         client.release();

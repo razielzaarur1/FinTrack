@@ -82,6 +82,7 @@ export default async function dashboardRoutes(fastify, options) {
         `WITH expanded AS (
            SELECT 
              t.id,
+             t.category,
              (t.amount / GREATEST(COALESCE(t.amortization_months, 1), 1)) AS effective_amount,
              COALESCE(t.effective_date, t.date) + (s.month_offset || ' month')::interval AS ref_date,
              t.account_id
@@ -89,14 +90,30 @@ export default async function dashboardRoutes(fastify, options) {
            CROSS JOIN LATERAL generate_series(0, GREATEST(COALESCE(t.amortization_months, 1) - 1, 0)) AS s(month_offset)
            WHERE t.is_ignored = false
              AND (t.is_cc_billing = false OR t.is_cc_billing IS NULL)
+             AND COALESCE(t.category, '') NOT IN ('חיוב אשראי', 'העברה בין חשבונות')
+             AND t.category NOT ILIKE '%חיוב אשראי%'
+             AND t.category NOT ILIKE '%העברה בין חשבונות%'
          )
          SELECT
-           COALESCE(SUM(CASE WHEN e.effective_amount > 0 THEN e.effective_amount ELSE 0 END), 0) AS monthly_income,
-           COALESCE(SUM(CASE WHEN e.effective_amount < 0 THEN ABS(e.effective_amount) ELSE 0 END), 0) AS monthly_expenses
+           COALESCE(SUM(CASE 
+             WHEN (c.type = 'income' OR (c.type IS NULL AND e.category IN ('משכורת', 'הכנסה', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות', 'הכנסות', 'Salary', 'Income'))) AND e.effective_amount > 0 
+             THEN e.effective_amount 
+             ELSE 0 
+           END), 0) AS monthly_income,
+           COALESCE(SUM(CASE 
+             WHEN c.type = 'income' THEN 0
+             WHEN e.effective_amount < 0 THEN ABS(e.effective_amount)
+             WHEN e.effective_amount > 0 AND (c.type = 'expense' OR e.category NOT IN ('משכורת', 'הכנסה', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות', 'הכנסות', 'Salary', 'Income'))
+             THEN -e.effective_amount
+             ELSE 0 
+           END), 0) AS monthly_expenses
          FROM expanded e
          JOIN bank_accounts a ON e.account_id = a.id
+         LEFT JOIN categories c ON (e.category = c.name OR e.category = c.name_en)
          WHERE a.user_id = $1
            AND a.is_active = true
+           AND (a.include_in_expenses IS NOT FALSE)
+           AND (a.is_prepaid = false OR a.prepaid_mode != 'ignore_all' OR a.prepaid_mode IS NULL)
            AND e.ref_date >= $2::date AND e.ref_date <= $3::date`,
         [DEFAULT_USER_ID, startDate, endDate]
       );
@@ -119,6 +136,9 @@ export default async function dashboardRoutes(fastify, options) {
            CROSS JOIN LATERAL generate_series(0, GREATEST(COALESCE(t.amortization_months, 1) - 1, 0)) AS s(month_offset)
            WHERE t.is_ignored = false
              AND (t.is_cc_billing = false OR t.is_cc_billing IS NULL)
+             AND COALESCE(t.category, '') NOT IN ('חיוב אשראי', 'העברה בין חשבונות')
+             AND t.category NOT ILIKE '%חיוב אשראי%'
+             AND t.category NOT ILIKE '%העברה בין חשבונות%'
              AND t.amount < 0
          )
          SELECT
@@ -128,6 +148,8 @@ export default async function dashboardRoutes(fastify, options) {
          JOIN bank_accounts a ON e.account_id = a.id
          WHERE a.user_id = $1
            AND a.is_active = true
+           AND (a.include_in_expenses IS NOT FALSE)
+           AND (a.is_prepaid = false OR a.prepaid_mode != 'ignore_all' OR a.prepaid_mode IS NULL)
            AND e.ref_date >= $2::date AND e.ref_date <= $3::date
          GROUP BY e.name
          ORDER BY amount DESC`,
@@ -145,14 +167,30 @@ export default async function dashboardRoutes(fastify, options) {
       const trendRes = await pool.query(
         `SELECT
            ${monthSql} AS month_key,
-           COALESCE(SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END), 0) AS income,
-           COALESCE(SUM(CASE WHEN t.amount < 0 THEN ABS(t.amount) ELSE 0 END), 0) AS expenses
+           COALESCE(SUM(CASE 
+             WHEN (c.type = 'income' OR (c.type IS NULL AND t.category IN ('משכורת', 'הכנסה', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות', 'הכנסות', 'Salary', 'Income'))) AND t.amount > 0 
+             THEN t.amount 
+             ELSE 0 
+           END), 0) AS income,
+           COALESCE(SUM(CASE 
+             WHEN c.type = 'income' THEN 0
+             WHEN t.amount < 0 THEN ABS(t.amount)
+             WHEN t.amount > 0 AND (c.type = 'expense' OR t.category NOT IN ('משכורת', 'הכנסה', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות', 'הכנסות', 'Salary', 'Income'))
+             THEN -t.amount
+             ELSE 0 
+           END), 0) AS expenses
          FROM transactions t
          JOIN bank_accounts a ON t.account_id = a.id
+         LEFT JOIN categories c ON (t.category = c.name OR t.category = c.name_en)
          WHERE a.user_id = $1
            AND a.is_active = true
            AND t.is_ignored = false
            AND (t.is_cc_billing = false OR t.is_cc_billing IS NULL)
+           AND COALESCE(t.category, '') NOT IN ('חיוב אשראי', 'העברה בין חשבונות')
+           AND t.category NOT ILIKE '%חיוב אשראי%'
+           AND t.category NOT ILIKE '%העברה בין חשבונות%'
+           AND (a.include_in_expenses IS NOT FALSE)
+           AND (a.is_prepaid = false OR a.prepaid_mode != 'ignore_all' OR a.prepaid_mode IS NULL)
            AND t.date >= (CURRENT_DATE - INTERVAL '8 months')
          GROUP BY ${monthSql}
          ORDER BY month_key ASC`,

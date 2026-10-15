@@ -51,17 +51,21 @@ export default async function analyticsRoutes(fastify, options) {
           CROSS JOIN LATERAL generate_series(0, GREATEST(COALESCE(t.amortization_months, 1) - 1, 0)) AS s(month_offset)
           WHERE t.is_ignored = false
             AND (t.is_cc_billing = false OR t.is_cc_billing IS NULL)
+            AND COALESCE(t.category, '') NOT IN ('חיוב אשראי', 'העברה בין חשבונות')
+            AND t.category NOT ILIKE '%חיוב אשראי%'
+            AND t.category NOT ILIKE '%העברה בין חשבונות%'
         )
         SELECT 
           COALESCE(SUM(CASE 
-            WHEN (c.type = 'income' OR (c.type IS NULL AND e.category IN ('משכורת', 'הכנסה', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות', 'הכנסות'))) AND e.effective_amount > 0 
+            WHEN (c.type = 'income' OR (c.type IS NULL AND e.category IN ('משכורת', 'הכנסה', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות', 'הכנסות', 'Salary', 'Income'))) AND e.effective_amount > 0 
             THEN e.effective_amount 
             ELSE 0 
           END), 0) AS "totalIncome",
           COALESCE(SUM(CASE 
             WHEN c.type = 'income' THEN 0
+            WHEN e.category IN ('חיוב אשראי', 'העברה בין חשבונות') OR e.category ILIKE '%חיוב אשראי%' OR e.category ILIKE '%העברה בין חשבונות%' THEN 0
             WHEN e.effective_amount < 0 THEN ABS(e.effective_amount)
-            WHEN e.effective_amount > 0 AND (c.type = 'expense' OR e.category NOT IN ('משכורת', 'הכנסה', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות', 'הכנסות'))
+            WHEN e.effective_amount > 0 AND (c.type = 'expense' OR e.category NOT IN ('משכורת', 'הכנסה', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות', 'הכנסות', 'Salary', 'Income'))
             THEN -e.effective_amount
             ELSE 0 
           END), 0) AS "totalExpense",
@@ -114,6 +118,9 @@ export default async function analyticsRoutes(fastify, options) {
     const conditions = [
       't.is_ignored = false', 
       '(t.is_cc_billing = false OR t.is_cc_billing IS NULL)',
+      'COALESCE(t.category, \'\') NOT IN (\'חיוב אשראי\', \'העברה בין חשבונות\')',
+      't.category NOT ILIKE \'%חיוב אשראי%\'',
+      't.category NOT ILIKE \'%העברה בין חשבונות%\'',
       '(a.include_in_expenses IS NOT FALSE)',
       '(a.is_prepaid = false OR a.prepaid_mode != \'ignore_all\' OR a.prepaid_mode IS NULL)',
       `t.date >= (CURRENT_DATE - INTERVAL '${monthsCount + 2} months')`
@@ -230,6 +237,9 @@ export default async function analyticsRoutes(fastify, options) {
         CROSS JOIN LATERAL generate_series(0, GREATEST(COALESCE(t.amortization_months, 1) - 1, 0)) AS s(month_offset)
         WHERE t.is_ignored = false
           AND (t.is_cc_billing = false OR t.is_cc_billing IS NULL)
+          AND COALESCE(t.category, '') NOT IN ('חיוב אשראי', 'העברה בין חשבונות')
+          AND t.category NOT ILIKE '%חיוב אשראי%'
+          AND t.category NOT ILIKE '%העברה בין חשבונות%'
           AND (COALESCE(t.effective_date, t.date) + (s.month_offset || ' month')::interval) >= $1::date
           AND (COALESCE(t.effective_date, t.date) + (s.month_offset || ' month')::interval) <= $2::date
           ${accountIds ? `AND t.account_id = ANY($3::uuid[])` : accountId ? `AND t.account_id = $3` : ''}
@@ -263,7 +273,7 @@ export default async function analyticsRoutes(fastify, options) {
         COUNT(i.id) AS "count"
       FROM itemized i
       LEFT JOIN categories c ON (i.category = c.name OR i.category = c.name_en)
-      WHERE ${type === 'expense' ? "COALESCE(c.type, 'expense') != 'income' AND i.category NOT IN ('משכורת', 'הכנסה', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות', 'הכנסות', 'Salary', 'Income')" : "1=1"}
+      WHERE ${type === 'expense' ? "COALESCE(c.type, 'expense') != 'income' AND i.category NOT IN ('חיוב אשראי', 'העברה בין חשבונות', 'משכורת', 'הכנסה', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות', 'הכנסות', 'Salary', 'Income') AND i.category NOT ILIKE '%חיוב אשראי%' AND i.category NOT ILIKE '%העברה בין חשבונות%'" : "1=1"}
       GROUP BY COALESCE(c.name, i.category, 'שונות'), c.color, c.icon
       ORDER BY "amount" DESC
     `;
@@ -335,6 +345,9 @@ export default async function analyticsRoutes(fastify, options) {
     const conditions = [
       'is_ignored = false',
       '(is_cc_billing = false OR is_cc_billing IS NULL)',
+      "COALESCE(category, '') NOT IN ('חיוב אשראי', 'העברה בין חשבונות')",
+      "category NOT ILIKE '%חיוב אשראי%'",
+      "category NOT ILIKE '%העברה בין חשבונות%'",
       'amount < 0',
       "LOWER(COALESCE(merchant_name, '')) NOT LIKE '%משיכת מזומן%'",
       "LOWER(COALESCE(description, '')) NOT LIKE '%משיכת מזומן%'",
@@ -415,6 +428,9 @@ export default async function analyticsRoutes(fastify, options) {
       WHERE date >= $1 AND date <= $2 
         AND is_ignored = false
         AND (is_cc_billing = false OR is_cc_billing IS NULL)
+        AND COALESCE(category, '') NOT IN ('חיוב אשראי', 'העברה בין חשבונות')
+        AND category NOT ILIKE '%חיוב אשראי%'
+        AND category NOT ILIKE '%העברה בין חשבונות%'
       GROUP BY date
       ORDER BY date ASC
     `;
@@ -597,6 +613,11 @@ export default async function analyticsRoutes(fastify, options) {
           LEFT JOIN bank_accounts a ON t.account_id = a.id
           WHERE t.is_ignored = false 
             AND (t.is_cc_billing = false OR t.is_cc_billing IS NULL)
+            AND COALESCE(t.category, '') NOT IN ('חיוב אשראי', 'העברה בין חשבונות')
+            AND t.category NOT ILIKE '%חיוב אשראי%'
+            AND t.category NOT ILIKE '%העברה בין חשבונות%'
+            AND (a.include_in_expenses IS NOT FALSE)
+            AND (a.is_prepaid = false OR a.prepaid_mode != 'ignore_all' OR a.prepaid_mode IS NULL)
             AND (t.is_split = false OR t.is_split IS NULL)
             AND (
               t.amount < 0 
@@ -626,6 +647,11 @@ export default async function analyticsRoutes(fastify, options) {
           LEFT JOIN bank_accounts a ON t.account_id = a.id
           WHERE t.is_ignored = false 
             AND (t.is_cc_billing = false OR t.is_cc_billing IS NULL)
+            AND COALESCE(ts.category, '') NOT IN ('חיוב אשראי', 'העברה בין חשבונות')
+            AND ts.category NOT ILIKE '%חיוב אשראי%'
+            AND ts.category NOT ILIKE '%העברה בין חשבונות%'
+            AND (a.include_in_expenses IS NOT FALSE)
+            AND (a.is_prepaid = false OR a.prepaid_mode != 'ignore_all' OR a.prepaid_mode IS NULL)
             AND t.is_split = true
             AND (
               ts.amount < 0 
@@ -764,6 +790,11 @@ export default async function analyticsRoutes(fastify, options) {
       JOIN bank_accounts b ON t.account_id = b.id
       WHERE t.is_ignored = false 
         AND (t.is_cc_billing = false OR t.is_cc_billing IS NULL)
+        AND COALESCE(t.category, '') NOT IN ('חיוב אשראי', 'העברה בין חשבונות')
+        AND t.category NOT ILIKE '%חיוב אשראי%'
+        AND t.category NOT ILIKE '%העברה בין חשבונות%'
+        AND (b.include_in_expenses IS NOT FALSE)
+        AND (b.is_prepaid = false OR b.prepaid_mode != 'ignore_all' OR b.prepaid_mode IS NULL)
         AND t.amount < 0
         AND t.date >= $1 AND t.date <= $2
         AND LOWER(COALESCE(t.merchant_name, '')) NOT LIKE '%משיכת מזומן%'
@@ -854,6 +885,9 @@ export default async function analyticsRoutes(fastify, options) {
         LEFT JOIN categories c ON (t.category = c.name OR t.category = c.name_en)
         WHERE t.is_ignored = false
           AND (t.is_cc_billing = false OR t.is_cc_billing IS NULL)
+          AND COALESCE(t.category, '') NOT IN ('חיוב אשראי', 'העברה בין חשבונות')
+          AND t.category NOT ILIKE '%חיוב אשראי%'
+          AND t.category NOT ILIKE '%העברה בין חשבונות%'
           AND (a.include_in_expenses IS NOT FALSE)
           AND (a.is_prepaid = false OR a.prepaid_mode != 'ignore_all' OR a.prepaid_mode IS NULL)
           AND t.date >= (CURRENT_DATE - INTERVAL '${lookbackMonths + 2} months')
@@ -979,6 +1013,9 @@ export default async function analyticsRoutes(fastify, options) {
         WHERE t.date >= $1 AND t.date <= $2
           AND t.is_ignored = false
           AND (t.is_cc_billing = false OR t.is_cc_billing IS NULL)
+          AND COALESCE(t.category, '') NOT IN ('חיוב אשראי', 'העברה בין חשבונות')
+          AND t.category NOT ILIKE '%חיוב אשראי%'
+          AND t.category NOT ILIKE '%העברה בין חשבונות%'
           AND (a.include_in_expenses IS NOT FALSE)
           AND (a.is_prepaid = false OR a.prepaid_mode != 'ignore_all' OR a.prepaid_mode IS NULL)
           AND (

@@ -97,8 +97,9 @@ class AutoScrapeScheduler {
       return;
     }
 
-    // Check operating hours (08:00 - 22:00)
-    if (!isWithinAllowedScrapeHours()) {
+    // Check operating hours (08:00 - 22:00) unless explicitly allowed in settings
+    const allow24h = settings.allow24hScraping === true || settings.scrape24h === true;
+    if (!allow24h && !isWithinAllowedScrapeHours()) {
       return;
     }
 
@@ -112,13 +113,13 @@ class AutoScrapeScheduler {
     const creditIntervalMs = creditIntervalHours * 3600 * 1000;
     const bankIntervalMs = bankIntervalHours * 3600 * 1000;
 
-    // 2. Query active bank accounts
+    // 2. Query active bank accounts (excluding virtual cash wallets)
     let accounts = [];
     try {
       const accRes = await pool.query(
         `SELECT id, bank_company, display_name, last_scraped_at
          FROM bank_accounts
-         WHERE user_id = $1 AND is_active = true
+         WHERE user_id = $1 AND is_active = true AND bank_company != 'wallet'
          ORDER BY last_scraped_at ASC NULLS FIRST`,
         [DEFAULT_USER_ID]
       );

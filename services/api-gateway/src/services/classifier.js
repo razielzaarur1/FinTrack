@@ -16,13 +16,36 @@ export function isCcBillingPattern(text = '') {
     lower.includes('חיוב כרטיס') ||
     lower.includes('כרטיסי אשראי') ||
     lower.includes('חיוב כרטיסי') ||
+    lower.includes('כרטיס חיוב') ||
+    lower.includes('הו"ק כרטיס') ||
+    lower.includes('הוק כרטיס') ||
+    lower.includes('הוראת קבע כרטיס') ||
+    lower.includes('הו"ק כ.אשראי') ||
+    lower.includes('הוק כ.אשראי') ||
+    lower.includes('חיוב כ.אשראי') ||
+    lower.includes('כ.אשראי') ||
     lower.includes('סך חיוב') ||
+    lower.includes('סך חיוב כרטיס') ||
+    lower.includes('חיוב חשבון כרטיס') ||
+    lower.includes('חיוב מועדון') ||
+    lower.includes('ח-ן כרטיס') ||
     lower.includes('העב. לכרטיס') ||
     lower.includes('העברה לכרטיס') ||
+    lower.includes('כרטיסי אשראי לישראל') ||
     lower.includes('ישראכרט') ||
+    lower.includes('isracard') ||
     lower.includes('ויזה כאל') ||
+    lower.includes('כאל') ||
+    lower.includes('cal') ||
+    lower.includes('מקס איט') ||
+    lower.includes('מקס פיננסים') ||
     lower.includes('כרטיס מקס') ||
-    lower.includes('דיינרס')
+    lower.includes('לאומי קארד') ||
+    lower.includes('אמריקן אקספרס') ||
+    lower.includes('american express') ||
+    lower.includes('דיינרס') ||
+    lower.includes('diners') ||
+    lower.includes('direct debit')
   );
 }
 
@@ -493,6 +516,7 @@ export async function reclassifyUnreviewedTransactions(userId = '00000000-0000-0
         subCategory: 'חיוב אשראי',
         cleanMerchant: cleanMerchant || 'חיוב כרטיס אשראי',
         oldCat: tx.category,
+        isCcBilling: true,
       });
       continue;
     }
@@ -597,11 +621,14 @@ export async function reclassifyUnreviewedTransactions(userId = '00000000-0000-0
   // Apply immediate updates (CC and Cash)
   for (const item of immediateUpdates) {
     const chosenCat = item.subCategory || item.category;
+    const isCc = Boolean(item.isCcBilling || item.subCategory === 'חיוב אשראי' || item.category === 'חיוב אשראי');
     await pool.query(
       `UPDATE transactions 
-       SET category = $1
+       SET category = $1,
+           is_cc_billing = CASE WHEN $3 = true THEN true ELSE is_cc_billing END,
+           is_ignored = CASE WHEN $3 = true THEN true ELSE is_ignored END
        WHERE id = $2`,
-      [chosenCat, item.txId]
+      [chosenCat, item.txId, isCc]
     );
     if (item.oldCat !== chosenCat) {
       updatedCount++;
