@@ -1,9 +1,18 @@
 import { pool } from '../db.js';
-import { 
-  getSystemMonthStartDay, 
-  getCurrentFinancialMonthBounds, 
-  getFinancialMonthSqlExpression 
+import { cleanSpacedHebrew } from './transactions.js';
+import {
+  getSystemMonthStartDay,
+  getCurrentFinancialMonthBounds,
+  buildFinancialMonthLabels,
 } from '../services/settings-helper.js';
+import {
+  CREDIT_CARD_COMPANIES,
+  computeSavingsRate,
+  fetchCategoryTotals,
+  fetchMonthlyTotals,
+  fetchPeriodTotals,
+  round2,
+} from '../services/analytics-sql.js';
 
 const DEFAULT_USER_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -55,8 +64,8 @@ export default async function dashboardRoutes(fastify, options) {
           }
         }
 
-        // Credit cards in Israel: max, cal, isracard, amex
-        if (['max', 'cal', 'isracard', 'amex'].includes(company)) {
+        // Credit cards in Israel: max, cal / visaCal, isracard, amex
+        if (CREDIT_CARD_COMPANIES.includes(company)) {
           totalCreditDue += Math.abs(bal);
         } else if (company.includes('inv') || company.includes('saving')) {
           investments += bal;
@@ -70,159 +79,54 @@ export default async function dashboardRoutes(fastify, options) {
 
       // Determine financial cycle startDay from query or system_settings
       const queryStartDay = request.query?.startDay || request.query?.monthStartDay;
-      const startDay = queryStartDay 
+      const startDay = queryStartDay
         ? Math.min(31, Math.max(1, parseInt(queryStartDay, 10) || 10))
         : await getSystemMonthStartDay(pool, DEFAULT_USER_ID);
 
       const cycleBounds = getCurrentFinancialMonthBounds(startDay);
       const { startDate, endDate, monthKey } = cycleBounds;
 
-      // 2. Fetch current financial month income & expenses with amortization support
-      const monthlyRes = await pool.query(
-        `WITH expanded AS (
-           SELECT 
-             t.id,
-             t.category,
-             (t.amount / GREATEST(COALESCE(t.amortization_months, 1), 1)) AS effective_amount,
-             COALESCE(t.effective_date, t.date) + (s.month_offset || ' month')::interval AS ref_date,
-             t.account_id
-           FROM transactions t
-           CROSS JOIN LATERAL generate_series(0, GREATEST(COALESCE(t.amortization_months, 1) - 1, 0)) AS s(month_offset)
-           WHERE t.is_ignored = false
-             AND (t.is_cc_billing = false OR t.is_cc_billing IS NULL)
-             AND COALESCE(t.category, '') NOT IN ('חיוב אשראי', 'העברה בין חשבונות')
-             AND t.category NOT ILIKE '%חיוב אשראי%'
-             AND t.category NOT ILIKE '%העברה בין חשבונות%'
-         )
-         SELECT
-           COALESCE(SUM(CASE 
-             WHEN (c.type = 'income' OR (c.type IS NULL AND e.category IN ('משכורת', 'הכנסה', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות', 'הכנסות', 'Salary', 'Income'))) AND e.effective_amount > 0 
-             THEN e.effective_amount 
-             ELSE 0 
-           END), 0) AS monthly_income,
-           COALESCE(SUM(CASE 
-             WHEN c.type = 'income' THEN 0
-             WHEN e.effective_amount < 0 THEN ABS(e.effective_amount)
-             WHEN e.effective_amount > 0 AND (c.type = 'expense' OR e.category NOT IN ('משכורת', 'הכנסה', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות', 'הכנסות', 'Salary', 'Income'))
-             THEN -e.effective_amount
-             ELSE 0 
-           END), 0) AS monthly_expenses
-         FROM expanded e
-         JOIN bank_accounts a ON e.account_id = a.id
-         LEFT JOIN categories c ON (e.category = c.name OR e.category = c.name_en)
-         WHERE a.user_id = $1
-           AND a.is_active = true
-           AND (a.include_in_expenses IS NOT FALSE)
-           AND (a.is_prepaid = false OR a.prepaid_mode != 'ignore_all' OR a.prepaid_mode IS NULL)
-           AND e.ref_date >= $2::date AND e.ref_date <= $3::date`,
-        [DEFAULT_USER_ID, startDate, endDate]
-      );
+      // 2. Current financial month income & expenses (same engine as the analytics screens)
+      const totals = await fetchPeriodTotals(pool, { startDate, endDate });
+      const monthlyIncome = totals.income;
+      const monthlyExpenses = Math.max(0, totals.expense);
+      const savingsRate = computeSavingsRate(monthlyIncome, monthlyExpenses);
 
-      const monthlyIncome = parseFloat(monthlyRes.rows[0].monthly_income) || 0;
-      const monthlyExpenses = parseFloat(monthlyRes.rows[0].monthly_expenses) || 0;
-      const savingsRate = monthlyIncome > 0
-        ? Math.max(0, Math.round(((monthlyIncome - monthlyExpenses) / monthlyIncome) * 100))
-        : 0;
+      // 3. Category breakdown for the current financial month (net expenses, splits & refunds aware)
+      const catRows = await fetchCategoryTotals(pool, { startDate, endDate, type: 'expense' });
+      const categoryMap = new Map();
+      for (const row of catRows) {
+        const name = cleanSpacedHebrew(row.name).trim() || 'שונות';
+        const existing = categoryMap.get(name);
+        if (existing) {
+          existing.amount += row.amount;
+        } else {
+          categoryMap.set(name, {
+            name,
+            amount: row.amount,
+            color: row.color || CATEGORY_COLORS[name] || '#06b6d4',
+          });
+        }
+      }
+      const categoryBreakdown = Array.from(categoryMap.values())
+        .map((c) => ({ ...c, amount: round2(c.amount) }))
+        .sort((a, b) => b.amount - a.amount);
 
-      // 3. Category Breakdown for current financial month (expenses only) with amortization
-      const catRes = await pool.query(
-        `WITH expanded AS (
-           SELECT 
-             COALESCE(t.category, 'שונות') AS name,
-             (t.amount / GREATEST(COALESCE(t.amortization_months, 1), 1)) AS effective_amount,
-             COALESCE(t.effective_date, t.date) + (s.month_offset || ' month')::interval AS ref_date,
-             t.account_id
-           FROM transactions t
-           CROSS JOIN LATERAL generate_series(0, GREATEST(COALESCE(t.amortization_months, 1) - 1, 0)) AS s(month_offset)
-           WHERE t.is_ignored = false
-             AND (t.is_cc_billing = false OR t.is_cc_billing IS NULL)
-             AND COALESCE(t.category, '') NOT IN ('חיוב אשראי', 'העברה בין חשבונות')
-             AND t.category NOT ILIKE '%חיוב אשראי%'
-             AND t.category NOT ILIKE '%העברה בין חשבונות%'
-             AND t.amount < 0
-         )
-         SELECT
-           e.name,
-           SUM(ABS(e.effective_amount)) AS amount
-         FROM expanded e
-         JOIN bank_accounts a ON e.account_id = a.id
-         WHERE a.user_id = $1
-           AND a.is_active = true
-           AND (a.include_in_expenses IS NOT FALSE)
-           AND (a.is_prepaid = false OR a.prepaid_mode != 'ignore_all' OR a.prepaid_mode IS NULL)
-           AND e.ref_date >= $2::date AND e.ref_date <= $3::date
-         GROUP BY e.name
-         ORDER BY amount DESC`,
-        [DEFAULT_USER_ID, startDate, endDate]
-      );
-
-      const categoryBreakdown = catRes.rows.map((row) => ({
-        name: row.name,
-        amount: parseFloat(row.amount) || 0,
-        color: CATEGORY_COLORS[row.name] || '#06b6d4',
-      }));
-
-      // 4. Monthly Trend (Past 6 Financial Months)
-      const monthSql = getFinancialMonthSqlExpression(startDay, 't.date');
-      const trendRes = await pool.query(
-        `SELECT
-           ${monthSql} AS month_key,
-           COALESCE(SUM(CASE 
-             WHEN (c.type = 'income' OR (c.type IS NULL AND t.category IN ('משכורת', 'הכנסה', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות', 'הכנסות', 'Salary', 'Income'))) AND t.amount > 0 
-             THEN t.amount 
-             ELSE 0 
-           END), 0) AS income,
-           COALESCE(SUM(CASE 
-             WHEN c.type = 'income' THEN 0
-             WHEN t.amount < 0 THEN ABS(t.amount)
-             WHEN t.amount > 0 AND (c.type = 'expense' OR t.category NOT IN ('משכורת', 'הכנסה', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות', 'הכנסות', 'Salary', 'Income'))
-             THEN -t.amount
-             ELSE 0 
-           END), 0) AS expenses
-         FROM transactions t
-         JOIN bank_accounts a ON t.account_id = a.id
-         LEFT JOIN categories c ON (t.category = c.name OR t.category = c.name_en)
-         WHERE a.user_id = $1
-           AND a.is_active = true
-           AND t.is_ignored = false
-           AND (t.is_cc_billing = false OR t.is_cc_billing IS NULL)
-           AND COALESCE(t.category, '') NOT IN ('חיוב אשראי', 'העברה בין חשבונות')
-           AND t.category NOT ILIKE '%חיוב אשראי%'
-           AND t.category NOT ILIKE '%העברה בין חשבונות%'
-           AND (a.include_in_expenses IS NOT FALSE)
-           AND (a.is_prepaid = false OR a.prepaid_mode != 'ignore_all' OR a.prepaid_mode IS NULL)
-           AND t.date >= (CURRENT_DATE - INTERVAL '8 months')
-         GROUP BY ${monthSql}
-         ORDER BY month_key ASC`,
-        [DEFAULT_USER_ID]
-      );
-
-      const trendRows = trendRes.rows.slice(-6);
-      let monthlyTrend = trendRows.map((row) => {
-        const inc = parseFloat(row.income) || 0;
-        const exp = parseFloat(row.expenses) || 0;
-        const mKeyParts = (row.month_key || '').split('-');
-        const mIndex = mKeyParts.length === 2 ? (parseInt(mKeyParts[1], 10) - 1) % 12 : 0;
+      // 4. Monthly Trend (past 6 financial months)
+      const labels = buildFinancialMonthLabels(startDay, 6);
+      const trendTotals = await fetchMonthlyTotals(pool, { labels, startDay });
+      let firstIdx = labels.findIndex((l) => trendTotals.has(l.key));
+      if (firstIdx < 0) firstIdx = labels.length - 1;
+      const monthlyTrend = labels.slice(firstIdx).map((l) => {
+        const t = trendTotals.get(l.key) || { income: 0, expenses: 0 };
         return {
-          month: HEBREW_MONTHS[mIndex] || row.month_key,
-          monthKey: row.month_key,
-          income: inc,
-          expenses: exp,
-          savings: Math.max(0, inc - exp),
+          month: HEBREW_MONTHS[l.month - 1] || l.key,
+          monthKey: l.key,
+          income: round2(t.income),
+          expenses: round2(t.expenses),
+          savings: round2(t.income - t.expenses),
         };
       });
-
-      // If no past transactions yet, supply current month entry with 0s
-      if (monthlyTrend.length === 0) {
-        const currentMonthIdx = new Date().getMonth();
-        monthlyTrend = [{
-          month: HEBREW_MONTHS[currentMonthIdx],
-          monthKey,
-          income: monthlyIncome,
-          expenses: monthlyExpenses,
-          savings: Math.max(0, monthlyIncome - monthlyExpenses),
-        }];
-      }
 
       // 5. Recent 5 Transactions
       const recentTxRes = await pool.query(

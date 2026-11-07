@@ -1,12 +1,18 @@
 import { pool } from '../db.js';
 import { getAiSettings, getAvailableCategories } from './ai-analyzer.js';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { 
-  getSystemMonthStartDay, 
-  getFinancialMonthBounds, 
-  getCurrentFinancialMonthBounds, 
-  getFinancialMonthSqlExpression 
+import {
+  getSystemMonthStartDay,
+  buildFinancialMonthLabels,
+  getFinancialMonthSqlExpression
 } from './settings-helper.js';
+import {
+  ACCOUNT_FILTER_SQL,
+  categoryJoinSql,
+  excludedCategoryCondition,
+  incomeAmountSql,
+  netExpenseSql,
+} from './analytics-sql.js';
 import { cleanSpacedHebrew } from '../routes/transactions.js';
 
 const DEFAULT_USER_ID = '00000000-0000-0000-0000-000000000001';
@@ -191,28 +197,31 @@ export async function generateAiWidgetData({ prompt, context, existingWidget }) 
   const startDay = await getSystemMonthStartDay(pool);
   const monthSql = getFinancialMonthSqlExpression(startDay, 't.date');
 
+  // Exact financial month window (distribution, totals and the transaction list all use the same window)
+  const monthLabels = buildFinancialMonthLabels(startDay, spec.timeRangeMonths);
+  const windowStart = monthLabels[0].startDate;
+  const windowEnd = monthLabels[monthLabels.length - 1].endDate;
+
+  // Amount contributed by one row, consistent with every other statistic in the app:
+  // expense = net spend (refunds reduce it), income = income only, any = absolute movement
+  let amountSql = 'ABS(t.amount)';
+  if (spec.transactionType === 'income') {
+    amountSql = incomeAmountSql('t.amount', 'c', 't.category');
+  } else if (spec.transactionType === 'expense') {
+    amountSql = netExpenseSql('t.amount', 'c', 't.category');
+  }
+
   // Build SQL filters
   const conditions = [
     't.is_ignored = false',
-    '(t.is_cc_billing = false OR t.is_cc_billing IS NULL)',
-    '(a.include_in_expenses IS NOT FALSE)',
-    '(a.is_prepaid = false OR a.prepaid_mode != \'ignore_all\' OR a.prepaid_mode IS NULL)',
-    `t.date >= (CURRENT_DATE - INTERVAL '${spec.timeRangeMonths + 2} months')`
+    't.is_cc_billing IS NOT TRUE',
+    excludedCategoryCondition('t.category'),
+    ACCOUNT_FILTER_SQL,
+    `t.date >= '${windowStart}'::date`,
+    `t.date <= '${windowEnd}'::date`,
+    `${amountSql} <> 0`,
   ];
   const values = [];
-
-  // Transaction type filter
-  if (spec.transactionType === 'income') {
-    conditions.push(`(
-      (c.type = 'income' OR (c.type IS NULL AND t.category IN ('משכורת', 'הכנסה', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות', 'הכנסות'))) 
-      AND t.amount > 0
-    )`);
-  } else if (spec.transactionType === 'expense') {
-    conditions.push(`(
-      t.amount < 0 
-      OR (t.amount > 0 AND (c.type = 'expense' OR (c.type IS NULL AND t.category NOT IN ('משכורת', 'הכנסה', 'קצבה או מלגה', 'הכנסה מנכס', 'הכנסה מעסק', 'דיווידנדים ורווחים', 'הכנסות שונות', 'הכנסות', 'Salary', 'Income'))))
-    )`);
-  }
 
   // Day of week filter
   if (spec.dayOfWeek === 'weekend') {
@@ -243,37 +252,13 @@ export async function generateAiWidgetData({ prompt, context, existingWidget }) 
     conditions.push(`(${filterOrParts.join(' OR ')})`);
   }
 
-  // Build exact financial month keys
-  const monthLabels = [];
-  const heMonths = ['ינו׳', 'פבר׳', 'מרץ', 'אפר׳', 'מאי', 'יוני', 'יולי', 'אוג׳', 'ספט׳', 'אוק׳', 'נוב׳', 'דצמ׳'];
-  const currentBounds = getCurrentFinancialMonthBounds(startDay);
-  let curYear = currentBounds.year;
-  let curMonth = currentBounds.month;
-
-  for (let i = 0; i < spec.timeRangeMonths; i++) {
-    const bounds = getFinancialMonthBounds(curYear, curMonth, startDay);
-    monthLabels.unshift({
-      key: bounds.monthKey,
-      label: `${heMonths[bounds.month - 1]} ${String(bounds.year).slice(2)}`,
-      year: bounds.year,
-      month: bounds.month,
-      startDate: bounds.startDate,
-      endDate: bounds.endDate,
-    });
-    curMonth -= 1;
-    if (curMonth < 1) {
-      curMonth = 12;
-      curYear -= 1;
-    }
-  }
-
   // Query raw matching transactions to calculate aggregate & list
   const txQuery = `
-    SELECT 
+    SELECT
       t.id,
       t.date,
       ${monthSql} AS "monthKey",
-      ABS(t.amount) AS "amount",
+      ${amountSql} AS "amount",
       t.amount AS "rawAmount",
       COALESCE(t.category, '') AS "category",
       COALESCE(NULLIF(t.merchant_name, ''), t.description, 'עסקה') AS "merchantName",
@@ -283,9 +268,9 @@ export async function generateAiWidgetData({ prompt, context, existingWidget }) 
       a.bank_company AS "bankCompany"
     FROM transactions t
     JOIN bank_accounts a ON t.account_id = a.id
-    LEFT JOIN categories c ON (t.category = c.name OR t.category = c.name_en)
+    ${categoryJoinSql('t.category')}
     WHERE ${conditions.join(' AND ')}
-    ORDER BY t.date DESC
+    ORDER BY ABS(t.amount) DESC, t.date DESC
   `;
 
   const txRes = await pool.query(txQuery, values);
@@ -316,7 +301,12 @@ export async function generateAiWidgetData({ prompt, context, existingWidget }) 
     };
   });
 
-  const monthlyAverage = Math.round((totalAmount / Math.max(spec.timeRangeMonths, 1)) * 100) / 100;
+  // Average over completed months starting from the first month with data (the unfinished current
+  // month and months before tracking began must not dilute it)
+  const firstDataIdx = distribution.findIndex((d) => d.txCount > 0);
+  let averagedMonths = firstDataIdx < 0 ? [] : distribution.slice(firstDataIdx, -1);
+  if (averagedMonths.length === 0) averagedMonths = distribution.slice(-1);
+  const monthlyAverage = Math.round((averagedMonths.reduce((acc, d) => acc + d.amount, 0) / averagedMonths.length) * 100) / 100;
 
   // Rank busiest / peak months
   const peakMonthsRanking = [...distribution]

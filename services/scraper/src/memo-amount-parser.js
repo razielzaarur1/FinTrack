@@ -23,10 +23,10 @@ export function parseAmountFromMemo(memo) {
 
   // Patterns for Israeli bank & credit card memo texts:
   // 1. Explicit labels: סכום, סך, בסך, עסקה, אישור זמני, סכום מקורי, סכום חיוב, זיכוי, החזר, הפקדה
-  const labeledRegex = /(?:סכום\s*עסקה|סכום\s*חיוב|סכום\s*מקורי|סכום|בסך|סך\s*הכל|סך|אישור\s*זמני|עסקה\s*זמנית|עסקה|זיכוי|החזר|הפקדה)\s*[:=]?\s*(?:₪|ש"ח|שח|\$|€|£)?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)/i;
+  const labeledRegex = /(?:סכום\s*עסקה|סכום\s*חיוב|סכום\s*מקורי|סכום|בסך|סך\s*הכל|סך|אישור\s*זמני|עסקה\s*זמנית|עסקה|זיכוי|החזר|הפקדה)\s*[:=]?\s*(?:₪|ש"ח|שח|\$|€|£)?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)(?![0-9])/i;
   
   // 2. Currency symbol / code right before number: ₪ 150.00, $ 45.50
-  const prefixCurrencyRegex = /(?:₪|ש"ח|שח|\$|USD|€|EUR|£|GBP|ILS|NIS)\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)/i;
+  const prefixCurrencyRegex = /(?:₪|ש"ח|שח|\$|USD|€|EUR|£|GBP|ILS|NIS)\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)(?![0-9])/i;
 
   // 3. Number followed by currency: 150.00 ₪, 120 ש"ח
   const postfixCurrencyRegex = /([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)\s*(?:₪|ש"ח|שח|שקלים|דולר|אירו|יורו|USD|EUR|GBP|ILS|NIS)(?:\b|[\s,\.]|$)/i;
@@ -40,8 +40,9 @@ export function parseAmountFromMemo(memo) {
   if (!match) match = cleanMemo.match(dashDecimalRegex);
 
   if (!match || !match[1]) {
-    // 5. Fallback: If memo contains a number
-    const genericNumber = cleanMemo.match(/\b([0-9]+(?:\.[0-9]{1,2})?)\b/);
+    // 5. Fallback: a bare number that looks like an amount (has decimals). Plain integers are
+    //    far more likely to be approval / reference / phone numbers than money.
+    const genericNumber = cleanMemo.match(/\b([0-9]+\.[0-9]{1,2})\b/);
     if (genericNumber && genericNumber[1]) {
       match = genericNumber;
     }
@@ -50,7 +51,8 @@ export function parseAmountFromMemo(memo) {
   if (match && match[1]) {
     const rawNumStr = match[1].replace(/,/g, '');
     const num = parseFloat(rawNumStr);
-    if (!isNaN(num) && num > 0) {
+    // Reject implausible values (long ids such as "עסקה 20260412345" are not amounts)
+    if (!isNaN(num) && num > 0 && num < 10000000) {
       const signedAmount = isCredit ? num : -num;
       return {
         amount: signedAmount,

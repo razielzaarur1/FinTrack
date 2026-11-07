@@ -23,11 +23,12 @@ import {
 import { api } from '@/lib/api';
 import { formatILS, formatDate } from '@/lib/formatters';
 import { useApp } from '@/lib/app-context';
+import { getFinancialMonthKey } from '@/lib/date-utils';
 import CategoryBadge from '@/components/common/CategoryBadge';
 import TransactionDrawer from '@/components/transactions/TransactionDrawer';
 
 export default function MerchantDrillDownModal({ merchantItem, onClose, onTransactionUpdated }) {
-  const { lang, theme } = useApp();
+  const { lang, theme, monthStartDay } = useApp();
   const [loading, setLoading] = useState(true);
   const [transactions, setTransactions] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -65,21 +66,27 @@ export default function MerchantDrillDownModal({ merchantItem, onClose, onTransa
     return desc.includes(q);
   });
 
-  const totalSpent = transactions.reduce((acc, tx) => acc + (Math.abs(parseFloat(tx.amount)) || 0), 0);
-  const avgAmount = transactions.length > 0 ? totalSpent / transactions.length : 0;
+  // Net spend per row, consistent with the analytics totals: refunds reduce the spend, and ignored /
+  // credit-card-billing rows are never counted.
+  const isCounted = (tx) => !tx.isIgnored && !tx.isCcBilling;
+  const spendOf = (tx) => (isCounted(tx) ? -(parseFloat(tx.amount) || 0) : 0);
+  const countedTxs = transactions.filter(isCounted);
+  const totalSpent = Math.max(0, transactions.reduce((acc, tx) => acc + spendOf(tx), 0));
+  const avgAmount = countedTxs.length > 0 ? totalSpent / countedTxs.length : 0;
 
   // Monthly trend grouping
   const monthlyData = React.useMemo(() => {
     const monthMap = {};
     for (const tx of transactions) {
-      const monthKey = tx.date?.slice(0, 7) || 'אחר';
-      monthMap[monthKey] = (monthMap[monthKey] || 0) + Math.abs(parseFloat(tx.amount) || 0);
+      if (!isCounted(tx)) continue;
+      const monthKey = getFinancialMonthKey(tx.date, monthStartDay) || 'אחר';
+      monthMap[monthKey] = (monthMap[monthKey] || 0) + spendOf(tx);
     }
     return Object.entries(monthMap)
       .map(([m, amt]) => ({ month: m, amount: Math.round(amt * 100) / 100 }))
       .sort((a, b) => a.month.localeCompare(b.month))
       .slice(-12);
-  }, [transactions]);
+  }, [transactions, monthStartDay]);
 
   return (
     <>

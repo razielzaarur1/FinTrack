@@ -3,6 +3,7 @@ import { signTmaToken } from '../crypto.js';
 import { getSystemMonthStartDay, getCurrentFinancialMonthBounds } from './settings-helper.js';
 import { matchPendingReceiptsForTransaction } from './receipt-matcher.js';
 import { findMatchesForTransaction } from './cc-reconciliation.js';
+import { fetchCategoryTotals } from './analytics-sql.js';
 
 const DEFAULT_USER_ID = '00000000-0000-0000-0000-000000000001';
 const NOTIFIER_URL = (process.env.NOTIFIER_URL || 'http://notifier:3001').replace(/\/$/, '');
@@ -138,21 +139,9 @@ export async function checkBudgetExceeded(client, userId, category, notifiedBudg
     const startDay = await getSystemMonthStartDay(client, userId);
     const { startDate, endDate, monthKey } = getCurrentFinancialMonthBounds(startDay);
 
-    const spentRes = await client.query(
-      `SELECT COALESCE(SUM(ABS(amount)), 0)::FLOAT AS spent
-       FROM transactions t
-       JOIN bank_accounts b ON t.account_id = b.id
-       WHERE b.user_id = $1
-         AND t.category = $2
-         AND t.is_ignored = false
-         AND (t.is_cc_billing = false OR t.is_cc_billing IS NULL)
-         AND t.amount < 0
-         AND t.date >= $3
-         AND t.date <= $4`,
-      [userId, category, startDate, endDate]
-    );
-
-    const spent = parseFloat(spentRes.rows[0]?.spent || 0);
+    // Same engine as the analytics screens: amortization, splits, refunds and account filters included
+    const catTotals = await fetchCategoryTotals(client, { startDate, endDate, type: 'expense' });
+    const spent = catTotals.find((c) => c.name === category)?.amount || 0;
     if (spent > monthlyLimit) {
       if (notifiedBudgetsMap[category] === monthKey) {
         // Already notified this financial cycle

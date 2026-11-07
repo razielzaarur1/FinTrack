@@ -22,6 +22,7 @@ import {
 import { api } from '@/lib/api';
 import { formatILS, formatDate, cleanSpacedHebrew } from '@/lib/formatters';
 import { useApp } from '@/lib/app-context';
+import { getFinancialMonthRange, getPastFinancialMonths } from '@/lib/date-utils';
 import CategoryBadge from '@/components/common/CategoryBadge';
 import InstitutionLogo from '@/components/common/InstitutionLogo';
 import MultiSelectDropdown from '@/components/common/MultiSelectDropdown';
@@ -269,12 +270,11 @@ const MONTH_NAMES = [
 ];
 
 function CategoriesContent() {
-  const { t, lang } = useApp();
-  const now = new Date();
+  const { t, lang, monthStartDay, currentFinancialMonth, previousFinancialMonth } = useApp();
 
-  // Period State
-  const [selectedYear, setSelectedYear] = useState(now.getFullYear());
-  const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1);
+  // Period State (financial months, honouring the configured cycle start day - same as every other screen)
+  const [selectedYear, setSelectedYear] = useState(currentFinancialMonth.year);
+  const [selectedMonth, setSelectedMonth] = useState(currentFinancialMonth.month);
   const [periodPreset, setPeriodPreset] = useState('month'); // 'month' | 'last_month' | '3months' | '6months' | 'year' | 'all' | 'custom'
   const [customStartDate, setCustomStartDate] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
@@ -308,51 +308,48 @@ function CategoriesContent() {
     }));
   }, [accounts]);
 
+  // When the settings finish loading (or the cycle start day changes) jump back to the current financial month
+  useEffect(() => {
+    setSelectedYear(currentFinancialMonth.year);
+    setSelectedMonth(currentFinancialMonth.month);
+  }, [currentFinancialMonth.monthKey, currentFinancialMonth.startDay]);
+
   // Compute active date range from periodPreset
   const activeDateRange = useMemo(() => {
-    const today = new Date();
-    if (periodPreset === 'last_month') {
-      const lm = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-      const y = lm.getFullYear();
-      const m = lm.getMonth() + 1;
-      const lastDay = new Date(y, m, 0).getDate();
+    const trailing = (count, label) => {
+      const months = getPastFinancialMonths(count, monthStartDay);
       return {
-        startDate: `${y}-${String(m).padStart(2, '0')}-01`,
-        endDate: `${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`,
-        label: `${MONTH_NAMES[m - 1]} ${y}`,
+        startDate: months[months.length - 1].startDate,
+        endDate: currentFinancialMonth.endDate,
+        label,
+      };
+    };
+
+    if (periodPreset === 'last_month') {
+      return {
+        startDate: previousFinancialMonth.startDate,
+        endDate: previousFinancialMonth.endDate,
+        label: previousFinancialMonth.label,
       };
     } else if (periodPreset === '3months') {
-      const d = new Date(today.getFullYear(), today.getMonth() - 2, 1);
-      const startStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
-      const endStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-      return { startDate: startStr, endDate: endStr, label: '3 חודשים אחרונים' };
+      return trailing(3, '3 חודשים אחרונים');
     } else if (periodPreset === '6months') {
-      const d = new Date(today.getFullYear(), today.getMonth() - 5, 1);
-      const startStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
-      const endStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-      return { startDate: startStr, endDate: endStr, label: '6 חודשים אחרונים' };
+      return trailing(6, '6 חודשים אחרונים');
     } else if (periodPreset === 'year') {
-      const d = new Date(today.getFullYear() - 1, today.getMonth() + 1, 1);
-      const startStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
-      const endStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-      return { startDate: startStr, endDate: endStr, label: 'שנה אחרונה' };
+      return trailing(12, 'שנה אחרונה');
     } else if (periodPreset === 'all') {
-      return { startDate: '2020-01-01', endDate: '2030-12-31', label: 'כל הזמנים' };
+      return { startDate: '2000-01-01', endDate: '2100-12-31', label: 'כל הזמנים' };
     } else if (periodPreset === 'custom') {
-      const s = customStartDate || `${today.getFullYear()}-01-01`;
-      const e = customEndDate || `${today.getFullYear()}-12-31`;
-      return { startDate: s, endDate: e, label: `${s} - ${e}` };
+      const y = new Date().getFullYear();
+      const sd = customStartDate || `${y}-01-01`;
+      const ed = customEndDate || `${y}-12-31`;
+      return { startDate: sd, endDate: ed, label: `${sd} - ${ed}` };
     }
 
-    // Default 'month'
-    const mStr = String(selectedMonth).padStart(2, '0');
-    const lastDay = new Date(selectedYear, selectedMonth, 0).getDate();
-    return {
-      startDate: `${selectedYear}-${mStr}-01`,
-      endDate: `${selectedYear}-${mStr}-${String(lastDay).padStart(2, '0')}`,
-      label: `${MONTH_NAMES[selectedMonth - 1]} ${selectedYear}`,
-    };
-  }, [periodPreset, selectedYear, selectedMonth, customStartDate, customEndDate]);
+    // Default 'month' = selected financial month
+    const range = getFinancialMonthRange(selectedYear, selectedMonth, monthStartDay);
+    return { startDate: range.startDate, endDate: range.endDate, label: range.label };
+  }, [periodPreset, selectedYear, selectedMonth, customStartDate, customEndDate, monthStartDay, currentFinancialMonth, previousFinancialMonth]);
 
   // Load Breakdown Data
   const loadData = async () => {
@@ -412,11 +409,11 @@ function CategoriesContent() {
 
   const handleCurrentMonth = () => {
     setPeriodPreset('month');
-    setSelectedYear(now.getFullYear());
-    setSelectedMonth(now.getMonth() + 1);
+    setSelectedYear(currentFinancialMonth.year);
+    setSelectedMonth(currentFinancialMonth.month);
   };
 
-  const isCurrentMonth = periodPreset === 'month' && selectedYear === now.getFullYear() && selectedMonth === now.getMonth() + 1;
+  const isCurrentMonth = periodPreset === 'month' && selectedYear === currentFinancialMonth.year && selectedMonth === currentFinancialMonth.month;
 
   // Build tree of categories with subcategories and amounts
   const treeData = useMemo(() => {

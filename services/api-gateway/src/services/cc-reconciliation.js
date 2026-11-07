@@ -8,6 +8,8 @@
  * 4. Fee difference classification when linking transactions with non-zero spread.
  */
 
+import { termMatches } from './keyword-match.js';
+
 export const KNOWN_CC_PATTERNS = [
   'ישראכרט',
   'כרטיסי אשראי לישראל',
@@ -49,12 +51,12 @@ export function isCcBillingPattern(text, userPatterns = []) {
   
   // 1. Check user custom patterns
   for (const p of userPatterns) {
-    if (p && clean.includes(String(p).trim().toLowerCase())) return true;
+    if (p && termMatches(clean, String(p).trim().toLowerCase())) return true;
   }
 
   // 2. Check built-in Israeli credit card companies and keywords
   for (const p of KNOWN_CC_PATTERNS) {
-    if (clean.includes(p.toLowerCase())) return true;
+    if (termMatches(clean, p)) return true;
   }
 
   return false;

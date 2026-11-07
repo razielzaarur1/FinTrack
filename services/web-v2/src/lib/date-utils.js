@@ -69,18 +69,23 @@ export function getFinancialMonthRange(year, month, startDay = 1) {
   const startDayClamped = Math.min(sDay, getDaysInMonth(y, m));
   const startDate = `${y}-${pad2(m)}-${pad2(startDayClamped)}`;
 
-  // Cycle ends on (sDay - 1) of month m + 1
+  // Cycle ends the day before the NEXT cycle starts (that start day is clamped to the month
+  // length as well), so consecutive cycles never overlap or leave gaps.
   let nextYear = y;
   let nextMonth = m + 1;
   if (nextMonth > 12) {
     nextMonth = 1;
     nextYear += 1;
   }
-  const endDayClamped = Math.min(sDay - 1, getDaysInMonth(nextYear, nextMonth));
-  const endDate = `${nextYear}-${pad2(nextMonth)}-${pad2(endDayClamped)}`;
+  const nextStartClamped = Math.min(sDay, getDaysInMonth(nextYear, nextMonth));
+  const endD = new Date(Date.UTC(nextYear, nextMonth - 1, nextStartClamped - 1));
+  const endDayClamped = endD.getUTCDate();
+  const endMonthNum = endD.getUTCMonth() + 1;
+  const endYearNum = endD.getUTCFullYear();
+  const endDate = `${endYearNum}-${pad2(endMonthNum)}-${pad2(endDayClamped)}`;
 
-  const displayRange = `${pad2(startDayClamped)}/${pad2(m)} – ${pad2(endDayClamped)}/${pad2(nextMonth)}`;
-  const fullDisplayRange = `${pad2(startDayClamped)}/${pad2(m)}/${y} – ${pad2(endDayClamped)}/${pad2(nextMonth)}/${nextYear}`;
+  const displayRange = `${pad2(startDayClamped)}/${pad2(m)} – ${pad2(endDayClamped)}/${pad2(endMonthNum)}`;
+  const fullDisplayRange = `${pad2(startDayClamped)}/${pad2(m)}/${y} – ${pad2(endDayClamped)}/${pad2(endMonthNum)}/${endYearNum}`;
 
   return {
     year: y,
@@ -106,7 +111,7 @@ export function getCurrentFinancialMonth(startDay = 1, refDate = new Date()) {
   let year = d.getFullYear();
   let month = d.getMonth() + 1;
 
-  if (sDay > 1 && curDay < sDay) {
+  if (sDay > 1 && curDay < Math.min(sDay, getDaysInMonth(year, month))) {
     month -= 1;
     if (month < 1) {
       month = 12;
@@ -144,7 +149,7 @@ export function getFinancialMonthKey(dateInput, startDay = 1) {
   let year = d.getFullYear();
   let month = d.getMonth() + 1;
 
-  if (sDay > 1 && curDay < sDay) {
+  if (sDay > 1 && curDay < Math.min(sDay, getDaysInMonth(year, month))) {
     month -= 1;
     if (month < 1) {
       month = 12;

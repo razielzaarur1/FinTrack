@@ -1,4 +1,5 @@
 import { pool } from '../db.js';
+import { termMatches } from './keyword-match.js';
 import {
   getUserCategoryHierarchy,
   cleanIsraeliMerchantName,
@@ -9,44 +10,46 @@ import {
 /**
  * Checks if text matches a credit card billing / settlement pattern in bank statements.
  */
+const CC_BILLING_TERMS = [
+  'חיוב כרטיס',
+  'כרטיסי אשראי',
+  'חיוב כרטיסי',
+  'כרטיס חיוב',
+  'הו"ק כרטיס',
+  'הוק כרטיס',
+  'הוראת קבע כרטיס',
+  'הו"ק כ.אשראי',
+  'הוק כ.אשראי',
+  'חיוב כ.אשראי',
+  'כ.אשראי',
+  'סך חיוב',
+  'סך חיוב כרטיס',
+  'חיוב חשבון כרטיס',
+  'חיוב מועדון',
+  'ח-ן כרטיס',
+  'העב. לכרטיס',
+  'העברה לכרטיס',
+  'כרטיסי אשראי לישראל',
+  'ישראכרט',
+  'isracard',
+  'ויזה כאל',
+  'כאל',
+  'cal',
+  'מקס איט',
+  'מקס פיננסים',
+  'כרטיס מקס',
+  'לאומי קארד',
+  'אמריקן אקספרס',
+  'american express',
+  'דיינרס',
+  'diners',
+  'direct debit',
+];
+
 export function isCcBillingPattern(text = '') {
   if (!text || typeof text !== 'string') return false;
   const lower = text.toLowerCase();
-  return (
-    lower.includes('חיוב כרטיס') ||
-    lower.includes('כרטיסי אשראי') ||
-    lower.includes('חיוב כרטיסי') ||
-    lower.includes('כרטיס חיוב') ||
-    lower.includes('הו"ק כרטיס') ||
-    lower.includes('הוק כרטיס') ||
-    lower.includes('הוראת קבע כרטיס') ||
-    lower.includes('הו"ק כ.אשראי') ||
-    lower.includes('הוק כ.אשראי') ||
-    lower.includes('חיוב כ.אשראי') ||
-    lower.includes('כ.אשראי') ||
-    lower.includes('סך חיוב') ||
-    lower.includes('סך חיוב כרטיס') ||
-    lower.includes('חיוב חשבון כרטיס') ||
-    lower.includes('חיוב מועדון') ||
-    lower.includes('ח-ן כרטיס') ||
-    lower.includes('העב. לכרטיס') ||
-    lower.includes('העברה לכרטיס') ||
-    lower.includes('כרטיסי אשראי לישראל') ||
-    lower.includes('ישראכרט') ||
-    lower.includes('isracard') ||
-    lower.includes('ויזה כאל') ||
-    lower.includes('כאל') ||
-    lower.includes('cal') ||
-    lower.includes('מקס איט') ||
-    lower.includes('מקס פיננסים') ||
-    lower.includes('כרטיס מקס') ||
-    lower.includes('לאומי קארד') ||
-    lower.includes('אמריקן אקספרס') ||
-    lower.includes('american express') ||
-    lower.includes('דיינרס') ||
-    lower.includes('diners') ||
-    lower.includes('direct debit')
-  );
+  return CC_BILLING_TERMS.some((term) => termMatches(lower, term));
 }
 
 /**
